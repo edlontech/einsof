@@ -1,0 +1,5 @@
+[tools]
+node = "25.6.1"
+opam = "latest"
+rust = "1.93.0"
+"vfox:edlontech/vfox-lean" = "4.27.0"
