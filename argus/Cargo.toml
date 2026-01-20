@@ -1,0 +1,93 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    "argus-cli",
+    "argus-sandbox-exec",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/edlon/einsof"
+
+[workspace.dependencies]
+# Internal crates
+argus-kernel = { path = "crates/argus-kernel" }
+argus-config = { path = "crates/argus-config" }
+argus-registry = { path = "crates/argus-registry" }
+argus-sandbox = { path = "crates/argus-sandbox", default-features = false }
+argus-oracle = { path = "crates/argus-oracle" }
+argus-audit = { path = "crates/argus-audit" }
+argus-analysis = { path = "crates/argus-analysis" }
+argus-gateway = { path = "crates/argus-gateway" }
+
+# Shared dependencies
+im = { version = "15", features = ["serde"] }
+tokio = { version = "1", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "v7"] }
+notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
+
+# LLM / Analysis
+async-trait = "0.1"
+rig-core = { version = "0.29", features = ["rmcp"] }
+
+# MCP transport (version must match rig-core's rmcp dependency)
+rmcp = { version = "0.13", features = ["client", "transport-child-process"] }
+schemars = "1"
+
+# Code search / inspection
+ignore = "0.4"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+content_inspector = "0.2"
+
+# gRPC
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+tokio-stream = "0.1"
+
+# HTTP / Proxy
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+bytes = "1"
+futures = "0.3"
+
+# Policy engine
+cedar-policy = "4.9"
+
+# Git
+gix = { version = "0.72", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "worktree-mutation"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Sandbox
+libc = "0.2"
+secrecy = { version = "0.10", features = ["serde"] }
+landlock = "0.4"
+
+# Dev
+tempfile = "3"
+serial_test = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
