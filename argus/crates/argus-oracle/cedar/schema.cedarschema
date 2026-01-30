@@ -1,0 +1,26 @@
+namespace Argus {
+    entity Agent in [Agent] {
+        capabilities: Set<String>,
+        taint_levels: Set<String>,
+    };
+
+    type Scope = {
+        "paths"?: Set<String>,
+        "domains"?: Set<String>,
+        "commands"?: Set<String>,
+    };
+
+    entity Tool {
+        endorsed: Bool,
+        conf_floor: String,
+        capabilities: Set<String>,
+        egress: Set<String>,
+        scope?: Scope,
+    };
+
+    action invoke appliesTo {
+        principal: [Agent],
+        resource: [Tool],
+        context: {},
+    };
+}
