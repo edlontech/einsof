@@ -1,0 +1,29 @@
+[package]
+name = "argus-analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Security analysis and capability inference for Argus"
+
+[dependencies]
+argus-config.workspace = true
+argus-kernel.workspace = true
+async-trait.workspace = true
+rig-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+tracing.workspace = true
+ignore.workspace = true
+grep-searcher.workspace = true
+grep-regex.workspace = true
+grep-matcher.workspace = true
+content_inspector.workspace = true
+reqwest.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
