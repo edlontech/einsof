@@ -1,0 +1,20 @@
+[package]
+name = "argus-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["runtime"]
+runtime = ["dep:tokio", "dep:tempfile"]
+types = []
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+secrecy = { workspace = true }
+async-trait = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true, features = ["process", "macros", "rt"], optional = true }
+tempfile = { workspace = true, optional = true }
