@@ -1,0 +1,20 @@
+[package]
+name = "argus-sandbox-exec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+argus-sandbox = { workspace = true, features = ["types"] }
+serde_json = { workspace = true }
+libc = { workspace = true }
+
+[dev-dependencies]
+serial_test = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "macros", "signal"] }
+hyper = { workspace = true, features = ["server", "http1", "client"] }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
