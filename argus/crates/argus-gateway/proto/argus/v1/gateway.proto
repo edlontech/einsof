@@ -1,0 +1,130 @@
+syntax = "proto3";
+package argus.v1;
+
+service ArgusGateway {
+  rpc RegisterTool(RegisterToolRequest) returns (EventResponse);
+  rpc Delegate(DelegateRequest) returns (EventResponse);
+  rpc GrantCapability(GrantCapabilityRequest) returns (EventResponse);
+  rpc Revoke(RevokeRequest) returns (EventResponse);
+  rpc CascadeRevoke(CascadeRevokeRequest) returns (EventResponse);
+  rpc InvokeStart(InvokeStartRequest) returns (EventResponse);
+  rpc InvokeComplete(InvokeCompleteRequest) returns (EventResponse);
+  rpc ReturnEndorsed(ReturnEndorsedRequest) returns (EventResponse);
+  rpc ReturnUnendorsed(ReturnUnendorsedRequest) returns (EventResponse);
+  rpc StateSnapshot(StateSnapshotRequest) returns (StateSnapshotResponse);
+}
+
+enum CapKind {
+  CAP_KIND_UNSPECIFIED = 0;
+  CAP_KIND_FILESYSTEM_READ = 1;
+  CAP_KIND_FILESYSTEM_WRITE = 2;
+  CAP_KIND_FILESYSTEM_DELETE = 3;
+  CAP_KIND_NETWORK_EGRESS = 4;
+  CAP_KIND_NETWORK_INGRESS = 5;
+  CAP_KIND_EXECUTION_SHELL = 6;
+  CAP_KIND_EXECUTION_CODE = 7;
+  CAP_KIND_CREDENTIALS = 8;
+  CAP_KIND_SYSTEM_INFO = 9;
+  CAP_KIND_SYSTEM_MODIFY = 10;
+  CAP_KIND_CLIPBOARD = 11;
+  CAP_KIND_BROWSER_NAVIGATE = 12;
+  CAP_KIND_DATABASE_READ = 13;
+  CAP_KIND_DATABASE_WRITE = 14;
+  CAP_KIND_IPC = 15;
+}
+
+enum ConfLevel {
+  CONF_LEVEL_UNSPECIFIED = 0;
+  CONF_LEVEL_PUBLIC = 1;
+  CONF_LEVEL_INTERNAL = 2;
+  CONF_LEVEL_SENSITIVE = 3;
+  CONF_LEVEL_RESTRICTED = 4;
+}
+
+enum KernelActionKind {
+  KERNEL_ACTION_UNSPECIFIED = 0;
+  KERNEL_ACTION_REGISTER_TOOL = 1;
+  KERNEL_ACTION_DELEGATE = 2;
+  KERNEL_ACTION_GRANT_CAPABILITY = 3;
+  KERNEL_ACTION_REVOKE = 4;
+  KERNEL_ACTION_CASCADE_REVOKE = 5;
+  KERNEL_ACTION_INVOKE_START = 6;
+  KERNEL_ACTION_INVOKE_COMPLETE = 7;
+  KERNEL_ACTION_RETURN_ENDORSED = 8;
+  KERNEL_ACTION_RETURN_UNENDORSED = 9;
+}
+
+message RegisterToolRequest {
+  string tool_id = 1;
+}
+
+message DelegateRequest {
+  string grantor = 1;
+  string grantee = 2;
+}
+
+message GrantCapabilityRequest {
+  string parent = 1;
+  string child = 2;
+  CapKind capability = 3;
+}
+
+message RevokeRequest {
+  string parent = 1;
+  string target = 2;
+}
+
+message CascadeRevokeRequest {
+  string child = 1;
+  string parent = 2;
+}
+
+message InvokeStartRequest {
+  string agent_id = 1;
+  string tool_id = 2;
+  string invocation_id = 3;
+}
+
+message InvokeCompleteRequest {
+  string agent_id = 1;
+  string invocation_id = 2;
+}
+
+message ReturnEndorsedRequest {
+  string child = 1;
+  string parent = 2;
+}
+
+message ReturnUnendorsedRequest {
+  string child = 1;
+  string parent = 2;
+}
+
+message StateSnapshotRequest {}
+
+message EventResponse {
+  KernelActionKind action = 1;
+  uint64 sequence = 2;
+}
+
+message CapabilitySet {
+  repeated CapKind capabilities = 1;
+}
+
+message ConfLevelSet {
+  repeated ConfLevel levels = 1;
+}
+
+message InvocationIdSet {
+  repeated string invocation_ids = 1;
+}
+
+message StateSnapshotResponse {
+  repeated string active_agents = 1;
+  map<string, string> agent_parents = 2;
+  map<string, CapabilitySet> agent_capabilities = 3;
+  map<string, ConfLevelSet> taint_levels = 4;
+  map<string, InvocationIdSet> in_flight = 5;
+  map<string, string> invocation_tool = 6;
+  repeated string registered_tools = 7;
+}
