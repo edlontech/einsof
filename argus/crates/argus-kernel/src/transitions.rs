@@ -431,6 +431,58 @@ pub fn return_unendorsed<C: ContentGateOracle>(
     Ok((state, KernelAction::ReturnUnendorsed { child, parent }))
 }
 
+pub fn sentinel_elevate_taint<C: ContentGateOracle>(
+    mut state: KernelState,
+    bg: &BackgroundTheory,
+    content_gate: &C,
+    agent: AgentId,
+    level: ConfLevel,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    if !state.agent_active.contains(&agent) {
+        return Err(KernelError::PreconditionViolation(
+            format!("agent not active: {agent}"),
+        ));
+    }
+
+    if let Some(in_flight_invs) = state.in_flight.get(&agent) {
+        for inv in in_flight_invs {
+            let tool = state.invocation_tool.get(inv).ok_or_else(|| {
+                KernelError::PreconditionViolation(
+                    format!("no tool binding for invocation {inv}"),
+                )
+            })?;
+            debug_assert!(bg.tool_metadata(tool).is_some(), "in-flight tool {tool} missing from background theory");
+            if let Some(meta) = bg.tool_metadata(tool) {
+                for &egress in &meta.egress {
+                    if !flow_allowed(bg, content_gate, &agent, tool, &state, level, egress) {
+                        return Err(KernelError::PreconditionViolation(
+                            format!(
+                                "flow incompatible: taint {level} with {tool} egress {egress}"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    state
+        .taint_levels
+        .entry(agent.clone())
+        .or_default()
+        .insert(level);
+    state
+        .gh_taint_invoked
+        .entry(agent.clone())
+        .or_default()
+        .insert(level);
+
+    Ok((
+        state,
+        KernelAction::SentinelElevateTaint { agent, level },
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

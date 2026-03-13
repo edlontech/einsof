@@ -417,6 +417,20 @@ Lemma return_unendorsed_simulation :
 Admitted.
 
 (** ================================================================ *)
+(** sentinel_elevate_taint simulation (Admitted)                      *)
+(** ================================================================ *)
+
+Lemma sentinel_elevate_taint_simulation :
+  forall cs as_ a l,
+    state_refines cs as_ ->
+    c_sentinel_elevate_taint_pre cs a l ->
+    sentinel_elevate_taint_pre as_ a l /\
+    state_refines
+      (c_sentinel_elevate_taint_state cs a l)
+      (sentinel_elevate_taint_state as_ a l).
+Admitted.
+
+(** ================================================================ *)
 (** Combined: any concrete step simulates an abstract step            *)
 (** ================================================================ *)
 
@@ -455,4 +469,7 @@ Proof.
   - destruct (return_unendorsed_simulation _ _ _ _ Href H)
       as [Hpre Href'].
     eexists. exact (conj (step_return_unendorsed _ _ _ Hpre) Href').
+  - destruct (sentinel_elevate_taint_simulation _ _ _ _ Href H)
+      as [Hpre Href'].
+    eexists. exact (conj (step_sentinel_elevate_taint _ _ _ Hpre) Href').
 Qed.

@@ -1,0 +1,11 @@
+[package]
+name = "argus-sentinel"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+argus-kernel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }

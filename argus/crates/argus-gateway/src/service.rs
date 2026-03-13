@@ -1,5 +1,5 @@
 use argus_kernel::{
-    AgentId, AuthorizerOracle, BackgroundTheory, CapKind, ContentGateOracle,
+    AgentId, AuthorizerOracle, BackgroundTheory, CapKind, ConfLevel, ContentGateOracle,
     EventStore, InvocationId, Kernel, KernelEvent, KernelState, ToolId,
 };
 use tokio::sync::Mutex;
@@ -109,6 +109,15 @@ where
     ) -> Result<KernelEvent, GatewayError> {
         let mut kernel = self.kernel.lock().await;
         Ok(kernel.return_unendorsed(child, parent)?)
+    }
+
+    pub async fn sentinel_elevate_taint(
+        &self,
+        agent: AgentId,
+        level: ConfLevel,
+    ) -> Result<KernelEvent, GatewayError> {
+        let mut kernel = self.kernel.lock().await;
+        Ok(kernel.sentinel_elevate_taint(agent, level)?)
     }
 
     pub async fn state_snapshot(&self) -> KernelState {

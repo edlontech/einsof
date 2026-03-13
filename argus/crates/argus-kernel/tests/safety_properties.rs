@@ -367,6 +367,125 @@ fn return_endorsed_does_not_propagate_taint() {
     assert!(k.state().taint_levels.get(&AgentId::new("p")).is_none());
 }
 
+fn test_kernel_with_deny_flow() -> Kernel<AllowAll, PassAll, NoopStore> {
+    let mut b = BackgroundTheoryBuilder::new();
+    b.register_tool(
+        ToolId::new("read_file"),
+        ToolMetadata {
+            capabilities: BTreeSet::from([CapKind::FilesystemRead]),
+            egress: BTreeSet::new(),
+            conf_floor: ConfLevel::Sensitive,
+            endorsed: false,
+        },
+    );
+    b.register_tool(
+        ToolId::new("send_email"),
+        ToolMetadata {
+            capabilities: BTreeSet::from([CapKind::NetworkEgress]),
+            egress: BTreeSet::from([EgressKind::NetworkExternal]),
+            conf_floor: ConfLevel::Public,
+            endorsed: false,
+        },
+    );
+    b.set_flow(
+        ConfLevel::Public,
+        EgressKind::NetworkExternal,
+        FlowMode::Allow,
+    );
+    Kernel::new(b.build(), AllowAll, PassAll, NoopStore)
+}
+
+#[test]
+fn sentinel_elevate_taint_basic() {
+    let mut k = test_kernel();
+    k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+
+    let event = k
+        .sentinel_elevate_taint(AgentId::new("a1"), ConfLevel::Sensitive)
+        .unwrap();
+    assert_eq!(
+        event.action,
+        KernelAction::SentinelElevateTaint {
+            agent: AgentId::new("a1"),
+            level: ConfLevel::Sensitive,
+        }
+    );
+    assert!(k
+        .state()
+        .taint_levels
+        .get(&AgentId::new("a1"))
+        .unwrap()
+        .contains(&ConfLevel::Sensitive));
+    assert!(k
+        .state()
+        .gh_taint_invoked
+        .get(&AgentId::new("a1"))
+        .unwrap()
+        .contains(&ConfLevel::Sensitive));
+}
+
+#[test]
+fn sentinel_elevate_taint_inactive_agent_rejected() {
+    let mut k = test_kernel();
+    let result = k.sentinel_elevate_taint(AgentId::new("ghost"), ConfLevel::Public);
+    assert!(result.is_err());
+}
+
+#[test]
+fn sentinel_elevate_taint_flow_incompatible_rejected() {
+    let mut k = test_kernel_with_deny_flow();
+    k.register_tool(ToolId::new("send_email")).unwrap();
+    k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+    for &cap in CapKind::all() {
+        let _ = k.grant_capability(AgentId::root(), AgentId::new("a1"), cap);
+    }
+
+    k.invoke_start(
+        AgentId::new("a1"),
+        ToolId::new("send_email"),
+        InvocationId::new("i1"),
+    )
+    .unwrap();
+
+    let result = k.sentinel_elevate_taint(AgentId::new("a1"), ConfLevel::Sensitive);
+    assert!(result.is_err());
+}
+
+#[test]
+fn sentinel_elevate_taint_no_in_flight_always_succeeds() {
+    let mut k = test_kernel();
+    k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+
+    k.sentinel_elevate_taint(AgentId::new("a1"), ConfLevel::Restricted)
+        .unwrap();
+    assert!(k
+        .state()
+        .taint_levels
+        .get(&AgentId::new("a1"))
+        .unwrap()
+        .contains(&ConfLevel::Restricted));
+}
+
+#[test]
+fn flow_confinement_holds_after_sentinel_taint() {
+    let mut k = test_kernel();
+    k.register_tool(ToolId::new("send_email")).unwrap();
+    k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+    for &cap in CapKind::all() {
+        let _ = k.grant_capability(AgentId::root(), AgentId::new("a1"), cap);
+    }
+
+    k.sentinel_elevate_taint(AgentId::new("a1"), ConfLevel::Sensitive)
+        .unwrap();
+
+    let result = k.invoke_start(
+        AgentId::new("a1"),
+        ToolId::new("send_email"),
+        InvocationId::new("i1"),
+    );
+    assert!(result.is_err());
+}
+
 /// Event store failure leaves kernel in consistent state.
 #[test]
 fn event_store_failure_preserves_consistency() {

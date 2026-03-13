@@ -5,7 +5,7 @@ use crate::event::{KernelAction, KernelEvent};
 use crate::state::KernelState;
 use crate::traits::{AuthorizerOracle, ContentGateOracle, EventStore};
 use crate::transitions;
-use crate::types::{AgentId, InvocationId, ToolId};
+use crate::types::{AgentId, ConfLevel, InvocationId, ToolId};
 
 pub struct Kernel<A: AuthorizerOracle, C: ContentGateOracle, E: EventStore> {
     state: KernelState,
@@ -160,6 +160,20 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, E: EventStore> Kernel<A, C, E> {
             parent,
         );
         self.apply(result)
+    }
+
+    pub fn sentinel_elevate_taint(
+        &mut self,
+        agent: AgentId,
+        level: ConfLevel,
+    ) -> Result<KernelEvent, KernelError> {
+        self.apply(transitions::sentinel_elevate_taint(
+            self.state.clone(),
+            &self.background,
+            &self.content_gate,
+            agent,
+            level,
+        ))
     }
 }
 

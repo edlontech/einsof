@@ -5,7 +5,7 @@ use argus_audit::InMemoryEventStore;
 use argus_gateway::GatewayService;
 use argus_kernel::{
     AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, FlowMode,
-    InvocationId, ToolId, ToolMetadata,
+    InvocationId, KernelAction, ToolId, ToolMetadata,
 };
 use argus_oracle::{MockAuthorizer, MockContentGate};
 
@@ -328,4 +328,23 @@ async fn concurrent_tool_registration() {
 
     let state = gw.state_snapshot().await;
     assert_eq!(state.tool_registered.len(), 3);
+}
+
+#[tokio::test]
+async fn sentinel_elevate_taint_through_gateway() {
+    let gw = test_gateway();
+    let agent = AgentId::new("a1");
+    gw.delegate(AgentId::root(), agent.clone()).await.unwrap();
+
+    let event = gw
+        .sentinel_elevate_taint(agent.clone(), ConfLevel::Internal)
+        .await
+        .unwrap();
+    assert!(matches!(
+        event.action,
+        KernelAction::SentinelElevateTaint { .. }
+    ));
+
+    let st = gw.state_snapshot().await;
+    assert!(st.taint_levels[&agent].contains(&ConfLevel::Internal));
 }

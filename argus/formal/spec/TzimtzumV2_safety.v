@@ -37,7 +37,10 @@ Inductive step : KernelState -> KernelState -> Prop :=
       return_endorsed_pre st child prnt -> step st st
   | step_return_unendorsed : forall st child prnt,
       return_unendorsed_pre st child prnt ->
-      step st (return_unendorsed_state st child prnt).
+      step st (return_unendorsed_state st child prnt)
+  | step_sentinel_elevate_taint : forall st a l,
+      sentinel_elevate_taint_pre st a l ->
+      step st (sentinel_elevate_taint_state st a l).
 
 Inductive reachable : KernelState -> Prop :=
   | reach_init : reachable initial_state

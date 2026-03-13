@@ -22,6 +22,7 @@ argus-oracle = { path = "crates/argus-oracle" }
 argus-audit = { path = "crates/argus-audit" }
 argus-analysis = { path = "crates/argus-analysis" }
 argus-gateway = { path = "crates/argus-gateway" }
+argus-sentinel = { path = "crates/argus-sentinel" }
 
 # Shared dependencies
 im = { version = "15", features = ["serde"] }
@@ -71,6 +72,7 @@ futures = "0.3"
 
 # Policy engine
 cedar-policy = "4.9"
+secretscan = "0.2"
 
 # Git
 gix = { version = "0.72", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "worktree-mutation"] }

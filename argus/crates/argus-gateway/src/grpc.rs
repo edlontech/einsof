@@ -102,6 +102,7 @@ fn kernel_action_to_proto(action: &KernelAction) -> proto::KernelActionKind {
         KernelAction::InvokeComplete { .. } => proto::KernelActionKind::KernelActionInvokeComplete,
         KernelAction::ReturnEndorsed { .. } => proto::KernelActionKind::KernelActionReturnEndorsed,
         KernelAction::ReturnUnendorsed { .. } => proto::KernelActionKind::KernelActionReturnUnendorsed,
+        KernelAction::SentinelElevateTaint { .. } => proto::KernelActionKind::KernelActionSentinelElevateTaint,
     }
 }
 
@@ -183,6 +184,12 @@ fn gateway_error_to_status(err: GatewayError) -> Status {
 fn cap_kind_from_i32(v: i32) -> Result<CapKind, Status> {
     proto::CapKind::try_from(v)
         .map_err(|_| Status::invalid_argument(format!("unknown capability value: {v}")))?
+        .try_into()
+}
+
+fn conf_level_from_i32(v: i32) -> Result<ConfLevel, Status> {
+    proto::ConfLevel::try_from(v)
+        .map_err(|_| Status::invalid_argument(format!("unknown conf level value: {v}")))?
         .try_into()
 }
 
@@ -344,6 +351,19 @@ where
         Ok(Response::new(event_to_response(&event)))
     }
 
+    async fn sentinel_elevate_taint(
+        &self,
+        request: Request<proto::SentinelElevateTaintRequest>,
+    ) -> Result<Response<proto::EventResponse>, Status> {
+        let req = request.into_inner();
+        let level = conf_level_from_i32(req.level)?;
+        let event = self.gateway
+            .sentinel_elevate_taint(AgentId::new(&req.agent_id), level)
+            .await
+            .map_err(gateway_error_to_status)?;
+        Ok(Response::new(event_to_response(&event)))
+    }
+
     async fn state_snapshot(
         &self,
         _request: Request<proto::StateSnapshotRequest>,
@@ -434,7 +454,8 @@ mod tests {
             (KernelAction::InvokeStart { agent: agent.clone(), tool: ToolId::new("t"), inv: inv.clone() }, proto::KernelActionKind::KernelActionInvokeStart),
             (KernelAction::InvokeComplete { agent: agent.clone(), inv }, proto::KernelActionKind::KernelActionInvokeComplete),
             (KernelAction::ReturnEndorsed { child: agent.clone(), parent: parent.clone() }, proto::KernelActionKind::KernelActionReturnEndorsed),
-            (KernelAction::ReturnUnendorsed { child: agent, parent }, proto::KernelActionKind::KernelActionReturnUnendorsed),
+            (KernelAction::ReturnUnendorsed { child: agent.clone(), parent: parent.clone() }, proto::KernelActionKind::KernelActionReturnUnendorsed),
+            (KernelAction::SentinelElevateTaint { agent, level: ConfLevel::Sensitive }, proto::KernelActionKind::KernelActionSentinelElevateTaint),
         ];
         for (action, expected) in cases {
             let converted = kernel_action_to_proto(&action);

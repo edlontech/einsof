@@ -302,6 +302,28 @@ Definition c_return_unendorsed_state (st : ConcreteState)
     (c_gh_taint_invoked st)
     (union_taint prnt child_taint (c_gh_taint_received st)).
 
+(** sentinel_elevate_taint: sentinel adds taint at a given level *)
+Definition c_sentinel_elevate_taint_pre (st : ConcreteState)
+    (a : AgentId) (l : ConfLevel) : Prop :=
+  BTreeSet.mem a (c_agent_active st) = true
+  /\ (forall i e,
+        mem_in_flight a i (c_in_flight st) = true ->
+        tool_egress (invocation_tool i) e = true ->
+        flow_allowed a (invocation_tool i) l e = true).
+
+Definition c_sentinel_elevate_taint_state (st : ConcreteState)
+    (a : AgentId) (l : ConfLevel) : ConcreteState :=
+  mkCState
+    (c_agent_active st)
+    (c_agent_parent st)
+    (c_agent_cap st)
+    (insert_taint a l (c_taint_levels st))
+    (c_in_flight st)
+    (c_invocation_tool st)
+    (c_tool_registered st)
+    (insert_taint a l (c_gh_taint_invoked st))
+    (c_gh_taint_received st).
+
 (** ================================================================ *)
 (** Step Relation and Reachability                                    *)
 (** ================================================================ *)
@@ -327,7 +349,10 @@ Inductive c_step : ConcreteState -> ConcreteState -> Prop :=
       c_step st st
   | c_step_return_unendorsed : forall st child prnt,
       c_return_unendorsed_pre st child prnt ->
-      c_step st (c_return_unendorsed_state st child prnt).
+      c_step st (c_return_unendorsed_state st child prnt)
+  | c_step_sentinel_elevate_taint : forall st a l,
+      c_sentinel_elevate_taint_pre st a l ->
+      c_step st (c_sentinel_elevate_taint_state st a l).
 
 Inductive c_reachable : ConcreteState -> Prop :=
   | c_reach_init : c_reachable c_initial_state

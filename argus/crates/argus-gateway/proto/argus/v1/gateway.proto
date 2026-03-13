@@ -11,6 +11,7 @@ service ArgusGateway {
   rpc InvokeComplete(InvokeCompleteRequest) returns (EventResponse);
   rpc ReturnEndorsed(ReturnEndorsedRequest) returns (EventResponse);
   rpc ReturnUnendorsed(ReturnUnendorsedRequest) returns (EventResponse);
+  rpc SentinelElevateTaint(SentinelElevateTaintRequest) returns (EventResponse);
   rpc StateSnapshot(StateSnapshotRequest) returns (StateSnapshotResponse);
 }
 
@@ -52,6 +53,7 @@ enum KernelActionKind {
   KERNEL_ACTION_INVOKE_COMPLETE = 7;
   KERNEL_ACTION_RETURN_ENDORSED = 8;
   KERNEL_ACTION_RETURN_UNENDORSED = 9;
+  KERNEL_ACTION_SENTINEL_ELEVATE_TAINT = 10;
 }
 
 message RegisterToolRequest {
@@ -98,6 +100,11 @@ message ReturnEndorsedRequest {
 message ReturnUnendorsedRequest {
   string child = 1;
   string parent = 2;
+}
+
+message SentinelElevateTaintRequest {
+  string agent_id = 1;
+  ConfLevel level = 2;
 }
 
 message StateSnapshotRequest {}

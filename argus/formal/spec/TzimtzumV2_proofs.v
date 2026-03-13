@@ -19,7 +19,8 @@ Require Import ArgusKernel.spec.TzimtzumV2_safety.
 Ltac unfold_state :=
   unfold initial_state, register_tool, delegate, grant_capability,
          revoke, cascade_revoke, invoke_start_state,
-         invoke_complete, return_unendorsed_state in *;
+         invoke_complete, return_unendorsed_state,
+         sentinel_elevate_taint_state in *;
   simpl in *.
 
 Ltac unfold_invariants :=
@@ -774,6 +775,66 @@ Proof.
   - exact Hiffc.
 Qed.
 
+Ltac deq_conf a b :=
+  let H := fresh "Heq" in
+  destruct (ConfLevel_eq_dec a b) as [H|H];
+  [rewrite H in *; clear H; try rewrite beq_conf_refl in *; simpl in * |
+   try rewrite beq_conf_neq in * by assumption; simpl in *].
+
+Lemma sentinel_elevate_taint_preserves : forall st a l,
+  all_invariants st ->
+  sentinel_elevate_taint_pre st a l ->
+  all_invariants (sentinel_elevate_taint_state st a l).
+Proof.
+  intros st a l Hinv Hpre.
+  destruct Hpre as (Hact & Hflow_gate).
+  destruct Hinv as (Hraa & Hdd & Hfc & Hfcw & Hcs & Hrc & Hti &
+    Hpia & Hsp & Hnsp & Hrnp & Hifa & Hifr & Hifu &
+    Hrac & Hrni & Hgis & Hgrs & Hiffc).
+  unfold all_invariants; unfold sentinel_elevate_taint_state; unfold_invariants; simpl.
+  split_all.
+  - exact Hraa.
+  - exact Hdd.
+  - intros a0 l0 i0 e Htaint Hif0 Hegr. deq a0 a.
+    + deq_conf l0 l.
+      * exact (Hflow_gate i0 e Hif0 Hegr).
+      * exact (Hfc a l0 i0 e Htaint Hif0 Hegr).
+    + exact (Hfc a0 l0 i0 e Htaint Hif0 Hegr).
+  - intros a0 l0 i0 e Htaint Hif0 Hegr. deq a0 a.
+    + deq_conf l0 l.
+      * apply flow_allowed_to_weak. exact (Hflow_gate i0 e Hif0 Hegr).
+      * exact (Hfcw a l0 i0 e Htaint Hif0 Hegr).
+    + exact (Hfcw a0 l0 i0 e Htaint Hif0 Hegr).
+  - exact Hcs.
+  - intros a0 Hinact. deq a0 a; [rewrite Hact in Hinact; discriminate|].
+    exact (Hrc a0 Hinact).
+  - intros a0 l0 Htaint Hact0. deq a0 a.
+    + deq_conf l0 l.
+      * left. reflexivity.
+      * exact (Hti a l0 Htaint Hact0).
+    + exact (Hti a0 l0 Htaint Hact0).
+  - exact Hpia.
+  - exact Hsp.
+  - exact Hnsp.
+  - exact Hrnp.
+  - exact Hifa.
+  - exact Hifr.
+  - exact Hifu.
+  - exact Hrac.
+  - exact Hrni.
+  - intros a0 l0 Hgi. deq a0 a.
+    + deq_conf l0 l.
+      * left. reflexivity.
+      * exact (Hgis a l0 Hgi).
+    + exact (Hgis a0 l0 Hgi).
+  - intros a0 l0 Hgr.
+    destruct (Hgrs a0 l0 Hgr) as [Ht|Ha].
+    + left. destruct (beq_agent a0 a && beq_conf l0 l);
+      [reflexivity | exact Ht].
+    + right. exact Ha.
+  - exact Hiffc.
+Qed.
+
 (** ================================================================ *)
 (** Top-Level Inductive Theorem                                       *)
 (** ================================================================ *)
@@ -788,7 +849,7 @@ Proof.
       grant_capability_preserves, revoke_preserves,
       cascade_revoke_preserves, invoke_start_preserves,
       invoke_complete_preserves, return_endorsed_preserves,
-      return_unendorsed_preserves.
+      return_unendorsed_preserves, sentinel_elevate_taint_preserves.
 Qed.
 
 (** ================================================================ *)

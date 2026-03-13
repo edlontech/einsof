@@ -512,6 +512,25 @@ action return_unendorsed (child prnt : AgentId) {
 }
 
 /-!
+### sentinel_elevate_taint: Gateway adjusts agent taint based on analysis pipeline
+
+The gateway's analysis pipeline (Tier 1/2/3) may determine that an agent should be
+treated as tainted at a higher confidentiality level. This action allows the sentinel
+to elevate an agent's taint, provided the new taint level is flow-compatible with all
+of the agent's currently in-flight tools.
+-/
+action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) {
+  require agent_active a;
+  require forall I E,
+    in_flight a I /\ tool_egress (invocation_tool I) E ->
+      flow_allows l E
+      \/ (flow_inspects l E /\ content_gate_passes a (invocation_tool I))
+      \/ flow_override a (invocation_tool I) l;
+  taint_levels a l := true;
+  gh_taint_invoked a l := true
+}
+
+/-!
 ## Safety Properties
 
 These are the properties we prove hold in ALL reachable states. Veil verifies them

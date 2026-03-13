@@ -1,5 +1,5 @@
 use crate::capability::CapKind;
-use crate::types::{AgentId, InvocationId, ToolId};
+use crate::types::{AgentId, ConfLevel, InvocationId, ToolId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KernelAction {
@@ -12,6 +12,7 @@ pub enum KernelAction {
     InvokeComplete { agent: AgentId, inv: InvocationId },
     ReturnEndorsed { child: AgentId, parent: AgentId },
     ReturnUnendorsed { child: AgentId, parent: AgentId },
+    SentinelElevateTaint { agent: AgentId, level: ConfLevel },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,8 +43,9 @@ mod tests {
             KernelAction::InvokeComplete { agent: AgentId::new("a"), inv: InvocationId::new("i") },
             KernelAction::ReturnEndorsed { child: AgentId::new("a"), parent: AgentId::root() },
             KernelAction::ReturnUnendorsed { child: AgentId::new("a"), parent: AgentId::root() },
+            KernelAction::SentinelElevateTaint { agent: AgentId::new("a"), level: ConfLevel::Sensitive },
         ];
-        assert_eq!(actions.len(), 9);
+        assert_eq!(actions.len(), 10);
     }
 
     #[test]

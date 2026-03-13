@@ -378,3 +378,30 @@ Definition return_unendorsed_state (st : KernelState)
       if beq_agent a prnt && taint_levels st child l
       then true
       else gh_taint_received st a l).
+
+(** sentinel_elevate_taint: Sentinel adds taint at a given level.
+    Precondition ensures flow compatibility with all in-flight tools. *)
+
+Definition sentinel_elevate_taint_pre (st : KernelState)
+    (a : AgentId) (l : ConfLevel) : Prop :=
+  agent_active st a = true
+  /\ (forall i e,
+        in_flight st a i = true ->
+        tool_egress (invocation_tool i) e = true ->
+        flow_allowed a (invocation_tool i) l e = true).
+
+Definition sentinel_elevate_taint_state (st : KernelState)
+    (a : AgentId) (l : ConfLevel) : KernelState :=
+  mkState
+    (agent_active st)
+    (agent_parent st)
+    (agent_cap st)
+    (fun ag lvl =>
+      if beq_agent ag a && beq_conf lvl l then true
+      else taint_levels st ag lvl)
+    (in_flight st)
+    (tool_registered st)
+    (fun ag lvl =>
+      if beq_agent ag a && beq_conf lvl l then true
+      else gh_taint_invoked st ag lvl)
+    (gh_taint_received st).
