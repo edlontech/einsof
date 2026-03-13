@@ -1,9 +1,6 @@
 name: Rocq Proofs
 
 on:
-  push:
-    paths:
-      - 'argus/formal/**'
   pull_request:
     paths:
       - 'argus/formal/**'

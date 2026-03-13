@@ -1,9 +1,6 @@
 name: Lean Verification
 
 on:
-  push:
-    paths:
-      - 'tzimtzum/**'
   pull_request:
     paths:
       - 'tzimtzum/**'
