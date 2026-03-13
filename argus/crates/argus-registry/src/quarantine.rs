@@ -7,13 +7,8 @@ use thiserror::Error;
 #[serde(rename_all = "snake_case")]
 pub enum QuarantineReason {
     UnauthorizedAddition,
-    HashMismatch {
-        expected: String,
-        actual: String,
-    },
-    ManualQuarantine {
-        reason: String,
-    },
+    HashMismatch { expected: String, actual: String },
+    ManualQuarantine { reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +32,9 @@ pub enum QuarantineError {
     NotFound(String),
     #[error("Item already exists in quarantine: {0}")]
     AlreadyExists(String),
-    #[error("Integrity violation: item '{name}' was modified while in quarantine (expected {expected}, got {actual})")]
+    #[error(
+        "Integrity violation: item '{name}' was modified while in quarantine (expected {expected}, got {actual})"
+    )]
     IntegrityViolation {
         name: String,
         expected: String,

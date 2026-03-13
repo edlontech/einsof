@@ -1,6 +1,6 @@
 use crate::delegation::{
-    DelegateCapabilityInferenceTool, DelegateSecurityReviewTool,
-    build_capability_extractor, build_security_extractor,
+    DelegateCapabilityInferenceTool, DelegateSecurityReviewTool, build_capability_extractor,
+    build_security_extractor,
 };
 use crate::sandbox::ToolContext;
 use crate::specialists::{CapabilityEntryResult, SecurityFindingEntry, format_capability_list};

@@ -72,22 +72,12 @@ impl BackgroundTheoryBuilder {
         self
     }
 
-    pub fn set_flow(
-        &mut self,
-        level: ConfLevel,
-        egress: EgressKind,
-        mode: FlowMode,
-    ) -> &mut Self {
+    pub fn set_flow(&mut self, level: ConfLevel, egress: EgressKind, mode: FlowMode) -> &mut Self {
         self.flow_policy.insert((level, egress), mode);
         self
     }
 
-    pub fn add_override(
-        &mut self,
-        agent: AgentId,
-        tool: ToolId,
-        level: ConfLevel,
-    ) -> &mut Self {
+    pub fn add_override(&mut self, agent: AgentId, tool: ToolId, level: ConfLevel) -> &mut Self {
         self.flow_overrides.insert((agent, tool, level));
         self
     }
@@ -123,8 +113,16 @@ mod tests {
     #[test]
     fn flow_policy_last_write_wins() {
         let mut builder = BackgroundTheoryBuilder::new();
-        builder.set_flow(ConfLevel::Internal, EgressKind::NetworkExternal, FlowMode::Allow);
-        builder.set_flow(ConfLevel::Internal, EgressKind::NetworkExternal, FlowMode::Inspect);
+        builder.set_flow(
+            ConfLevel::Internal,
+            EgressKind::NetworkExternal,
+            FlowMode::Allow,
+        );
+        builder.set_flow(
+            ConfLevel::Internal,
+            EgressKind::NetworkExternal,
+            FlowMode::Inspect,
+        );
         let bg = builder.build();
         assert_eq!(
             bg.flow_mode(ConfLevel::Internal, EgressKind::NetworkExternal),

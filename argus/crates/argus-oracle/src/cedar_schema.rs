@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use argus_kernel::{AgentId, BackgroundTheory, KernelState, ToolId};
 use cedar_policy::{
-    Context, Entities, Entity, EntityId, EntityTypeName, EntityUid, Request,
-    RestrictedExpression, Schema,
+    Context, Entities, Entity, EntityId, EntityTypeName, EntityUid, Request, RestrictedExpression,
+    Schema,
 };
 
 use crate::error::CedarError;
@@ -104,8 +104,14 @@ pub fn build_tool_entity(
     let egress: Vec<String> = meta.egress.iter().map(|e| e.to_string()).collect();
 
     let mut attrs = HashMap::from([
-        ("endorsed".to_string(), RestrictedExpression::new_bool(meta.endorsed)),
-        ("conf_floor".to_string(), RestrictedExpression::new_string(meta.conf_floor.to_string())),
+        (
+            "endorsed".to_string(),
+            RestrictedExpression::new_bool(meta.endorsed),
+        ),
+        (
+            "conf_floor".to_string(),
+            RestrictedExpression::new_string(meta.conf_floor.to_string()),
+        ),
         ("capabilities".to_string(), string_set(&caps)),
         ("egress".to_string(), string_set(&egress)),
     ]);
@@ -158,8 +164,7 @@ pub fn build_entities_for_request(
         entities.push(entity);
     }
 
-    Entities::from_entities(entities, None)
-        .map_err(|e| CedarError::SchemaValidation(e.to_string()))
+    Entities::from_entities(entities, None).map_err(|e| CedarError::SchemaValidation(e.to_string()))
 }
 
 pub fn build_request(
@@ -182,9 +187,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    use argus_kernel::{
-        BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, ToolMetadata,
-    };
+    use argus_kernel::{BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, ToolMetadata};
     use cedar_policy::{Authorizer, Decision, PolicySet};
 
     fn test_background() -> BackgroundTheory {
@@ -220,10 +223,9 @@ mod tests {
             AgentId::new("child"),
             BTreeSet::from([CapKind::FilesystemRead, CapKind::NetworkEgress]),
         );
-        state.taint_levels.insert(
-            AgentId::new("child"),
-            BTreeSet::from([ConfLevel::Internal]),
-        );
+        state
+            .taint_levels
+            .insert(AgentId::new("child"), BTreeSet::from([ConfLevel::Internal]));
         state
     }
 
@@ -303,7 +305,8 @@ mod tests {
         )
         .unwrap();
 
-        let request = build_request(&AgentId::new("child"), &ToolId::new("fs-reader"), None).unwrap();
+        let request =
+            build_request(&AgentId::new("child"), &ToolId::new("fs-reader"), None).unwrap();
         let authorizer = Authorizer::new();
         let response = authorizer.is_authorized(&request, &policy, &entities);
         assert_eq!(response.decision(), Decision::Allow);

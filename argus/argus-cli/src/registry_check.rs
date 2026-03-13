@@ -15,8 +15,7 @@ pub async fn run_registry_check(argus_home: PathBuf) -> Result<()> {
         return Ok(());
     }
 
-    let registry =
-        TomlRegistry::load_from_dir(&registry_dir).context("Failed to load registry")?;
+    let registry = TomlRegistry::load_from_dir(&registry_dir).context("Failed to load registry")?;
 
     let tracked: Vec<_> = registry
         .mcps
@@ -40,11 +39,7 @@ pub async fn run_registry_check(argus_home: PathBuf) -> Result<()> {
             }
         };
 
-        let pinned = entry
-            .metadata
-            .pinned_ref
-            .as_deref()
-            .unwrap_or("unknown");
+        let pinned = entry.metadata.pinned_ref.as_deref().unwrap_or("unknown");
 
         let clone_dir = tempfile::tempdir()?;
         let name_owned = name.to_string();

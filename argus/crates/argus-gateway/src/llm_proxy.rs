@@ -10,17 +10,19 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
-use argus_kernel::{AgentId, AuthorizerOracle, ContentGateOracle, EventStore, InvocationId, ToolId};
+use argus_kernel::{
+    AgentId, AuthorizerOracle, ContentGateOracle, EventStore, InvocationId, ToolId,
+};
 use argus_sandbox::SandboxProvider;
 
 use crate::error::ProxyError;
-use crate::llm_codec::{codec_for_path, LlmCodec};
+use crate::llm_codec::{LlmCodec, codec_for_path};
 use crate::llm_types::{LlmFormat, ProxyConfig, SseProgressEvent, ToolResult, UpstreamConfig};
 use crate::mcp_manager::McpManager;
 use crate::service::GatewayService;
@@ -74,10 +76,7 @@ where
                     let proxy = proxy.clone();
                     async move { Ok::<_, Infallible>(proxy.handle_request(req).await) }
                 });
-                if let Err(e) = http1::Builder::new()
-                    .serve_connection(io, service)
-                    .await
-                {
+                if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
                     tracing::error!("HTTP connection error: {e}");
                 }
             });
@@ -94,13 +93,16 @@ where
         let body_bytes = match req.into_body().collect().await {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
-                return error_response(StatusCode::BAD_REQUEST, &format!("failed to read body: {e}"))
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    &format!("failed to read body: {e}"),
+                );
             }
         };
         let body: Value = match serde_json::from_slice(&body_bytes) {
             Ok(v) => v,
             Err(e) => {
-                return error_response(StatusCode::BAD_REQUEST, &format!("invalid JSON: {e}"))
+                return error_response(StatusCode::BAD_REQUEST, &format!("invalid JSON: {e}"));
             }
         };
 
@@ -147,7 +149,15 @@ where
         }
 
         let result = self
-            .run_tool_loop(&agent, &*codec, &upstream, &forward_headers, body, path, None)
+            .run_tool_loop(
+                &agent,
+                &*codec,
+                &upstream,
+                &forward_headers,
+                body,
+                path,
+                None,
+            )
             .await?;
         Ok(json_response(StatusCode::OK, &result))
     }
@@ -363,8 +373,16 @@ where
         headers: &HeaderMap<HeaderValue>,
         format: LlmFormat,
     ) -> Option<UpstreamConfig> {
-        if let Some(name) = headers.get("x-argus-upstream").and_then(|v| v.to_str().ok()) {
-            return self.config.upstreams.iter().find(|u| u.name == name).cloned();
+        if let Some(name) = headers
+            .get("x-argus-upstream")
+            .and_then(|v| v.to_str().ok())
+        {
+            return self
+                .config
+                .upstreams
+                .iter()
+                .find(|u| u.name == name)
+                .cloned();
         }
         self.config
             .upstreams

@@ -17,12 +17,7 @@ pub struct Kernel<A: AuthorizerOracle, C: ContentGateOracle, E: EventStore> {
 }
 
 impl<A: AuthorizerOracle, C: ContentGateOracle, E: EventStore> Kernel<A, C, E> {
-    pub fn new(
-        background: BackgroundTheory,
-        authorizer: A,
-        content_gate: C,
-        events: E,
-    ) -> Self {
+    pub fn new(background: BackgroundTheory, authorizer: A, content_gate: C, events: E) -> Self {
         Self {
             state: KernelState::initial(),
             background,
@@ -68,8 +63,7 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, E: EventStore> Kernel<A, C, E> {
         grantor: AgentId,
         grantee: AgentId,
     ) -> Result<KernelEvent, KernelError> {
-        let result =
-            transitions::delegate(self.state.clone(), &self.background, grantor, grantee);
+        let result = transitions::delegate(self.state.clone(), &self.background, grantor, grantee);
         self.apply(result)
     }
 
@@ -79,23 +73,13 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, E: EventStore> Kernel<A, C, E> {
         child: AgentId,
         cap: CapKind,
     ) -> Result<KernelEvent, KernelError> {
-        let result = transitions::grant_capability(
-            self.state.clone(),
-            &self.background,
-            parent,
-            child,
-            cap,
-        );
+        let result =
+            transitions::grant_capability(self.state.clone(), &self.background, parent, child, cap);
         self.apply(result)
     }
 
-    pub fn revoke(
-        &mut self,
-        parent: AgentId,
-        target: AgentId,
-    ) -> Result<KernelEvent, KernelError> {
-        let result =
-            transitions::revoke(self.state.clone(), &self.background, parent, target);
+    pub fn revoke(&mut self, parent: AgentId, target: AgentId) -> Result<KernelEvent, KernelError> {
+        let result = transitions::revoke(self.state.clone(), &self.background, parent, target);
         self.apply(result)
     }
 
@@ -132,8 +116,7 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, E: EventStore> Kernel<A, C, E> {
         agent: AgentId,
         inv: InvocationId,
     ) -> Result<KernelEvent, KernelError> {
-        let result =
-            transitions::invoke_complete(self.state.clone(), &self.background, agent, inv);
+        let result = transitions::invoke_complete(self.state.clone(), &self.background, agent, inv);
         self.apply(result)
     }
 
@@ -241,11 +224,7 @@ mod tests {
         assert_eq!(e2.sequence, 2);
 
         let e3 = kernel
-            .grant_capability(
-                AgentId::root(),
-                AgentId::new("a1"),
-                CapKind::FilesystemRead,
-            )
+            .grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead)
             .unwrap();
         assert_eq!(e3.sequence, 3);
 
@@ -262,21 +241,21 @@ mod tests {
             .invoke_complete(AgentId::new("a1"), InvocationId::new("inv-1"))
             .unwrap();
         assert_eq!(e5.sequence, 5);
-        assert!(kernel
-            .state()
-            .taint_levels
-            .get(&AgentId::new("a1"))
-            .unwrap()
-            .contains(&ConfLevel::Sensitive));
+        assert!(
+            kernel
+                .state()
+                .taint_levels
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&ConfLevel::Sensitive)
+        );
 
         let e6 = kernel
             .return_endorsed(AgentId::new("a1"), AgentId::root())
             .unwrap();
         assert_eq!(e6.sequence, 6);
 
-        let e7 = kernel
-            .revoke(AgentId::root(), AgentId::new("a1"))
-            .unwrap();
+        let e7 = kernel.revoke(AgentId::root(), AgentId::new("a1")).unwrap();
         assert_eq!(e7.sequence, 7);
         assert!(!kernel.state().agent_active.contains(&AgentId::new("a1")));
     }

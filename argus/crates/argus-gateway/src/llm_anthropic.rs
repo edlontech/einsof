@@ -1,6 +1,6 @@
 use crate::llm_codec::LlmCodec;
 use crate::llm_types::{ToolCall, ToolResult};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct AnthropicCodec;
 
@@ -19,7 +19,11 @@ impl LlmCodec for AnthropicCodec {
                 let name = block.get("name")?.as_str()?.to_owned();
                 let input = block.get("input").cloned().unwrap_or(json!({}));
                 let arguments = serde_json::to_string(&input).unwrap_or_default();
-                Some(ToolCall { id, name, arguments })
+                Some(ToolCall {
+                    id,
+                    name,
+                    arguments,
+                })
             })
             .collect()
     }

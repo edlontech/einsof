@@ -9,14 +9,12 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
 use argus_audit::InMemoryEventStore;
-use argus_gateway::{
-    GatewayService, LlmFormat, LlmProxy, McpManager, ProxyConfig, UpstreamConfig,
-};
+use argus_gateway::{GatewayService, LlmFormat, LlmProxy, McpManager, ProxyConfig, UpstreamConfig};
 use argus_kernel::{AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, ToolId, ToolMetadata};
 use argus_oracle::{MockAuthorizer, MockContentGate};
 use argus_sandbox::NoopSandbox;
@@ -30,10 +28,7 @@ impl MockLlm {
     fn new(responses: Vec<Value>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(
-                responses
-                    .into_iter()
-                    .map(|v| (StatusCode::OK, v))
-                    .collect(),
+                responses.into_iter().map(|v| (StatusCode::OK, v)).collect(),
             )),
             requests: Arc::new(Mutex::new(Vec::new())),
         }
@@ -189,7 +184,11 @@ async fn setup_agent(
         .await
         .unwrap();
     gateway
-        .grant_capability(AgentId::root(), AgentId::new("worker"), CapKind::FilesystemRead)
+        .grant_capability(
+            AgentId::root(),
+            AgentId::new("worker"),
+            CapKind::FilesystemRead,
+        )
         .await
         .unwrap();
     gateway
@@ -390,9 +389,13 @@ async fn tool_call_denied() {
     gw.delegate(AgentId::root(), AgentId::new("worker"))
         .await
         .unwrap();
-    gw.grant_capability(AgentId::root(), AgentId::new("worker"), CapKind::FilesystemRead)
-        .await
-        .unwrap();
+    gw.grant_capability(
+        AgentId::root(),
+        AgentId::new("worker"),
+        CapKind::FilesystemRead,
+    )
+    .await
+    .unwrap();
 
     let proxy_addr = start_proxy(gw, mock_addr).await;
 
@@ -452,7 +455,12 @@ async fn streaming_returns_sse_content_type() {
         .unwrap();
 
     assert_eq!(resp.status(), 200);
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(ct, "text/event-stream");
 
     let body = resp.text().await.unwrap();

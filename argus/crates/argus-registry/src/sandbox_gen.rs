@@ -14,17 +14,35 @@ pub enum ParsedCapability {
 }
 
 pub fn parse_capability(s: &str) -> ParsedCapability {
-    if let Some(scope) = s.strip_prefix("filesystem:read(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(scope) = s
+        .strip_prefix("filesystem:read(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         ParsedCapability::FilesystemRead(scope.to_string())
-    } else if let Some(scope) = s.strip_prefix("filesystem:write(").and_then(|s| s.strip_suffix(')')) {
+    } else if let Some(scope) = s
+        .strip_prefix("filesystem:write(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         ParsedCapability::FilesystemWrite(scope.to_string())
-    } else if let Some(scope) = s.strip_prefix("network:egress(").and_then(|s| s.strip_suffix(')')) {
+    } else if let Some(scope) = s
+        .strip_prefix("network:egress(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         ParsedCapability::NetworkEgress(scope.to_string())
-    } else if let Some(scope) = s.strip_prefix("network:listen(").and_then(|s| s.strip_suffix(')')) {
+    } else if let Some(scope) = s
+        .strip_prefix("network:listen(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         ParsedCapability::NetworkListen(scope.to_string())
-    } else if let Some(scope) = s.strip_prefix("process:exec(").and_then(|s| s.strip_suffix(')')) {
+    } else if let Some(scope) = s
+        .strip_prefix("process:exec(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         ParsedCapability::ProcessExec(scope.to_string())
-    } else if let Some(scope) = s.strip_prefix("secret:env(").and_then(|s| s.strip_suffix(')')) {
+    } else if let Some(scope) = s
+        .strip_prefix("secret:env(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         ParsedCapability::SecretEnv(scope.to_string())
     } else {
         ParsedCapability::Unknown(s.to_string())

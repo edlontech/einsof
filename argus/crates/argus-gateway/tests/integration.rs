@@ -4,8 +4,8 @@ use std::sync::Arc;
 use argus_audit::InMemoryEventStore;
 use argus_gateway::GatewayService;
 use argus_kernel::{
-    AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, FlowMode,
-    InvocationId, KernelAction, ToolId, ToolMetadata,
+    AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, FlowMode, InvocationId,
+    KernelAction, ToolId, ToolMetadata,
 };
 use argus_oracle::{MockAuthorizer, MockContentGate};
 
@@ -80,11 +80,13 @@ async fn delegation_and_capability_flow() {
 
     let state = gw.state_snapshot().await;
     assert!(state.agent_active.contains(&AgentId::new("worker")));
-    assert!(state
-        .agent_cap
-        .get(&AgentId::new("worker"))
-        .unwrap()
-        .contains(&CapKind::FilesystemRead));
+    assert!(
+        state
+            .agent_cap
+            .get(&AgentId::new("worker"))
+            .unwrap()
+            .contains(&CapKind::FilesystemRead)
+    );
 }
 
 #[tokio::test]
@@ -128,11 +130,13 @@ async fn full_invocation_pipeline() {
     assert_eq!(e_start.sequence, 4);
 
     let state = gw.state_snapshot().await;
-    assert!(state
-        .in_flight
-        .get(&AgentId::new("worker"))
-        .unwrap()
-        .contains(&InvocationId::new("inv-1")));
+    assert!(
+        state
+            .in_flight
+            .get(&AgentId::new("worker"))
+            .unwrap()
+            .contains(&InvocationId::new("inv-1"))
+    );
 
     let e_complete = gw
         .invoke_complete(AgentId::new("worker"), InvocationId::new("inv-1"))
@@ -141,11 +145,13 @@ async fn full_invocation_pipeline() {
     assert_eq!(e_complete.sequence, 5);
 
     let state = gw.state_snapshot().await;
-    assert!(state
-        .taint_levels
-        .get(&AgentId::new("worker"))
-        .unwrap()
-        .contains(&ConfLevel::Sensitive));
+    assert!(
+        state
+            .taint_levels
+            .get(&AgentId::new("worker"))
+            .unwrap()
+            .contains(&ConfLevel::Sensitive)
+    );
 }
 
 #[tokio::test]
@@ -233,11 +239,13 @@ async fn return_unendorsed_propagates_taint() {
         .unwrap();
 
     let state = gw.state_snapshot().await;
-    assert!(state
-        .taint_levels
-        .get(&AgentId::new("parent"))
-        .unwrap()
-        .contains(&ConfLevel::Sensitive));
+    assert!(
+        state
+            .taint_levels
+            .get(&AgentId::new("parent"))
+            .unwrap()
+            .contains(&ConfLevel::Sensitive)
+    );
 }
 
 #[tokio::test]
@@ -294,9 +302,7 @@ async fn precondition_duplicate_delegate() {
     gw.delegate(AgentId::root(), AgentId::new("worker"))
         .await
         .unwrap();
-    let result = gw
-        .delegate(AgentId::root(), AgentId::new("worker"))
-        .await;
+    let result = gw.delegate(AgentId::root(), AgentId::new("worker")).await;
     assert!(result.is_err());
 }
 

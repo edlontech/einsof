@@ -4,9 +4,7 @@ use crate::orchestrator::{
     build_result_extractor, build_user_prompt,
 };
 use crate::sandbox::ToolContext;
-use crate::types::{
-    AnalysisReport, FindingSeverity, InferredCapability, SecurityFinding,
-};
+use crate::types::{AnalysisReport, FindingSeverity, InferredCapability, SecurityFinding};
 use argus_config::ExtractionProviderConfig;
 use async_trait::async_trait;
 use rig::client::{CompletionClient, Nothing};
@@ -85,11 +83,9 @@ impl Analyzer {
                 model, api_key_env, ..
             } => {
                 let api_key = get_env_var(api_key_env)?;
-                let client: openrouter::Client = openrouter::Client::new(&api_key)
-                    .map_err(|e| client_error("OpenRouter", e))?;
-                let completion_model = client
-                    .completion_model(model)
-                    .with_strict_tools();
+                let client: openrouter::Client =
+                    openrouter::Client::new(&api_key).map_err(|e| client_error("OpenRouter", e))?;
+                let completion_model = client.completion_model(model).with_strict_tools();
                 Arc::new(OrchestrateImpl {
                     model: completion_model,
                 })
@@ -108,8 +104,8 @@ impl Analyzer {
                 model, api_key_env, ..
             } => {
                 let api_key = get_env_var(api_key_env)?;
-                let client: openai::Client = openai::Client::new(&api_key)
-                    .map_err(|e| client_error("OpenAI", e))?;
+                let client: openai::Client =
+                    openai::Client::new(&api_key).map_err(|e| client_error("OpenAI", e))?;
                 make_orchestrate!(client, model)
             }
             ExtractionProviderConfig::Anthropic {
@@ -127,8 +123,8 @@ impl Analyzer {
                 model, api_key_env, ..
             } => {
                 let api_key = get_env_var(api_key_env)?;
-                let client: gemini::Client = gemini::Client::new(&api_key)
-                    .map_err(|e| client_error("Gemini", e))?;
+                let client: gemini::Client =
+                    gemini::Client::new(&api_key).map_err(|e| client_error("Gemini", e))?;
                 make_orchestrate!(client, model)
             }
         };
@@ -169,7 +165,9 @@ impl Analyzer {
 
         let entries = ctx.list_directory(".")?;
         if entries.is_empty() {
-            report.warnings.push("No source code found to analyze".to_string());
+            report
+                .warnings
+                .push("No source code found to analyze".to_string());
             return Ok(report);
         }
 
@@ -212,9 +210,12 @@ fn apply_result(report: &mut AnalysisReport, result: OrchestratorResult) {
         .collect();
 
     report.warnings = result.warnings;
-    report.metadata.files_explored = result.files_explored.into_iter().map(PathBuf::from).collect();
-    report.metadata.specialists_invoked =
-        vec!["security".to_string(), "capability".to_string()];
+    report.metadata.files_explored = result
+        .files_explored
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    report.metadata.specialists_invoked = vec!["security".to_string(), "capability".to_string()];
 }
 
 fn parse_severity(s: &str) -> FindingSeverity {
@@ -375,7 +376,11 @@ mod tests {
         };
 
         let temp_dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(temp_dir.path().join("index.js"), "fetch('http://example.com')").unwrap();
+        std::fs::write(
+            temp_dir.path().join("index.js"),
+            "fetch('http://example.com')",
+        )
+        .unwrap();
         let report = analyzer.analyze(temp_dir.path()).await.unwrap();
 
         assert_eq!(report.inferred_capabilities.len(), 1);
@@ -406,10 +411,7 @@ mod tests {
         std::fs::write(temp_dir.path().join("main.py"), "import os").unwrap();
         let report = analyzer.analyze(temp_dir.path()).await.unwrap();
 
-        assert!(report
-            .warnings
-            .iter()
-            .any(|w| w.contains("model timeout")));
+        assert!(report.warnings.iter().any(|w| w.contains("model timeout")));
         assert!(report.inferred_capabilities.is_empty());
     }
 
@@ -442,12 +444,13 @@ mod tests {
             base_url: "http://localhost:11434".to_string(),
             timeout_ms: 5000,
         };
-        let analyzer = Analyzer::new(&config)
-            .unwrap()
-            .with_orchestrator_config(OrchestratorConfig {
-                max_turns: 30,
-                max_tokens: 100_000,
-            });
+        let analyzer =
+            Analyzer::new(&config)
+                .unwrap()
+                .with_orchestrator_config(OrchestratorConfig {
+                    max_turns: 30,
+                    max_tokens: 100_000,
+                });
         assert_eq!(analyzer.config.max_turns, 30);
         assert_eq!(analyzer.config.max_tokens, 100_000);
     }

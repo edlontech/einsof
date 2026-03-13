@@ -1,9 +1,7 @@
-use argus_kernel::{
-    AgentId, BackgroundTheory, ContentGateOracle, KernelState, ToolId,
-};
+use argus_kernel::{AgentId, BackgroundTheory, ContentGateOracle, KernelState, ToolId};
 use secretscan::patterns::{
-    analyze_base64_for_secrets, analyze_hex_for_secrets,
-    analyze_url_encoded_for_secrets, get_all_patterns,
+    analyze_base64_for_secrets, analyze_hex_for_secrets, analyze_url_encoded_for_secrets,
+    get_all_patterns,
 };
 
 pub struct SentinelContentGate {
@@ -129,7 +127,11 @@ mod tests {
             !detections.is_empty(),
             "expected detection for AWS access key"
         );
-        assert!(detections.iter().any(|d| d.kind == DetectionKind::SecretPattern));
+        assert!(
+            detections
+                .iter()
+                .any(|d| d.kind == DetectionKind::SecretPattern)
+        );
     }
 
     #[test]
@@ -176,10 +178,7 @@ mod tests {
             }
         });
         let detections = gate().scan_strings(&input);
-        assert!(
-            !detections.is_empty(),
-            "expected detection in nested JSON"
-        );
+        assert!(!detections.is_empty(), "expected detection in nested JSON");
     }
 
     #[test]
@@ -189,7 +188,9 @@ mod tests {
         let input = json!({"payload": encoded});
         let detections = gate().scan_strings(&input);
         assert!(
-            detections.iter().any(|d| d.kind == DetectionKind::ObfuscatedSecret),
+            detections
+                .iter()
+                .any(|d| d.kind == DetectionKind::ObfuscatedSecret),
             "expected ObfuscatedSecret detection for base64-encoded AWS key, got: {detections:?}"
         );
     }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use argus_audit::InMemoryEventStore;
 use argus_gateway::proto::argus_gateway_client::ArgusGatewayClient;
-use argus_gateway::{proto, ArgusGrpcService, GatewayService};
+use argus_gateway::{ArgusGrpcService, GatewayService, proto};
 use argus_kernel::{
     BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, FlowMode, ToolId, ToolMetadata,
 };
@@ -212,9 +212,7 @@ async fn grpc_full_invoke_pipeline() {
         .unwrap()
         .into_inner();
     let worker_flights = state.in_flight.get("worker");
-    assert!(
-        worker_flights.is_none() || worker_flights.unwrap().invocation_ids.is_empty()
-    );
+    assert!(worker_flights.is_none() || worker_flights.unwrap().invocation_ids.is_empty());
 }
 
 #[tokio::test]

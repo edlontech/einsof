@@ -82,9 +82,10 @@ pub fn parse_cargo_dependencies(content: &str) -> Vec<ParsedDependency> {
             for (name, value) in table {
                 let version = match value {
                     toml::Value::String(v) => Some(v.clone()),
-                    toml::Value::Table(t) => {
-                        t.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
-                    }
+                    toml::Value::Table(t) => t
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     _ => None,
                 };
                 deps.push(ParsedDependency {
@@ -224,8 +225,14 @@ tempfile = "3"
 "#;
         let deps = parse_cargo_dependencies(content);
         assert_eq!(deps.len(), 3);
-        assert!(deps.iter().any(|d| d.name == "serde" && d.version.as_deref() == Some("1.0")));
-        assert!(deps.iter().any(|d| d.name == "tokio" && d.version.as_deref() == Some("1")));
+        assert!(
+            deps.iter()
+                .any(|d| d.name == "serde" && d.version.as_deref() == Some("1.0"))
+        );
+        assert!(
+            deps.iter()
+                .any(|d| d.name == "tokio" && d.version.as_deref() == Some("1"))
+        );
     }
 
     #[test]
@@ -238,10 +245,22 @@ tempfile = "3"
     #[test]
     fn flag_suspicious_npm_packages() {
         let deps = vec![
-            ParsedDependency { name: "express".to_string(), version: None },
-            ParsedDependency { name: "child_process".to_string(), version: None },
-            ParsedDependency { name: "puppeteer".to_string(), version: None },
-            ParsedDependency { name: "lodash".to_string(), version: None },
+            ParsedDependency {
+                name: "express".to_string(),
+                version: None,
+            },
+            ParsedDependency {
+                name: "child_process".to_string(),
+                version: None,
+            },
+            ParsedDependency {
+                name: "puppeteer".to_string(),
+                version: None,
+            },
+            ParsedDependency {
+                name: "lodash".to_string(),
+                version: None,
+            },
         ];
         let flagged = flag_suspicious_packages(&deps);
         assert_eq!(flagged.len(), 2);
@@ -252,7 +271,10 @@ tempfile = "3"
     #[test]
     fn ecosystem_mapping() {
         assert_eq!(ecosystem_for_manifest(&ManifestKind::PackageJson), "npm");
-        assert_eq!(ecosystem_for_manifest(&ManifestKind::CargoToml), "crates.io");
+        assert_eq!(
+            ecosystem_for_manifest(&ManifestKind::CargoToml),
+            "crates.io"
+        );
         assert_eq!(ecosystem_for_manifest(&ManifestKind::PyprojectToml), "PyPI");
         assert_eq!(ecosystem_for_manifest(&ManifestKind::GoMod), "Go");
     }

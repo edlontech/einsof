@@ -8,7 +8,9 @@ pub use extraction::{ExtractionConfig, ExtractionMode, ExtractionProviderConfig}
 pub enum OperationalMode {
     #[default]
     Development,
-    Production { strict: bool },
+    Production {
+        strict: bool,
+    },
 }
 
 impl Serialize for OperationalMode {

@@ -26,10 +26,9 @@ impl OsSandbox {
             .tempfile()
             .map_err(SandboxError::ProfileWriteFailed)?;
 
-        let json = serde_json::to_vec(profile)
-            .map_err(|e| SandboxError::ProfileError {
-                reason: e.to_string(),
-            })?;
+        let json = serde_json::to_vec(profile).map_err(|e| SandboxError::ProfileError {
+            reason: e.to_string(),
+        })?;
         file.write_all(&json)
             .map_err(SandboxError::ProfileWriteFailed)?;
 
@@ -186,9 +185,10 @@ mod tests {
         let wrapped = sandbox.prepare_command(original, &profile).unwrap();
 
         let std_cmd = wrapped.as_std();
-        let has_injected = std_cmd
-            .get_envs()
-            .any(|(k, v)| k.to_str() == Some("INJECTED_VAR") && v.and_then(|v| v.to_str()) == Some("injected_value"));
+        let has_injected = std_cmd.get_envs().any(|(k, v)| {
+            k.to_str() == Some("INJECTED_VAR")
+                && v.and_then(|v| v.to_str()) == Some("injected_value")
+        });
         assert!(has_injected, "resolved_env values should be injected");
 
         let args: Vec<_> = std_cmd.get_args().map(|a| a.to_str().unwrap()).collect();

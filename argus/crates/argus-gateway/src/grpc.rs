@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use argus_kernel::{
-    AgentId, AuthorizerOracle, CapKind, ConfLevel, ContentGateOracle, EventStore,
-    InvocationId, KernelAction, KernelError, KernelEvent, KernelState, ToolId,
+    AgentId, AuthorizerOracle, CapKind, ConfLevel, ContentGateOracle, EventStore, InvocationId,
+    KernelAction, KernelError, KernelEvent, KernelState, ToolId,
 };
 use tonic::{Request, Response, Status};
 
@@ -43,9 +43,7 @@ impl TryFrom<proto::CapKind> for CapKind {
     type Error = Status;
     fn try_from(k: proto::CapKind) -> Result<Self, Status> {
         match k {
-            proto::CapKind::Unspecified => {
-                Err(Status::invalid_argument("CapKind unspecified"))
-            }
+            proto::CapKind::Unspecified => Err(Status::invalid_argument("CapKind unspecified")),
             proto::CapKind::FilesystemRead => Ok(Self::FilesystemRead),
             proto::CapKind::FilesystemWrite => Ok(Self::FilesystemWrite),
             proto::CapKind::FilesystemDelete => Ok(Self::FilesystemDelete),
@@ -80,9 +78,7 @@ impl TryFrom<proto::ConfLevel> for ConfLevel {
     type Error = Status;
     fn try_from(c: proto::ConfLevel) -> Result<Self, Status> {
         match c {
-            proto::ConfLevel::Unspecified => {
-                Err(Status::invalid_argument("ConfLevel unspecified"))
-            }
+            proto::ConfLevel::Unspecified => Err(Status::invalid_argument("ConfLevel unspecified")),
             proto::ConfLevel::Public => Ok(Self::Public),
             proto::ConfLevel::Internal => Ok(Self::Internal),
             proto::ConfLevel::Sensitive => Ok(Self::Sensitive),
@@ -95,14 +91,20 @@ fn kernel_action_to_proto(action: &KernelAction) -> proto::KernelActionKind {
     match action {
         KernelAction::RegisterTool { .. } => proto::KernelActionKind::KernelActionRegisterTool,
         KernelAction::Delegate { .. } => proto::KernelActionKind::KernelActionDelegate,
-        KernelAction::GrantCapability { .. } => proto::KernelActionKind::KernelActionGrantCapability,
+        KernelAction::GrantCapability { .. } => {
+            proto::KernelActionKind::KernelActionGrantCapability
+        }
         KernelAction::Revoke { .. } => proto::KernelActionKind::KernelActionRevoke,
         KernelAction::CascadeRevoke { .. } => proto::KernelActionKind::KernelActionCascadeRevoke,
         KernelAction::InvokeStart { .. } => proto::KernelActionKind::KernelActionInvokeStart,
         KernelAction::InvokeComplete { .. } => proto::KernelActionKind::KernelActionInvokeComplete,
         KernelAction::ReturnEndorsed { .. } => proto::KernelActionKind::KernelActionReturnEndorsed,
-        KernelAction::ReturnUnendorsed { .. } => proto::KernelActionKind::KernelActionReturnUnendorsed,
-        KernelAction::SentinelElevateTaint { .. } => proto::KernelActionKind::KernelActionSentinelElevateTaint,
+        KernelAction::ReturnUnendorsed { .. } => {
+            proto::KernelActionKind::KernelActionReturnUnendorsed
+        }
+        KernelAction::SentinelElevateTaint { .. } => {
+            proto::KernelActionKind::KernelActionSentinelElevateTaint
+        }
     }
 }
 
@@ -138,7 +140,10 @@ fn state_to_response(state: &KernelState) -> proto::StateSnapshotResponse {
         .taint_levels
         .iter()
         .map(|(k, v)| {
-            let levels = v.iter().map(|c| proto::ConfLevel::from(*c) as i32).collect();
+            let levels = v
+                .iter()
+                .map(|c| proto::ConfLevel::from(*c) as i32)
+                .collect();
             (k.0.clone(), proto::ConfLevelSet { levels })
         })
         .collect();
@@ -148,7 +153,12 @@ fn state_to_response(state: &KernelState) -> proto::StateSnapshotResponse {
         .iter()
         .map(|(k, v)| {
             let ids = v.iter().map(|i| i.0.clone()).collect();
-            (k.0.clone(), proto::InvocationIdSet { invocation_ids: ids })
+            (
+                k.0.clone(),
+                proto::InvocationIdSet {
+                    invocation_ids: ids,
+                },
+            )
         })
         .collect();
 
@@ -236,7 +246,8 @@ where
         request: Request<proto::RegisterToolRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .register_tool(ToolId::new(&req.tool_id))
             .await
             .map_err(gateway_error_to_status)?;
@@ -248,7 +259,8 @@ where
         request: Request<proto::DelegateRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .delegate(AgentId::new(&req.grantor), AgentId::new(&req.grantee))
             .await
             .map_err(gateway_error_to_status)?;
@@ -261,12 +273,9 @@ where
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
         let cap = cap_kind_from_i32(req.capability)?;
-        let event = self.gateway
-            .grant_capability(
-                AgentId::new(&req.parent),
-                AgentId::new(&req.child),
-                cap,
-            )
+        let event = self
+            .gateway
+            .grant_capability(AgentId::new(&req.parent), AgentId::new(&req.child), cap)
             .await
             .map_err(gateway_error_to_status)?;
         Ok(Response::new(event_to_response(&event)))
@@ -277,7 +286,8 @@ where
         request: Request<proto::RevokeRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .revoke(AgentId::new(&req.parent), AgentId::new(&req.target))
             .await
             .map_err(gateway_error_to_status)?;
@@ -289,7 +299,8 @@ where
         request: Request<proto::CascadeRevokeRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .cascade_revoke(AgentId::new(&req.child), AgentId::new(&req.parent))
             .await
             .map_err(gateway_error_to_status)?;
@@ -301,7 +312,8 @@ where
         request: Request<proto::InvokeStartRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .invoke_start(
                 AgentId::new(&req.agent_id),
                 ToolId::new(&req.tool_id),
@@ -317,7 +329,8 @@ where
         request: Request<proto::InvokeCompleteRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .invoke_complete(
                 AgentId::new(&req.agent_id),
                 InvocationId::new(&req.invocation_id),
@@ -332,7 +345,8 @@ where
         request: Request<proto::ReturnEndorsedRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .return_endorsed(AgentId::new(&req.child), AgentId::new(&req.parent))
             .await
             .map_err(gateway_error_to_status)?;
@@ -344,7 +358,8 @@ where
         request: Request<proto::ReturnUnendorsedRequest>,
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
-        let event = self.gateway
+        let event = self
+            .gateway
             .return_unendorsed(AgentId::new(&req.child), AgentId::new(&req.parent))
             .await
             .map_err(gateway_error_to_status)?;
@@ -357,7 +372,8 @@ where
     ) -> Result<Response<proto::EventResponse>, Status> {
         let req = request.into_inner();
         let level = conf_level_from_i32(req.level)?;
-        let event = self.gateway
+        let event = self
+            .gateway
             .sentinel_elevate_taint(AgentId::new(&req.agent_id), level)
             .await
             .map_err(gateway_error_to_status)?;
@@ -446,16 +462,75 @@ mod tests {
         let inv = InvocationId::new("i");
 
         let cases = [
-            (KernelAction::RegisterTool { tool }, proto::KernelActionKind::KernelActionRegisterTool),
-            (KernelAction::Delegate { grantor: parent.clone(), grantee: agent.clone() }, proto::KernelActionKind::KernelActionDelegate),
-            (KernelAction::GrantCapability { parent: parent.clone(), child: agent.clone(), cap: CapKind::FilesystemRead }, proto::KernelActionKind::KernelActionGrantCapability),
-            (KernelAction::Revoke { parent: parent.clone(), target: agent.clone() }, proto::KernelActionKind::KernelActionRevoke),
-            (KernelAction::CascadeRevoke { child: agent.clone(), parent: parent.clone() }, proto::KernelActionKind::KernelActionCascadeRevoke),
-            (KernelAction::InvokeStart { agent: agent.clone(), tool: ToolId::new("t"), inv: inv.clone() }, proto::KernelActionKind::KernelActionInvokeStart),
-            (KernelAction::InvokeComplete { agent: agent.clone(), inv }, proto::KernelActionKind::KernelActionInvokeComplete),
-            (KernelAction::ReturnEndorsed { child: agent.clone(), parent: parent.clone() }, proto::KernelActionKind::KernelActionReturnEndorsed),
-            (KernelAction::ReturnUnendorsed { child: agent.clone(), parent: parent.clone() }, proto::KernelActionKind::KernelActionReturnUnendorsed),
-            (KernelAction::SentinelElevateTaint { agent, level: ConfLevel::Sensitive }, proto::KernelActionKind::KernelActionSentinelElevateTaint),
+            (
+                KernelAction::RegisterTool { tool },
+                proto::KernelActionKind::KernelActionRegisterTool,
+            ),
+            (
+                KernelAction::Delegate {
+                    grantor: parent.clone(),
+                    grantee: agent.clone(),
+                },
+                proto::KernelActionKind::KernelActionDelegate,
+            ),
+            (
+                KernelAction::GrantCapability {
+                    parent: parent.clone(),
+                    child: agent.clone(),
+                    cap: CapKind::FilesystemRead,
+                },
+                proto::KernelActionKind::KernelActionGrantCapability,
+            ),
+            (
+                KernelAction::Revoke {
+                    parent: parent.clone(),
+                    target: agent.clone(),
+                },
+                proto::KernelActionKind::KernelActionRevoke,
+            ),
+            (
+                KernelAction::CascadeRevoke {
+                    child: agent.clone(),
+                    parent: parent.clone(),
+                },
+                proto::KernelActionKind::KernelActionCascadeRevoke,
+            ),
+            (
+                KernelAction::InvokeStart {
+                    agent: agent.clone(),
+                    tool: ToolId::new("t"),
+                    inv: inv.clone(),
+                },
+                proto::KernelActionKind::KernelActionInvokeStart,
+            ),
+            (
+                KernelAction::InvokeComplete {
+                    agent: agent.clone(),
+                    inv,
+                },
+                proto::KernelActionKind::KernelActionInvokeComplete,
+            ),
+            (
+                KernelAction::ReturnEndorsed {
+                    child: agent.clone(),
+                    parent: parent.clone(),
+                },
+                proto::KernelActionKind::KernelActionReturnEndorsed,
+            ),
+            (
+                KernelAction::ReturnUnendorsed {
+                    child: agent.clone(),
+                    parent: parent.clone(),
+                },
+                proto::KernelActionKind::KernelActionReturnUnendorsed,
+            ),
+            (
+                KernelAction::SentinelElevateTaint {
+                    agent,
+                    level: ConfLevel::Sensitive,
+                },
+                proto::KernelActionKind::KernelActionSentinelElevateTaint,
+            ),
         ];
         for (action, expected) in cases {
             let converted = kernel_action_to_proto(&action);
@@ -467,7 +542,9 @@ mod tests {
     fn event_response_conversion() {
         let event = KernelEvent::new(
             42,
-            KernelAction::RegisterTool { tool: ToolId::new("t") },
+            KernelAction::RegisterTool {
+                tool: ToolId::new("t"),
+            },
         );
         let response = event_to_response(&event);
         assert_eq!(response.sequence, 42);

@@ -55,8 +55,8 @@ impl BindingTable {
     pub fn verify_and_remove_stale(&mut self) -> Vec<String> {
         let mut stale = Vec::new();
         self.tools.retain(|name, binding| {
-            let hash_valid = compute_hash(&binding.source_path)
-                .is_ok_and(|h| h == binding.derivation_hash);
+            let hash_valid =
+                compute_hash(&binding.source_path).is_ok_and(|h| h == binding.derivation_hash);
             if !hash_valid {
                 tracing::warn!(
                     target: "argus::registry",

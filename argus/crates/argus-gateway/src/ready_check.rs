@@ -139,9 +139,7 @@ mod tests {
     async fn poll_ready_detects_process_death() {
         let mut child = tokio::process::Command::new("false").spawn().unwrap();
         let _ = child.wait().await;
-        let check = ReadyCheck::Command {
-            run: "true".into(),
-        };
+        let check = ReadyCheck::Command { run: "true".into() };
         let result = poll_ready(&check, 5, 100, &mut child).await;
         assert_eq!(result, ReadyOutcome::ProcessDied);
     }

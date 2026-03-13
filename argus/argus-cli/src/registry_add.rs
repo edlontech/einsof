@@ -2,12 +2,14 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use argus_analysis::{
-    audit_dependencies, detect_install, InstallDetection,
-    ManifestKind, OrchestratorConfig, RegistryAnalysisReport, RegistryAnalyzer, ToolContext,
+    InstallDetection, ManifestKind, OrchestratorConfig, RegistryAnalysisReport, RegistryAnalyzer,
+    ToolContext, audit_dependencies, detect_install,
 };
 use argus_config::ExtractionProviderConfig;
 use argus_registry::toml_types::InstallConfig;
-use argus_registry::{assemble_mcp_entry, generate_sandbox_config, write_registry_entry, AssemblyInput};
+use argus_registry::{
+    AssemblyInput, assemble_mcp_entry, generate_sandbox_config, write_registry_entry,
+};
 use tracing::{info, warn};
 
 use crate::git;
@@ -42,9 +44,9 @@ pub async fn run_registry_add(opts: RegistryAddOptions) -> Result<()> {
     .context("Clone task panicked")??;
 
     let tool_ctx = ToolContext::new(&clone_path)?;
-    let manifest_kind = tool_ctx
-        .detect_manifest()
-        .context("No recognized manifest found (package.json, Cargo.toml, pyproject.toml, go.mod)")?;
+    let manifest_kind = tool_ctx.detect_manifest().context(
+        "No recognized manifest found (package.json, Cargo.toml, pyproject.toml, go.mod)",
+    )?;
     let manifest_content = tool_ctx.read_file(manifest_filename(&manifest_kind), None, None)?;
 
     info!("Analyzing dependencies");

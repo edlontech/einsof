@@ -126,13 +126,10 @@ impl<S: SandboxProvider + 'static> McpManager<S> {
             source: e,
         })?;
 
-        let service = ()
-            .serve(transport)
-            .await
-            .map_err(|e| McpError::InitFailed {
-                name: config.name.clone(),
-                reason: format!("{e}"),
-            });
+        let service = ().serve(transport).await.map_err(|e| McpError::InitFailed {
+            name: config.name.clone(),
+            reason: format!("{e}"),
+        });
 
         let service = match service {
             Ok(s) => s,
@@ -142,13 +139,14 @@ impl<S: SandboxProvider + 'static> McpManager<S> {
             }
         };
 
-        let tools_result = service
-            .list_tools(Default::default())
-            .await
-            .map_err(|e| McpError::InitFailed {
-                name: config.name.clone(),
-                reason: format!("list_tools failed: {e}"),
-            });
+        let tools_result =
+            service
+                .list_tools(Default::default())
+                .await
+                .map_err(|e| McpError::InitFailed {
+                    name: config.name.clone(),
+                    reason: format!("list_tools failed: {e}"),
+                });
 
         let tools_result = match tools_result {
             Ok(t) => t,
@@ -262,10 +260,7 @@ impl<S: SandboxProvider + 'static> McpManager<S> {
             return Err(McpError::SidecarFailed {
                 mcp: mcp_name.to_string(),
                 sidecar: sidecar.name.clone(),
-                reason: format!(
-                    "exited with status {}",
-                    output.status.code().unwrap_or(-1)
-                ),
+                reason: format!("exited with status {}", output.status.code().unwrap_or(-1)),
             });
         }
 
@@ -323,10 +318,7 @@ impl<S: SandboxProvider + 'static> McpManager<S> {
                 Err(McpError::SidecarFailed {
                     mcp: mcp_name.to_string(),
                     sidecar: sidecar.name.clone(),
-                    reason: format!(
-                        "ready check timed out after {}s",
-                        sidecar.ready_timeout
-                    ),
+                    reason: format!("ready check timed out after {}s", sidecar.ready_timeout),
                 })
             }
             ReadyOutcome::ProcessDied => Err(McpError::SidecarFailed {
@@ -359,8 +351,8 @@ impl<S: SandboxProvider + 'static> McpManager<S> {
             reason,
         };
 
-        let args_string =
-            serde_json::to_string(&arguments).map_err(|e| call_failed(format!("serialize: {e}")))?;
+        let args_string = serde_json::to_string(&arguments)
+            .map_err(|e| call_failed(format!("serialize: {e}")))?;
 
         mcp_tool
             .call(args_string)
@@ -542,8 +534,7 @@ async fn supervise_daemons<S: SandboxProvider>(
                         "restarting daemon sidecar"
                     );
 
-                    let respawn_result =
-                        spawn_daemon(&*sandbox, &config, &profile, &server_name);
+                    let respawn_result = spawn_daemon(&*sandbox, &config, &profile, &server_name);
 
                     match respawn_result {
                         Ok(mut child) => {
@@ -712,9 +703,7 @@ mod tests {
             command: "nonexistent-sidecar-binary".into(),
             args: vec![],
             lifecycle: SidecarLifecycle::Daemon,
-            ready_check: Some(ReadyCheck::Command {
-                run: "true".into(),
-            }),
+            ready_check: Some(ReadyCheck::Command { run: "true".into() }),
             ready_timeout: 1,
             ready_interval: 100,
         }
@@ -741,8 +730,14 @@ mod tests {
 
         let err = result.unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("bad-init"), "error should name the sidecar: {msg}");
-        assert!(msg.contains("test-server"), "error should name the MCP server: {msg}");
+        assert!(
+            msg.contains("bad-init"),
+            "error should name the sidecar: {msg}"
+        );
+        assert!(
+            msg.contains("test-server"),
+            "error should name the MCP server: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -755,7 +750,10 @@ mod tests {
 
         let err = result.unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("bad-daemon"), "error should name the sidecar: {msg}");
+        assert!(
+            msg.contains("bad-daemon"),
+            "error should name the sidecar: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -783,9 +781,7 @@ mod tests {
             command: "sleep".into(),
             args: vec!["60".into()],
             lifecycle: SidecarLifecycle::Daemon,
-            ready_check: Some(ReadyCheck::Command {
-                run: "true".into(),
-            }),
+            ready_check: Some(ReadyCheck::Command { run: "true".into() }),
             ready_timeout: 5,
             ready_interval: 100,
         };
@@ -797,7 +793,10 @@ mod tests {
 
         let err = result.unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("bad-init"), "should fail on the init sidecar: {msg}");
+        assert!(
+            msg.contains("bad-init"),
+            "should fail on the init sidecar: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -816,10 +815,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn send_sigterm_to_running_process() {
-        let mut child = Command::new("sleep")
-            .arg("60")
-            .spawn()
-            .unwrap();
+        let mut child = Command::new("sleep").arg("60").spawn().unwrap();
 
         send_sigterm(&child);
         let status = child.wait().await.unwrap();
@@ -837,9 +833,7 @@ mod tests {
             command: "sleep".into(),
             args: vec!["0.1".into()],
             lifecycle: SidecarLifecycle::Daemon,
-            ready_check: Some(ReadyCheck::Command {
-                run: "true".into(),
-            }),
+            ready_check: Some(ReadyCheck::Command { run: "true".into() }),
             ready_timeout: 5,
             ready_interval: 100,
         };
@@ -899,9 +893,7 @@ mod tests {
             command: "sleep".into(),
             args: vec!["0.1".into()],
             lifecycle: SidecarLifecycle::Daemon,
-            ready_check: Some(ReadyCheck::Command {
-                run: "true".into(),
-            }),
+            ready_check: Some(ReadyCheck::Command { run: "true".into() }),
             ready_timeout: 5,
             ready_interval: 100,
         };
@@ -936,13 +928,13 @@ mod tests {
             .await;
         });
 
-        let got_fatal = tokio::time::timeout(
-            Duration::from_secs(10),
-            fatal_rx.wait_for(|v| *v),
-        )
-        .await;
+        let got_fatal =
+            tokio::time::timeout(Duration::from_secs(10), fatal_rx.wait_for(|v| *v)).await;
 
-        assert!(got_fatal.is_ok(), "should receive fatal signal within timeout");
+        assert!(
+            got_fatal.is_ok(),
+            "should receive fatal signal within timeout"
+        );
         let _ = handle.await;
     }
 
@@ -956,9 +948,7 @@ mod tests {
             command: "sleep".into(),
             args: vec!["0.1".into()],
             lifecycle: SidecarLifecycle::Daemon,
-            ready_check: Some(ReadyCheck::Command {
-                run: "true".into(),
-            }),
+            ready_check: Some(ReadyCheck::Command { run: "true".into() }),
             ready_timeout: 5,
             ready_interval: 100,
         };

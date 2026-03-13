@@ -15,7 +15,9 @@ pub struct RegistryUpdateOptions {
 
 pub async fn run_registry_update(opts: RegistryUpdateOptions) -> Result<()> {
     let registry_dir = opts.argus_home.join("local-registry");
-    let toml_path = registry_dir.join("mcps").join(format!("{}.toml", opts.name));
+    let toml_path = registry_dir
+        .join("mcps")
+        .join(format!("{}.toml", opts.name));
 
     if !toml_path.exists() {
         anyhow::bail!(

@@ -2,9 +2,7 @@
 
 use std::collections::HashMap;
 
-use argus_sandbox::{
-    NetPolicy, ProfileBuilder, SandboxProfile, SecretProvider, StaticProvider,
-};
+use argus_sandbox::{NetPolicy, ProfileBuilder, SandboxProfile, SecretProvider, StaticProvider};
 use secrecy::ExposeSecret;
 
 #[tokio::test]
@@ -53,7 +51,11 @@ async fn missing_required_env_var_is_caught() {
 async fn override_file_integration() {
     let dir = tempfile::TempDir::new().unwrap();
     let override_path = dir.path().join("test-mcp.toml");
-    std::fs::write(&override_path, "API_KEY = \"sk-from-file\"\nPORT = \"9999\"\n").unwrap();
+    std::fs::write(
+        &override_path,
+        "API_KEY = \"sk-from-file\"\nPORT = \"9999\"\n",
+    )
+    .unwrap();
 
     let mut defaults = HashMap::new();
     defaults.insert("PORT".into(), "8080".into());

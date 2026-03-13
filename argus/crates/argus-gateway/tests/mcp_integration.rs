@@ -70,9 +70,7 @@ async fn call_tool_add_returns_sum() {
 async fn call_tool_unknown_tool_returns_error() {
     let manager = McpManager::new(NoopSandbox);
 
-    let result = manager
-        .call_tool("nonexistent/tool", json!({}))
-        .await;
+    let result = manager.call_tool("nonexistent/tool", json!({})).await;
 
     assert!(result.is_err());
 }
@@ -153,10 +151,7 @@ async fn full_invoke_pipeline_with_mcp() {
 
     assert_eq!(result, "authorized call");
 
-    gateway
-        .invoke_complete(worker, inv)
-        .await
-        .unwrap();
+    gateway.invoke_complete(worker, inv).await.unwrap();
 
     mcp.shutdown().await;
 }

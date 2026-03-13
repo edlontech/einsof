@@ -44,7 +44,10 @@ mod tests {
     fn registry_capability_result_has_valid_schema() {
         let schema = schemars::schema_for!(RegistryCapabilityResult);
         let json = serde_json::to_string_pretty(&schema).unwrap();
-        assert!(!json.contains("\"$ref\""), "Schema must be inlined, no $ref");
+        assert!(
+            !json.contains("\"$ref\""),
+            "Schema must be inlined, no $ref"
+        );
     }
 
     #[test]

@@ -37,14 +37,14 @@ pub fn register_tool(
     tool: ToolId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if !bg.has_tool(&tool) {
-        return Err(KernelError::PreconditionViolation(
-            format!("tool {tool} not in background theory"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "tool {tool} not in background theory"
+        )));
     }
     if state.tool_registered.contains(&tool) {
-        return Err(KernelError::PreconditionViolation(
-            format!("tool {tool} already registered"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "tool {tool} already registered"
+        )));
     }
 
     state.tool_registered.insert(tool.clone());
@@ -59,14 +59,14 @@ pub fn delegate(
     grantee: AgentId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if !state.agent_active.contains(&grantor) {
-        return Err(KernelError::PreconditionViolation(
-            format!("grantor {grantor} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "grantor {grantor} is not active"
+        )));
     }
     if state.agent_active.contains(&grantee) {
-        return Err(KernelError::PreconditionViolation(
-            format!("grantee {grantee} is already active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "grantee {grantee} is already active"
+        )));
     }
     if grantee == AgentId::root() {
         return Err(KernelError::PreconditionViolation(
@@ -93,27 +93,35 @@ pub fn grant_capability(
     cap: CapKind,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if !state.agent_active.contains(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("parent {parent} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "parent {parent} is not active"
+        )));
     }
     if !state.agent_active.contains(&child) {
-        return Err(KernelError::PreconditionViolation(
-            format!("child {child} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "child {child} is not active"
+        )));
     }
     if state.agent_parent.get(&child) != Some(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("{child} is not a direct child of {parent}"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "{child} is not a direct child of {parent}"
+        )));
     }
-    if !state.agent_cap.get(&parent).is_some_and(|caps| caps.contains(&cap)) {
-        return Err(KernelError::PreconditionViolation(
-            format!("parent {parent} does not hold capability {cap}"),
-        ));
+    if !state
+        .agent_cap
+        .get(&parent)
+        .is_some_and(|caps| caps.contains(&cap))
+    {
+        return Err(KernelError::PreconditionViolation(format!(
+            "parent {parent} does not hold capability {cap}"
+        )));
     }
 
-    state.agent_cap.entry(child.clone()).or_default().insert(cap);
+    state
+        .agent_cap
+        .entry(child.clone())
+        .or_default()
+        .insert(cap);
 
     Ok((state, KernelAction::GrantCapability { parent, child, cap }))
 }
@@ -125,19 +133,19 @@ pub fn revoke(
     target: AgentId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if state.agent_parent.get(&target) != Some(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("{target} is not a direct child of {parent}"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "{target} is not a direct child of {parent}"
+        )));
     }
     if !state.agent_active.contains(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("parent {parent} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "parent {parent} is not active"
+        )));
     }
     if !state.agent_active.contains(&target) {
-        return Err(KernelError::PreconditionViolation(
-            format!("target {target} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "target {target} is not active"
+        )));
     }
     if target == AgentId::root() {
         return Err(KernelError::PreconditionViolation(
@@ -160,19 +168,19 @@ pub fn cascade_revoke(
     parent: AgentId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if state.agent_parent.get(&child) != Some(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("{child} is not a direct child of {parent}"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "{child} is not a direct child of {parent}"
+        )));
     }
     if state.agent_active.contains(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("parent {parent} is still active (use revoke, not cascade_revoke)"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "parent {parent} is still active (use revoke, not cascade_revoke)"
+        )));
     }
     if !state.agent_active.contains(&child) {
-        return Err(KernelError::PreconditionViolation(
-            format!("child {child} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "child {child} is not active"
+        )));
     }
     if child == AgentId::root() {
         return Err(KernelError::PreconditionViolation(
@@ -198,9 +206,9 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     inv: InvocationId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if !state.agent_active.contains(&agent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("agent {agent} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "agent {agent} is not active"
+        )));
     }
     if agent == AgentId::root() {
         return Err(KernelError::PreconditionViolation(
@@ -208,20 +216,20 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         ));
     }
     if !state.tool_registered.contains(&tool) {
-        return Err(KernelError::PreconditionViolation(
-            format!("tool {tool} is not registered"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "tool {tool} is not registered"
+        )));
     }
     if state.invocation_tool.contains_key(&inv) {
-        return Err(KernelError::PreconditionViolation(
-            format!("invocation {inv} already exists"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "invocation {inv} already exists"
+        )));
     }
     for flights in state.in_flight.values() {
         if flights.contains(&inv) {
-            return Err(KernelError::PreconditionViolation(
-                format!("invocation {inv} is already in-flight"),
-            ));
+            return Err(KernelError::PreconditionViolation(format!(
+                "invocation {inv} is already in-flight"
+            )));
         }
     }
 
@@ -232,9 +240,9 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     let agent_caps = state.agent_cap.get(&agent);
     for required_cap in &tool_meta.capabilities {
         if !agent_caps.is_some_and(|caps| caps.contains(required_cap)) {
-            return Err(KernelError::PreconditionViolation(
-                format!("agent {agent} lacks required capability {required_cap}"),
-            ));
+            return Err(KernelError::PreconditionViolation(format!(
+                "agent {agent} lacks required capability {required_cap}"
+            )));
         }
     }
 
@@ -256,7 +264,15 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
                     && let Some(flight_meta) = bg.tool_metadata(flight_tool_id)
                 {
                     for &egress in &flight_meta.egress {
-                        if !flow_allowed(bg, content_gate, &agent, flight_tool_id, &state, tool_meta.conf_floor, egress) {
+                        if !flow_allowed(
+                            bg,
+                            content_gate,
+                            &agent,
+                            flight_tool_id,
+                            &state,
+                            tool_meta.conf_floor,
+                            egress,
+                        ) {
                             return Err(KernelError::PreconditionViolation(format!(
                                 "flow gate 2b: new tool {tool} taint {} conflicts with in-flight {flight_tool_id} egress {egress}",
                                 tool_meta.conf_floor
@@ -268,7 +284,15 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         }
 
         for &egress in &tool_meta.egress {
-            if !flow_allowed(bg, content_gate, &agent, &tool, &state, tool_meta.conf_floor, egress) {
+            if !flow_allowed(
+                bg,
+                content_gate,
+                &agent,
+                &tool,
+                &state,
+                tool_meta.conf_floor,
+                egress,
+            ) {
                 return Err(KernelError::PreconditionViolation(format!(
                     "flow gate 2c: tool {tool} self-flow blocked ({}, {egress})",
                     tool_meta.conf_floor
@@ -278,9 +302,9 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     }
 
     if !authorizer.allows(&agent, &tool, &state, bg) {
-        return Err(KernelError::PreconditionViolation(
-            format!("authorizer denied ({agent}, {tool})"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "authorizer denied ({agent}, {tool})"
+        )));
     }
 
     state.invocation_tool.insert(inv.clone(), tool.clone());
@@ -299,15 +323,19 @@ pub fn invoke_complete(
     agent: AgentId,
     inv: InvocationId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
-    if !state.in_flight.get(&agent).is_some_and(|flights| flights.contains(&inv)) {
-        return Err(KernelError::PreconditionViolation(
-            format!("invocation {inv} is not in-flight for agent {agent}"),
-        ));
+    if !state
+        .in_flight
+        .get(&agent)
+        .is_some_and(|flights| flights.contains(&inv))
+    {
+        return Err(KernelError::PreconditionViolation(format!(
+            "invocation {inv} is not in-flight for agent {agent}"
+        )));
     }
     if !state.agent_active.contains(&agent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("agent {agent} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "agent {agent} is not active"
+        )));
     }
 
     if let Some(flights) = state.in_flight.get_mut(&agent) {
@@ -340,24 +368,28 @@ pub fn return_endorsed(
     parent: AgentId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if state.agent_parent.get(&child) != Some(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("{child} is not a direct child of {parent}"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "{child} is not a direct child of {parent}"
+        )));
     }
     if !state.agent_active.contains(&child) {
-        return Err(KernelError::PreconditionViolation(
-            format!("child {child} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "child {child} is not active"
+        )));
     }
     if !state.agent_active.contains(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("parent {parent} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "parent {parent} is not active"
+        )));
     }
-    if state.in_flight.get(&child).is_some_and(|flights| !flights.is_empty()) {
-        return Err(KernelError::PreconditionViolation(
-            format!("child {child} has in-flight invocations"),
-        ));
+    if state
+        .in_flight
+        .get(&child)
+        .is_some_and(|flights| !flights.is_empty())
+    {
+        return Err(KernelError::PreconditionViolation(format!(
+            "child {child} has in-flight invocations"
+        )));
     }
 
     Ok((state, KernelAction::ReturnEndorsed { child, parent }))
@@ -371,31 +403,31 @@ pub fn return_unendorsed<C: ContentGateOracle>(
     parent: AgentId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if state.agent_parent.get(&child) != Some(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("{child} is not a direct child of {parent}"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "{child} is not a direct child of {parent}"
+        )));
     }
     if !state.agent_active.contains(&child) {
-        return Err(KernelError::PreconditionViolation(
-            format!("child {child} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "child {child} is not active"
+        )));
     }
     if !state.agent_active.contains(&parent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("parent {parent} is not active"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "parent {parent} is not active"
+        )));
     }
-    if state.in_flight.get(&child).is_some_and(|flights| !flights.is_empty()) {
-        return Err(KernelError::PreconditionViolation(
-            format!("child {child} has in-flight invocations"),
-        ));
+    if state
+        .in_flight
+        .get(&child)
+        .is_some_and(|flights| !flights.is_empty())
+    {
+        return Err(KernelError::PreconditionViolation(format!(
+            "child {child} has in-flight invocations"
+        )));
     }
 
-    let child_taint = state
-        .taint_levels
-        .get(&child)
-        .cloned()
-        .unwrap_or_default();
+    let child_taint = state.taint_levels.get(&child).cloned().unwrap_or_default();
     let empty_flights = BTreeSet::new();
     let parent_flights = state.in_flight.get(&parent).unwrap_or(&empty_flights);
 
@@ -439,27 +471,26 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
     level: ConfLevel,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if !state.agent_active.contains(&agent) {
-        return Err(KernelError::PreconditionViolation(
-            format!("agent not active: {agent}"),
-        ));
+        return Err(KernelError::PreconditionViolation(format!(
+            "agent not active: {agent}"
+        )));
     }
 
     if let Some(in_flight_invs) = state.in_flight.get(&agent) {
         for inv in in_flight_invs {
             let tool = state.invocation_tool.get(inv).ok_or_else(|| {
-                KernelError::PreconditionViolation(
-                    format!("no tool binding for invocation {inv}"),
-                )
+                KernelError::PreconditionViolation(format!("no tool binding for invocation {inv}"))
             })?;
-            debug_assert!(bg.tool_metadata(tool).is_some(), "in-flight tool {tool} missing from background theory");
+            debug_assert!(
+                bg.tool_metadata(tool).is_some(),
+                "in-flight tool {tool} missing from background theory"
+            );
             if let Some(meta) = bg.tool_metadata(tool) {
                 for &egress in &meta.egress {
                     if !flow_allowed(bg, content_gate, &agent, tool, &state, level, egress) {
-                        return Err(KernelError::PreconditionViolation(
-                            format!(
-                                "flow incompatible: taint {level} with {tool} egress {egress}"
-                            ),
-                        ));
+                        return Err(KernelError::PreconditionViolation(format!(
+                            "flow incompatible: taint {level} with {tool} egress {egress}"
+                        )));
                     }
                 }
             }
@@ -477,10 +508,7 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
         .or_default()
         .insert(level);
 
-    Ok((
-        state,
-        KernelAction::SentinelElevateTaint { agent, level },
-    ))
+    Ok((state, KernelAction::SentinelElevateTaint { agent, level }))
 }
 
 #[cfg(test)]
@@ -612,14 +640,15 @@ mod tests {
         let grantor = AgentId::root();
         let grantee = AgentId::new("child-1");
 
-        let (new_state, action) =
-            delegate(state, &bg, grantor.clone(), grantee.clone()).unwrap();
+        let (new_state, action) = delegate(state, &bg, grantor.clone(), grantee.clone()).unwrap();
         assert!(new_state.agent_active.contains(&grantee));
         assert_eq!(new_state.agent_parent.get(&grantee), Some(&grantor));
-        assert!(new_state
-            .agent_cap
-            .get(&grantee)
-            .map_or(true, |s| s.is_empty()));
+        assert!(
+            new_state
+                .agent_cap
+                .get(&grantee)
+                .map_or(true, |s| s.is_empty())
+        );
         assert!(new_state.taint_levels.get(&grantee).is_none());
         assert_eq!(action, KernelAction::Delegate { grantor, grantee });
     }
@@ -648,11 +677,12 @@ mod tests {
             .insert(AgentId::new("phantom"), grantee.clone());
 
         let (new_state, _) = delegate(state, &bg, AgentId::root(), grantee.clone()).unwrap();
-        assert_eq!(
-            new_state.agent_parent.get(&grantee),
-            Some(&AgentId::root())
+        assert_eq!(new_state.agent_parent.get(&grantee), Some(&AgentId::root()));
+        assert!(
+            !new_state
+                .agent_parent
+                .contains_key(&AgentId::new("phantom"))
         );
-        assert!(!new_state.agent_parent.contains_key(&AgentId::new("phantom")));
     }
 
     // --- grant_capability ---
@@ -674,11 +704,13 @@ mod tests {
             CapKind::FilesystemRead,
         )
         .unwrap();
-        assert!(new_state
-            .agent_cap
-            .get(&child)
-            .unwrap()
-            .contains(&CapKind::FilesystemRead));
+        assert!(
+            new_state
+                .agent_cap
+                .get(&child)
+                .unwrap()
+                .contains(&CapKind::FilesystemRead)
+        );
         assert_eq!(
             action,
             KernelAction::GrantCapability {
@@ -701,8 +733,14 @@ mod tests {
         state.agent_cap.insert(parent, BTreeSet::new());
         state.agent_cap.insert(child.clone(), BTreeSet::new());
         assert!(
-            grant_capability(state, &bg, AgentId::new("parent"), child, CapKind::FilesystemRead)
-                .is_err()
+            grant_capability(
+                state,
+                &bg,
+                AgentId::new("parent"),
+                child,
+                CapKind::FilesystemRead
+            )
+            .is_err()
         );
     }
 
@@ -733,8 +771,7 @@ mod tests {
             .taint_levels
             .insert(child.clone(), BTreeSet::from([ConfLevel::Internal]));
 
-        let (new_state, action) =
-            revoke(state, &bg, AgentId::root(), child.clone()).unwrap();
+        let (new_state, action) = revoke(state, &bg, AgentId::root(), child.clone()).unwrap();
         assert!(!new_state.agent_active.contains(&child));
         assert!(!new_state.agent_parent.contains_key(&child));
         assert!(new_state.taint_levels.get(&child).is_none());
@@ -763,9 +800,7 @@ mod tests {
         state.agent_active.insert(child.clone());
         state.agent_active.insert(grandchild.clone());
         state.agent_parent.insert(child.clone(), AgentId::root());
-        state
-            .agent_parent
-            .insert(grandchild.clone(), child.clone());
+        state.agent_parent.insert(grandchild.clone(), child.clone());
 
         let (new_state, _) = revoke(state, &bg, AgentId::root(), child.clone()).unwrap();
         assert_eq!(new_state.agent_parent.get(&grandchild), Some(&child));
@@ -828,22 +863,27 @@ mod tests {
         );
         let bg = builder.build();
 
-        let (new_state, action) =
-            invoke_complete(state, &bg, agent.clone(), inv.clone()).unwrap();
-        assert!(!new_state
-            .in_flight
-            .get(&agent)
-            .map_or(false, |s| s.contains(&inv)));
-        assert!(new_state
-            .taint_levels
-            .get(&agent)
-            .unwrap()
-            .contains(&ConfLevel::Sensitive));
-        assert!(new_state
-            .gh_taint_invoked
-            .get(&agent)
-            .unwrap()
-            .contains(&ConfLevel::Sensitive));
+        let (new_state, action) = invoke_complete(state, &bg, agent.clone(), inv.clone()).unwrap();
+        assert!(
+            !new_state
+                .in_flight
+                .get(&agent)
+                .map_or(false, |s| s.contains(&inv))
+        );
+        assert!(
+            new_state
+                .taint_levels
+                .get(&agent)
+                .unwrap()
+                .contains(&ConfLevel::Sensitive)
+        );
+        assert!(
+            new_state
+                .gh_taint_invoked
+                .get(&agent)
+                .unwrap()
+                .contains(&ConfLevel::Sensitive)
+        );
         assert_eq!(action, KernelAction::InvokeComplete { agent, inv });
     }
 
@@ -952,16 +992,20 @@ mod tests {
 
         let (new_state, action) =
             return_unendorsed(state, &bg, &PassAll, child.clone(), AgentId::root()).unwrap();
-        assert!(new_state
-            .taint_levels
-            .get(&AgentId::root())
-            .unwrap()
-            .contains(&ConfLevel::Sensitive));
-        assert!(new_state
-            .gh_taint_received
-            .get(&AgentId::root())
-            .unwrap()
-            .contains(&ConfLevel::Sensitive));
+        assert!(
+            new_state
+                .taint_levels
+                .get(&AgentId::root())
+                .unwrap()
+                .contains(&ConfLevel::Sensitive)
+        );
+        assert!(
+            new_state
+                .gh_taint_received
+                .get(&AgentId::root())
+                .unwrap()
+                .contains(&ConfLevel::Sensitive)
+        );
         assert_eq!(
             action,
             KernelAction::ReturnUnendorsed {
@@ -1004,9 +1048,7 @@ mod tests {
         );
         let bg = builder.build();
 
-        assert!(
-            return_unendorsed(state, &bg, &FailAll, child, AgentId::root()).is_err()
-        );
+        assert!(return_unendorsed(state, &bg, &FailAll, child, AgentId::root()).is_err());
     }
 
     #[test]
@@ -1045,11 +1087,13 @@ mod tests {
         )
         .unwrap();
 
-        assert!(new_state
-            .in_flight
-            .get(&AgentId::new("a1"))
-            .unwrap()
-            .contains(&InvocationId::new("inv-1")));
+        assert!(
+            new_state
+                .in_flight
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&InvocationId::new("inv-1"))
+        );
         assert_eq!(
             *new_state
                 .invocation_tool
@@ -1071,48 +1115,54 @@ mod tests {
     fn invoke_start_rejects_missing_capability() {
         let state = state_with_agent("a1", &[]);
         let bg = bg_with_tools();
-        assert!(invoke_start(
-            state,
-            &bg,
-            &AllowAll,
-            &PassAll,
-            AgentId::new("a1"),
-            ToolId::new("read_file"),
-            InvocationId::new("inv-1"),
-        )
-        .is_err());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &AllowAll,
+                &PassAll,
+                AgentId::new("a1"),
+                ToolId::new("read_file"),
+                InvocationId::new("inv-1"),
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn invoke_start_rejects_root() {
         let state = KernelState::initial();
         let bg = bg_with_tools();
-        assert!(invoke_start(
-            state,
-            &bg,
-            &AllowAll,
-            &PassAll,
-            AgentId::root(),
-            ToolId::new("read_file"),
-            InvocationId::new("inv-1"),
-        )
-        .is_err());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &AllowAll,
+                &PassAll,
+                AgentId::root(),
+                ToolId::new("read_file"),
+                InvocationId::new("inv-1"),
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn invoke_start_rejects_unregistered_tool() {
         let state = state_with_agent("a1", &[CapKind::FilesystemRead]);
         let bg = bg_with_tools();
-        assert!(invoke_start(
-            state,
-            &bg,
-            &AllowAll,
-            &PassAll,
-            AgentId::new("a1"),
-            ToolId::new("unregistered"),
-            InvocationId::new("inv-1"),
-        )
-        .is_err());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &AllowAll,
+                &PassAll,
+                AgentId::new("a1"),
+                ToolId::new("unregistered"),
+                InvocationId::new("inv-1"),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1122,67 +1172,77 @@ mod tests {
             .invocation_tool
             .insert(InvocationId::new("inv-1"), ToolId::new("read_file"));
         let bg = bg_with_tools();
-        assert!(invoke_start(
-            state,
-            &bg,
-            &AllowAll,
-            &PassAll,
-            AgentId::new("a1"),
-            ToolId::new("read_file"),
-            InvocationId::new("inv-1"),
-        )
-        .is_err());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &AllowAll,
+                &PassAll,
+                AgentId::new("a1"),
+                ToolId::new("read_file"),
+                InvocationId::new("inv-1"),
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn invoke_start_rejects_authorizer_deny() {
         struct DenyAll;
         impl AuthorizerOracle for DenyAll {
-            fn allows(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+            fn allows(
+                &self,
+                _: &AgentId,
+                _: &ToolId,
+                _: &KernelState,
+                _: &BackgroundTheory,
+            ) -> bool {
                 false
             }
         }
         let state = state_with_agent("a1", &[CapKind::FilesystemRead]);
         let bg = bg_with_tools();
-        assert!(invoke_start(
-            state,
-            &bg,
-            &DenyAll,
-            &PassAll,
-            AgentId::new("a1"),
-            ToolId::new("read_file"),
-            InvocationId::new("inv-1"),
-        )
-        .is_err());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &DenyAll,
+                &PassAll,
+                AgentId::new("a1"),
+                ToolId::new("read_file"),
+                InvocationId::new("inv-1"),
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn invoke_start_flow_gate_blocks_tainted_agent_egress() {
         let mut state = state_with_agent("a1", &[CapKind::NetworkEgress]);
-        state.taint_levels.insert(
-            AgentId::new("a1"),
-            BTreeSet::from([ConfLevel::Sensitive]),
-        );
+        state
+            .taint_levels
+            .insert(AgentId::new("a1"), BTreeSet::from([ConfLevel::Sensitive]));
         let bg = bg_with_tools();
-        assert!(invoke_start(
-            state,
-            &bg,
-            &AllowAll,
-            &FailAll,
-            AgentId::new("a1"),
-            ToolId::new("send_email"),
-            InvocationId::new("inv-1"),
-        )
-        .is_err());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &AllowAll,
+                &FailAll,
+                AgentId::new("a1"),
+                ToolId::new("send_email"),
+                InvocationId::new("inv-1"),
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn invoke_start_flow_gate_allows_with_override() {
         let mut state = state_with_agent("a1", &[CapKind::NetworkEgress]);
-        state.taint_levels.insert(
-            AgentId::new("a1"),
-            BTreeSet::from([ConfLevel::Sensitive]),
-        );
+        state
+            .taint_levels
+            .insert(AgentId::new("a1"), BTreeSet::from([ConfLevel::Sensitive]));
         let mut builder = BackgroundTheoryBuilder::new();
         builder.register_tool(
             ToolId::new("send_email"),
@@ -1207,22 +1267,23 @@ mod tests {
         );
         let bg = builder.build();
 
-        assert!(invoke_start(
-            state,
-            &bg,
-            &AllowAll,
-            &FailAll,
-            AgentId::new("a1"),
-            ToolId::new("send_email"),
-            InvocationId::new("inv-1"),
-        )
-        .is_ok());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &AllowAll,
+                &FailAll,
+                AgentId::new("a1"),
+                ToolId::new("send_email"),
+                InvocationId::new("inv-1"),
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn invoke_start_check_2b_new_tool_taint_vs_existing_inflight_egress() {
-        let mut state =
-            state_with_agent("a1", &[CapKind::FilesystemRead, CapKind::NetworkEgress]);
+        let mut state = state_with_agent("a1", &[CapKind::FilesystemRead, CapKind::NetworkEgress]);
         let email_inv = InvocationId::new("email-inv");
         state
             .in_flight
@@ -1254,15 +1315,17 @@ mod tests {
         );
         let bg = builder.build();
 
-        assert!(invoke_start(
-            state,
-            &bg,
-            &AllowAll,
-            &FailAll,
-            AgentId::new("a1"),
-            ToolId::new("read_file"),
-            InvocationId::new("inv-2"),
-        )
-        .is_err());
+        assert!(
+            invoke_start(
+                state,
+                &bg,
+                &AllowAll,
+                &FailAll,
+                AgentId::new("a1"),
+                ToolId::new("read_file"),
+                InvocationId::new("inv-2"),
+            )
+            .is_err()
+        );
     }
 }

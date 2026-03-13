@@ -1,4 +1,4 @@
-use content_inspector::{inspect, ContentType};
+use content_inspector::{ContentType, inspect};
 use grep_regex::RegexMatcher;
 use grep_searcher::sinks::UTF8;
 use grep_searcher::{BinaryDetection, SearcherBuilder};
@@ -136,9 +136,8 @@ impl ToolContext {
         pattern: &str,
         glob_filter: Option<&str>,
     ) -> std::io::Result<Vec<SearchResult>> {
-        let matcher = RegexMatcher::new(pattern).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
-        })?;
+        let matcher = RegexMatcher::new(pattern)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
 
         let mut builder = WalkBuilder::new(&self.target_root);
         builder.hidden(true).git_ignore(true).git_global(false);
@@ -303,7 +302,9 @@ mod tests {
         let dir = setup_test_dir();
         let large = "x\n".repeat(100_000);
         std::fs::write(dir.path().join("big.js"), &large).unwrap();
-        let ctx = ToolContext::new(dir.path()).unwrap().with_max_file_size(1024);
+        let ctx = ToolContext::new(dir.path())
+            .unwrap()
+            .with_max_file_size(1024);
         let content = ctx.read_file("big.js", None, None).unwrap();
         assert!(content.len() < large.len());
         assert!(content.contains("[truncated]"));

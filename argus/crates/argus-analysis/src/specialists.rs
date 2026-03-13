@@ -105,7 +105,9 @@ pub struct CapabilityExtractionResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct CapabilityEntryResult {
-    #[schemars(description = "Capability name from the taxonomy (e.g. filesystem_read, network_egress)")]
+    #[schemars(
+        description = "Capability name from the taxonomy (e.g. filesystem_read, network_egress)"
+    )]
     pub name: String,
     #[schemars(description = "Confidence score from 0.0 to 1.0")]
     pub confidence: f32,

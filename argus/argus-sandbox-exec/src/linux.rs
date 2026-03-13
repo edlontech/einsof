@@ -1,7 +1,6 @@
 use argus_sandbox::{NetPolicy, SandboxProfile};
 use landlock::{
-    Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
-    ABI,
+    ABI, Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
 };
 
 mod proxy;

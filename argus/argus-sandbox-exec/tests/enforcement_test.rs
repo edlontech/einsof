@@ -5,7 +5,11 @@ use argus_sandbox::{NetPolicy, SandboxProfile};
 
 fn wrapper_binary() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_BIN_EXE_argus-sandbox-exec"));
-    assert!(path.exists(), "wrapper binary not found at {}", path.display());
+    assert!(
+        path.exists(),
+        "wrapper binary not found at {}",
+        path.display()
+    );
     path
 }
 

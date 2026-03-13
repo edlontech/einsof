@@ -27,8 +27,8 @@ pub use sandbox_gen::{
     ParsedCapability, extract_env_defaults, generate_env_declarations, generate_sandbox_config,
     parse_capability, required_env_keys,
 };
-pub use trust_event::{TrustEvent, TrustEventStore, TrustEventType};
 pub use toml_types::{SidecarValidationError, validate_sidecars};
+pub use trust_event::{TrustEvent, TrustEventStore, TrustEventType};
 pub use watcher::{FolderWatcher, WatchEvent, WatcherError};
 
 pub use types::*;

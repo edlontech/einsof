@@ -4,7 +4,7 @@ use rmcp::schemars;
 use rmcp::serde;
 use rmcp::service::ServiceExt;
 use rmcp::transport::io::stdio;
-use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, tool, tool_handler, tool_router};
 
 #[derive(Clone)]
 struct EchoServer {
@@ -33,18 +33,12 @@ struct AddParams {
 #[tool_router]
 impl EchoServer {
     #[tool(description = "Echoes the input message back")]
-    fn echo(
-        &self,
-        Parameters(params): Parameters<EchoParams>,
-    ) -> Result<CallToolResult, McpError> {
+    fn echo(&self, Parameters(params): Parameters<EchoParams>) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![Content::text(params.message)]))
     }
 
     #[tool(description = "Adds two numbers")]
-    fn add(
-        &self,
-        Parameters(params): Parameters<AddParams>,
-    ) -> Result<CallToolResult, McpError> {
+    fn add(&self, Parameters(params): Parameters<AddParams>) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![Content::text(
             (params.a + params.b).to_string(),
         )]))

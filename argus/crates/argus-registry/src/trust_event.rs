@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use uuid::Uuid;
 
 use crate::binding::{BindingTable, ToolBinding};
@@ -159,9 +159,8 @@ impl TrustEventStore {
 
     pub fn events_for_tool(&self, tool_name: &str) -> Result<Vec<TrustEvent>, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT * FROM trust_events WHERE tool_name = ?1 ORDER BY timestamp ASC",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM trust_events WHERE tool_name = ?1 ORDER BY timestamp ASC")?;
         let rows = stmt.query_map(params![tool_name], Self::row_to_event)?;
         rows.collect()
     }
@@ -243,8 +242,7 @@ impl TrustEventStore {
             event_type: TrustEventType::from_str(&event_type_str)
                 .unwrap_or(TrustEventType::Quarantined),
             derivation_hash: row.get("derivation_hash")?,
-            capabilities: capabilities_json
-                .map(|j| serde_json::from_str(&j).unwrap_or_default()),
+            capabilities: capabilities_json.map(|j| serde_json::from_str(&j).unwrap_or_default()),
             source_path: source_path_str.map(PathBuf::from),
             mcp_name: row.get("mcp_name")?,
             analysis_summary: row.get("analysis_summary")?,
@@ -328,9 +326,7 @@ mod tests {
     #[test]
     fn rebuild_bindings_excludes_revoked() {
         let store = TrustEventStore::in_memory().unwrap();
-        store
-            .write_event(&sample_trusted_event("tool_a"))
-            .unwrap();
+        store.write_event(&sample_trusted_event("tool_a")).unwrap();
 
         let revoke = TrustEvent {
             id: TrustEvent::new_id(),
@@ -354,9 +350,7 @@ mod tests {
     #[test]
     fn rebuild_bindings_uses_latest_event() {
         let store = TrustEventStore::in_memory().unwrap();
-        store
-            .write_event(&sample_trusted_event("tool_a"))
-            .unwrap();
+        store.write_event(&sample_trusted_event("tool_a")).unwrap();
 
         let mut updated = sample_trusted_event("tool_a");
         updated.event_type = TrustEventType::Updated;
@@ -385,12 +379,8 @@ mod tests {
     #[test]
     fn rebuild_bindings_multiple_tools() {
         let store = TrustEventStore::in_memory().unwrap();
-        store
-            .write_event(&sample_trusted_event("tool_a"))
-            .unwrap();
-        store
-            .write_event(&sample_trusted_event("tool_b"))
-            .unwrap();
+        store.write_event(&sample_trusted_event("tool_a")).unwrap();
+        store.write_event(&sample_trusted_event("tool_b")).unwrap();
 
         let table = store.rebuild_bindings().unwrap();
         assert_eq!(table.len(), 2);
@@ -416,9 +406,7 @@ mod tests {
     #[test]
     fn rebuild_after_revoke_then_retrust() {
         let store = TrustEventStore::in_memory().unwrap();
-        store
-            .write_event(&sample_trusted_event("tool_a"))
-            .unwrap();
+        store.write_event(&sample_trusted_event("tool_a")).unwrap();
 
         let revoke = TrustEvent {
             id: TrustEvent::new_id(),
@@ -445,9 +433,6 @@ mod tests {
 
         let table = store.rebuild_bindings().unwrap();
         assert_eq!(table.len(), 1);
-        assert_eq!(
-            table.lookup("tool_a").unwrap().derivation_hash,
-            "sha256:v3"
-        );
+        assert_eq!(table.lookup("tool_a").unwrap().derivation_hash, "sha256:v3");
     }
 }

@@ -96,9 +96,7 @@ async fn handle_request(
 fn parse_authority(authority: &str) -> (String, u16) {
     if let Some(colon_pos) = authority.rfind(':') {
         let host = &authority[..colon_pos];
-        let port = authority[colon_pos + 1..]
-            .parse()
-            .unwrap_or(443);
+        let port = authority[colon_pos + 1..].parse().unwrap_or(443);
         (host.to_string(), port)
     } else {
         (authority.to_string(), 443)

@@ -1,6 +1,6 @@
 use argus_kernel::{
-    AgentId, AuthorizerOracle, BackgroundTheory, CapKind, ConfLevel, ContentGateOracle,
-    EventStore, InvocationId, Kernel, KernelEvent, KernelState, ToolId,
+    AgentId, AuthorizerOracle, BackgroundTheory, CapKind, ConfLevel, ContentGateOracle, EventStore,
+    InvocationId, Kernel, KernelEvent, KernelState, ToolId,
 };
 use tokio::sync::Mutex;
 
@@ -21,12 +21,7 @@ where
     C: ContentGateOracle + Send,
     E: EventStore + Send,
 {
-    pub fn new(
-        background: BackgroundTheory,
-        authorizer: A,
-        content_gate: C,
-        events: E,
-    ) -> Self {
+    pub fn new(background: BackgroundTheory, authorizer: A, content_gate: C, events: E) -> Self {
         Self {
             kernel: Mutex::new(Kernel::new(background, authorizer, content_gate, events)),
         }

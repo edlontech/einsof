@@ -42,16 +42,9 @@ impl KernelState {
         }
     }
 
-    pub fn speculative_taint(
-        &self,
-        agent: &AgentId,
-        bg: &BackgroundTheory,
-    ) -> BTreeSet<ConfLevel> {
-        let mut taint: BTreeSet<ConfLevel> = self
-            .taint_levels
-            .get(agent)
-            .cloned()
-            .unwrap_or_default();
+    pub fn speculative_taint(&self, agent: &AgentId, bg: &BackgroundTheory) -> BTreeSet<ConfLevel> {
+        let mut taint: BTreeSet<ConfLevel> =
+            self.taint_levels.get(agent).cloned().unwrap_or_default();
 
         if let Some(flights) = self.in_flight.get(agent) {
             for inv in flights {

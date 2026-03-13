@@ -99,7 +99,10 @@ enum AuditCommands {
     },
 }
 
-fn build_provider_config(provider: &str, model: &str) -> anyhow::Result<argus_config::ExtractionProviderConfig> {
+fn build_provider_config(
+    provider: &str,
+    model: &str,
+) -> anyhow::Result<argus_config::ExtractionProviderConfig> {
     use argus_config::ExtractionProviderConfig;
     match provider {
         "openrouter" => Ok(ExtractionProviderConfig::OpenRouter {
@@ -128,7 +131,9 @@ fn build_provider_config(provider: &str, model: &str) -> anyhow::Result<argus_co
             api_key_env: "GEMINI_API_KEY".to_string(),
             timeout_ms: 30000,
         }),
-        other => anyhow::bail!("Unknown provider: {other}. Use: openrouter, ollama, openai, anthropic, gemini"),
+        other => anyhow::bail!(
+            "Unknown provider: {other}. Use: openrouter, ollama, openai, anthropic, gemini"
+        ),
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::llm_codec::LlmCodec;
 use crate::llm_types::{ToolCall, ToolResult};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct OpenAiCodec;
 
@@ -26,7 +26,11 @@ impl LlmCodec for OpenAiCodec {
                     .and_then(|a| a.as_str())
                     .unwrap_or("{}")
                     .to_owned();
-                Some(ToolCall { id, name, arguments })
+                Some(ToolCall {
+                    id,
+                    name,
+                    arguments,
+                })
             })
             .collect()
     }
@@ -74,8 +78,14 @@ impl LlmCodec for OpenAiCodec {
             .and_then(|c| c.as_str())
             .unwrap_or("");
 
-        let id = response.get("id").cloned().unwrap_or_else(|| json!("chatcmpl-proxy"));
-        let model = response.get("model").cloned().unwrap_or_else(|| json!("unknown"));
+        let id = response
+            .get("id")
+            .cloned()
+            .unwrap_or_else(|| json!("chatcmpl-proxy"));
+        let model = response
+            .get("model")
+            .cloned()
+            .unwrap_or_else(|| json!("unknown"));
 
         let chunk = json!({
             "id": id,

@@ -87,9 +87,7 @@ fn apply_sandbox(sbpl: &str) -> Result<(), String> {
     let profile_cstr = CString::new(sbpl).map_err(|e| format!("invalid SBPL: {e}"))?;
     let mut errorbuf: *mut libc::c_char = ptr::null_mut();
 
-    let result = unsafe {
-        sandbox_init(profile_cstr.as_ptr(), 0, &mut errorbuf)
-    };
+    let result = unsafe { sandbox_init(profile_cstr.as_ptr(), 0, &mut errorbuf) };
 
     if result != 0 {
         let err = if !errorbuf.is_null() {

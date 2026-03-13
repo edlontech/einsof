@@ -5,8 +5,19 @@ use std::process::ExitCode;
 use argus_sandbox::SandboxProfile;
 
 const SYSTEM_BASELINE_VARS: &[&str] = &[
-    "PATH", "HOME", "TMPDIR", "USER", "LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_COLLATE",
-    "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "TERM",
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_COLLATE",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "TERM",
 ];
 
 fn main() -> ExitCode {
@@ -118,7 +129,11 @@ fn restrict_path(original: &str) -> String {
     let allowed_prefixes = ["/usr/bin", "/usr/local/bin", "/bin", "/usr/sbin"];
     original
         .split(':')
-        .filter(|entry| allowed_prefixes.iter().any(|prefix| entry.starts_with(prefix)))
+        .filter(|entry| {
+            allowed_prefixes
+                .iter()
+                .any(|prefix| entry.starts_with(prefix))
+        })
         .collect::<Vec<_>>()
         .join(":")
 }

@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use argus_kernel::{AgentId, AuthorizerOracle, BackgroundTheory, ContentGateOracle, KernelState, ToolId};
+use argus_kernel::{
+    AgentId, AuthorizerOracle, BackgroundTheory, ContentGateOracle, KernelState, ToolId,
+};
 
 pub struct MockAuthorizer {
     allowed: BTreeSet<(AgentId, ToolId)>,
@@ -35,7 +37,13 @@ impl MockAuthorizer {
 }
 
 impl AuthorizerOracle for MockAuthorizer {
-    fn allows(&self, agent: &AgentId, tool: &ToolId, _state: &KernelState, _bg: &BackgroundTheory) -> bool {
+    fn allows(
+        &self,
+        agent: &AgentId,
+        tool: &ToolId,
+        _state: &KernelState,
+        _bg: &BackgroundTheory,
+    ) -> bool {
         self.allow_all || self.allowed.contains(&(agent.clone(), tool.clone()))
     }
 }
@@ -73,7 +81,13 @@ impl MockContentGate {
 }
 
 impl ContentGateOracle for MockContentGate {
-    fn passes(&self, agent: &AgentId, tool: &ToolId, _state: &KernelState, _bg: &BackgroundTheory) -> bool {
+    fn passes(
+        &self,
+        agent: &AgentId,
+        tool: &ToolId,
+        _state: &KernelState,
+        _bg: &BackgroundTheory,
+    ) -> bool {
         self.pass_all || self.allowed.contains(&(agent.clone(), tool.clone()))
     }
 }
@@ -106,7 +120,12 @@ mod tests {
     #[test]
     fn mock_authorizer_allow_all_permits_everything() {
         let auth = MockAuthorizer::allow_all();
-        assert!(auth.allows(&AgentId::new("anyone"), &ToolId::new("anything"), &s(), &bg()));
+        assert!(auth.allows(
+            &AgentId::new("anyone"),
+            &ToolId::new("anything"),
+            &s(),
+            &bg()
+        ));
     }
 
     #[test]

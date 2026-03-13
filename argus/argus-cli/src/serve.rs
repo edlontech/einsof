@@ -13,8 +13,8 @@ use argus_gateway::{
 };
 use argus_kernel::{BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, ToolId, ToolMetadata};
 use argus_oracle::{CedarAuthorizer, FilePolicySource, MockContentGate};
-use argus_registry::toml_loader::TomlRegistry;
 use argus_registry::extract_env_defaults;
+use argus_registry::toml_loader::TomlRegistry;
 use argus_registry::toml_types::{InstallConfig, McpEntry, SandboxNetPolicy};
 use argus_sandbox::{NetPolicy, NoopSandbox, OsSandbox, ProfileBuilder, SandboxProfile};
 
@@ -41,12 +41,16 @@ pub async fn run_serve(config_path: &str) -> anyhow::Result<()> {
             .with_context(|| format!("failed to create policy dir: {policy_path}"))?;
     }
     let source = FilePolicySource::new(policy_dir);
-    let authorizer =
-        CedarAuthorizer::new(&source).context("failed to load Cedar policies")?;
+    let authorizer = CedarAuthorizer::new(&source).context("failed to load Cedar policies")?;
 
     let content_gate = MockContentGate::default();
     let event_store = InMemoryEventStore::new();
-    let gateway = Arc::new(GatewayService::new(bg, authorizer, content_gate, event_store));
+    let gateway = Arc::new(GatewayService::new(
+        bg,
+        authorizer,
+        content_gate,
+        event_store,
+    ));
 
     let sandbox: Box<dyn argus_sandbox::SandboxProvider> = match OsSandbox::new() {
         Ok(s) => {
@@ -87,10 +91,7 @@ pub async fn run_serve(config_path: &str) -> anyhow::Result<()> {
     if let Some(ref grpc_cfg) = config.grpc
         && grpc_cfg.enabled
     {
-        let addr = grpc_cfg
-            .address
-            .parse()
-            .context("invalid gRPC address")?;
+        let addr = grpc_cfg.address.parse().context("invalid gRPC address")?;
         let grpc_svc = ArgusGrpcService::new(gateway.clone());
         let mut shutdown_rx = shutdown_tx.subscribe();
         handles.push(tokio::spawn(async move {
@@ -195,8 +196,7 @@ fn build_background_theory(mcps: &HashMap<String, McpEntry>) -> argus_kernel::Ba
             .filter_map(|s| parse_cap_kind(s))
             .collect();
 
-        let egress: BTreeSet<EgressKind> =
-            capabilities.iter().filter_map(cap_to_egress).collect();
+        let egress: BTreeSet<EgressKind> = capabilities.iter().filter_map(cap_to_egress).collect();
 
         let metadata = ToolMetadata {
             capabilities,
@@ -228,12 +228,13 @@ fn build_mcp_configs(mcps: &HashMap<String, McpEntry>) -> Vec<McpServerConfig> {
         let missing: Vec<_> = entry
             .env
             .iter()
-            .filter_map(|(k, v)| {
-                match std::env::var(k) {
-                    Ok(val) => { daemon_env.insert(k.clone(), val); None }
-                    Err(_) if v.required => Some(k.as_str()),
-                    Err(_) => None,
+            .filter_map(|(k, v)| match std::env::var(k) {
+                Ok(val) => {
+                    daemon_env.insert(k.clone(), val);
+                    None
                 }
+                Err(_) if v.required => Some(k.as_str()),
+                Err(_) => None,
             })
             .collect();
         if !missing.is_empty() {
@@ -356,8 +357,14 @@ mod tests {
 
     #[test]
     fn parse_cap_kind_basic() {
-        assert_eq!(parse_cap_kind("filesystem:read"), Some(CapKind::FilesystemRead));
-        assert_eq!(parse_cap_kind("network:egress"), Some(CapKind::NetworkEgress));
+        assert_eq!(
+            parse_cap_kind("filesystem:read"),
+            Some(CapKind::FilesystemRead)
+        );
+        assert_eq!(
+            parse_cap_kind("network:egress"),
+            Some(CapKind::NetworkEgress)
+        );
         assert_eq!(parse_cap_kind("credentials"), Some(CapKind::Credentials));
         assert_eq!(parse_cap_kind("ipc"), Some(CapKind::Ipc));
     }
@@ -456,7 +463,12 @@ mod tests {
         let mut mcps = HashMap::new();
         mcps.insert(
             "npm-server".to_string(),
-            test_mcp_entry("npm-server", "observed", &[], npm_install("@mcp/test", "1.0.0")),
+            test_mcp_entry(
+                "npm-server",
+                "observed",
+                &[],
+                npm_install("@mcp/test", "1.0.0"),
+            ),
         );
         mcps.insert(
             "binary-server".to_string(),
@@ -482,8 +494,12 @@ mod tests {
     #[test]
     fn build_mcp_configs_includes_default_args() {
         let mut mcps = HashMap::new();
-        let mut entry =
-            test_mcp_entry("with-args", "observed", &[], npm_install("@mcp/test", "1.0.0"));
+        let mut entry = test_mcp_entry(
+            "with-args",
+            "observed",
+            &[],
+            npm_install("@mcp/test", "1.0.0"),
+        );
         entry.args = McpArgs {
             default: vec!["/home/user/docs".into()],
         };
@@ -523,7 +539,11 @@ mod tests {
         let config = build_proxy_config(&proxy_cfg);
         assert_eq!(config.max_tool_rounds, 20);
         assert_eq!(config.upstreams.len(), 2);
-        let openai = config.upstreams.iter().find(|u| u.name == "openai").unwrap();
+        let openai = config
+            .upstreams
+            .iter()
+            .find(|u| u.name == "openai")
+            .unwrap();
         assert_eq!(openai.format, LlmFormat::OpenAi);
         let anthropic = config
             .upstreams

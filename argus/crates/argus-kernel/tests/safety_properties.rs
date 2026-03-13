@@ -64,12 +64,8 @@ fn root_survives_all_operations() {
     let mut k = test_kernel();
     k.register_tool(ToolId::new("read_file")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("a1"),
-        CapKind::FilesystemRead,
-    )
-    .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead)
+        .unwrap();
     k.revoke(AgentId::root(), AgentId::new("a1")).unwrap();
     assert!(k.state().agent_active.contains(&AgentId::root()));
 }
@@ -82,18 +78,10 @@ fn tainted_agent_cannot_egress_when_denied() {
     k.register_tool(ToolId::new("read_file")).unwrap();
     k.register_tool(ToolId::new("send_email")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("a1"),
-        CapKind::FilesystemRead,
-    )
-    .unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("a1"),
-        CapKind::NetworkEgress,
-    )
-    .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead)
+        .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::NetworkEgress)
+        .unwrap();
 
     k.invoke_start(
         AgentId::new("a1"),
@@ -117,8 +105,7 @@ fn tainted_agent_cannot_egress_when_denied() {
 #[test]
 fn child_cannot_get_cap_parent_lacks() {
     let mut k = test_kernel();
-    k.delegate(AgentId::root(), AgentId::new("parent"))
-        .unwrap();
+    k.delegate(AgentId::root(), AgentId::new("parent")).unwrap();
     k.grant_capability(
         AgentId::root(),
         AgentId::new("parent"),
@@ -143,12 +130,8 @@ fn fresh_child_has_no_taint() {
     let mut k = test_kernel();
     k.register_tool(ToolId::new("read_file")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("a1"),
-        CapKind::FilesystemRead,
-    )
-    .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead)
+        .unwrap();
     k.invoke_start(
         AgentId::new("a1"),
         ToolId::new("read_file"),
@@ -186,12 +169,8 @@ fn endorsed_tool_no_taint() {
     let mut k = test_kernel();
     k.register_tool(ToolId::new("check_exists")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("a1"),
-        CapKind::FilesystemRead,
-    )
-    .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead)
+        .unwrap();
 
     k.invoke_start(
         AgentId::new("a1"),
@@ -202,11 +181,7 @@ fn endorsed_tool_no_taint() {
     k.invoke_complete(AgentId::new("a1"), InvocationId::new("i1"))
         .unwrap();
 
-    assert!(k
-        .state()
-        .taint_levels
-        .get(&AgentId::new("a1"))
-        .is_none());
+    assert!(k.state().taint_levels.get(&AgentId::new("a1")).is_none());
 }
 
 /// return_unendorsed propagates child taint to parent.
@@ -214,8 +189,7 @@ fn endorsed_tool_no_taint() {
 fn return_unendorsed_propagates_taint_to_parent() {
     let mut k = test_kernel();
     k.register_tool(ToolId::new("read_file")).unwrap();
-    k.delegate(AgentId::root(), AgentId::new("parent"))
-        .unwrap();
+    k.delegate(AgentId::root(), AgentId::new("parent")).unwrap();
     k.grant_capability(
         AgentId::root(),
         AgentId::new("parent"),
@@ -242,12 +216,13 @@ fn return_unendorsed_propagates_taint_to_parent() {
 
     k.return_unendorsed(AgentId::new("child"), AgentId::new("parent"))
         .unwrap();
-    assert!(k
-        .state()
-        .taint_levels
-        .get(&AgentId::new("parent"))
-        .unwrap()
-        .contains(&ConfLevel::Sensitive));
+    assert!(
+        k.state()
+            .taint_levels
+            .get(&AgentId::new("parent"))
+            .unwrap()
+            .contains(&ConfLevel::Sensitive)
+    );
 }
 
 /// Root cannot invoke tools directly (root is the orchestrator, not an agent).
@@ -271,18 +246,10 @@ fn speculative_taint_blocks_parallel_exfil() {
     k.register_tool(ToolId::new("read_file")).unwrap();
     k.register_tool(ToolId::new("send_email")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("a1"),
-        CapKind::FilesystemRead,
-    )
-    .unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("a1"),
-        CapKind::NetworkEgress,
-    )
-    .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead)
+        .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::NetworkEgress)
+        .unwrap();
 
     k.invoke_start(
         AgentId::new("a1"),
@@ -310,8 +277,12 @@ fn deep_delegation_chain() {
         .unwrap();
 
     k.delegate(AgentId::new("p"), AgentId::new("c")).unwrap();
-    k.grant_capability(AgentId::new("p"), AgentId::new("c"), CapKind::FilesystemRead)
-        .unwrap();
+    k.grant_capability(
+        AgentId::new("p"),
+        AgentId::new("c"),
+        CapKind::FilesystemRead,
+    )
+    .unwrap();
 
     k.invoke_start(
         AgentId::new("c"),
@@ -324,12 +295,13 @@ fn deep_delegation_chain() {
 
     k.return_unendorsed(AgentId::new("c"), AgentId::new("p"))
         .unwrap();
-    assert!(k
-        .state()
-        .taint_levels
-        .get(&AgentId::new("p"))
-        .unwrap()
-        .contains(&ConfLevel::Sensitive));
+    assert!(
+        k.state()
+            .taint_levels
+            .get(&AgentId::new("p"))
+            .unwrap()
+            .contains(&ConfLevel::Sensitive)
+    );
 }
 
 /// return_endorsed does NOT propagate child taint to parent.
@@ -339,12 +311,8 @@ fn return_endorsed_does_not_propagate_taint() {
     let mut k = test_kernel();
     k.register_tool(ToolId::new("read_file")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("p")).unwrap();
-    k.grant_capability(
-        AgentId::root(),
-        AgentId::new("p"),
-        CapKind::FilesystemRead,
-    )
-    .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("p"), CapKind::FilesystemRead)
+        .unwrap();
     k.delegate(AgentId::new("p"), AgentId::new("c")).unwrap();
     k.grant_capability(
         AgentId::new("p"),
@@ -410,18 +378,20 @@ fn sentinel_elevate_taint_basic() {
             level: ConfLevel::Sensitive,
         }
     );
-    assert!(k
-        .state()
-        .taint_levels
-        .get(&AgentId::new("a1"))
-        .unwrap()
-        .contains(&ConfLevel::Sensitive));
-    assert!(k
-        .state()
-        .gh_taint_invoked
-        .get(&AgentId::new("a1"))
-        .unwrap()
-        .contains(&ConfLevel::Sensitive));
+    assert!(
+        k.state()
+            .taint_levels
+            .get(&AgentId::new("a1"))
+            .unwrap()
+            .contains(&ConfLevel::Sensitive)
+    );
+    assert!(
+        k.state()
+            .gh_taint_invoked
+            .get(&AgentId::new("a1"))
+            .unwrap()
+            .contains(&ConfLevel::Sensitive)
+    );
 }
 
 #[test]
@@ -458,12 +428,13 @@ fn sentinel_elevate_taint_no_in_flight_always_succeeds() {
 
     k.sentinel_elevate_taint(AgentId::new("a1"), ConfLevel::Restricted)
         .unwrap();
-    assert!(k
-        .state()
-        .taint_levels
-        .get(&AgentId::new("a1"))
-        .unwrap()
-        .contains(&ConfLevel::Restricted));
+    assert!(
+        k.state()
+            .taint_levels
+            .get(&AgentId::new("a1"))
+            .unwrap()
+            .contains(&ConfLevel::Restricted)
+    );
 }
 
 #[test]

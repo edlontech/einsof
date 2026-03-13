@@ -30,14 +30,15 @@ impl CedarAuthorizer {
 }
 
 impl AuthorizerOracle for CedarAuthorizer {
-    fn allows(&self, agent: &AgentId, tool: &ToolId, state: &KernelState, bg: &BackgroundTheory) -> bool {
-        let Ok(entities) = build_entities_for_request(
-            agent,
-            tool,
-            state,
-            bg,
-            &self.tool_scopes,
-        ) else {
+    fn allows(
+        &self,
+        agent: &AgentId,
+        tool: &ToolId,
+        state: &KernelState,
+        bg: &BackgroundTheory,
+    ) -> bool {
+        let Ok(entities) = build_entities_for_request(agent, tool, state, bg, &self.tool_scopes)
+        else {
             return false;
         };
 
@@ -57,9 +58,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    use argus_kernel::{
-        BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, ToolMetadata,
-    };
+    use argus_kernel::{BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, ToolMetadata};
 
     fn test_background() -> BackgroundTheory {
         let mut builder = BackgroundTheoryBuilder::new();
@@ -125,27 +124,40 @@ mod tests {
 
     #[test]
     fn allows_endorsed_tool_with_default_policy() {
-        let policy =
-            r#"permit(principal, action == Argus::Action::"invoke", resource) when { resource.endorsed == true };"#;
+        let policy = r#"permit(principal, action == Argus::Action::"invoke", resource) when { resource.endorsed == true };"#;
         let source = source_with_policy(policy);
         let auth = CedarAuthorizer::new(&source).unwrap();
-        assert!(auth.allows(&AgentId::new("worker"), &ToolId::new("endorsed-tool"), &test_state(), &test_background()));
+        assert!(auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("endorsed-tool"),
+            &test_state(),
+            &test_background()
+        ));
     }
 
     #[test]
     fn denies_unendorsed_tool_with_endorsed_only_policy() {
-        let policy =
-            r#"permit(principal, action == Argus::Action::"invoke", resource) when { resource.endorsed == true };"#;
+        let policy = r#"permit(principal, action == Argus::Action::"invoke", resource) when { resource.endorsed == true };"#;
         let source = source_with_policy(policy);
         let auth = CedarAuthorizer::new(&source).unwrap();
-        assert!(!auth.allows(&AgentId::new("worker"), &ToolId::new("unendorsed-tool"), &test_state(), &test_background()));
+        assert!(!auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("unendorsed-tool"),
+            &test_state(),
+            &test_background()
+        ));
     }
 
     #[test]
     fn denies_when_no_policies() {
         let source = source_with_policy("");
         let auth = CedarAuthorizer::new(&source).unwrap();
-        assert!(!auth.allows(&AgentId::new("worker"), &ToolId::new("endorsed-tool"), &test_state(), &test_background()));
+        assert!(!auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("endorsed-tool"),
+            &test_state(),
+            &test_background()
+        ));
     }
 
     #[test]
@@ -158,8 +170,18 @@ mod tests {
         let source = source_with_policy(policy);
         let bg = test_background();
         let auth = CedarAuthorizer::new(&source).unwrap();
-        assert!(auth.allows(&AgentId::new("worker"), &ToolId::new("endorsed-tool"), &test_state(), &bg));
-        assert!(!auth.allows(&AgentId::new("worker"), &ToolId::new("unendorsed-tool"), &test_state(), &bg));
+        assert!(auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("endorsed-tool"),
+            &test_state(),
+            &bg
+        ));
+        assert!(!auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("unendorsed-tool"),
+            &test_state(),
+            &bg
+        ));
     }
 
     #[test]
@@ -173,7 +195,12 @@ mod tests {
         let bg = test_background();
         let auth = CedarAuthorizer::new(&source).unwrap();
 
-        assert!(auth.allows(&AgentId::new("worker"), &ToolId::new("endorsed-tool"), &test_state(), &bg));
+        assert!(auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("endorsed-tool"),
+            &test_state(),
+            &bg
+        ));
 
         let mut tainted_state = test_state();
         tainted_state.taint_levels.insert(
@@ -181,7 +208,12 @@ mod tests {
             BTreeSet::from([ConfLevel::Restricted]),
         );
 
-        assert!(!auth.allows(&AgentId::new("worker"), &ToolId::new("endorsed-tool"), &tainted_state, &bg));
+        assert!(!auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("endorsed-tool"),
+            &tainted_state,
+            &bg
+        ));
     }
 
     #[test]
@@ -189,7 +221,12 @@ mod tests {
         let policy = r#"permit(principal, action == Argus::Action::"invoke", resource) when { resource.endorsed == true };"#;
         let source = source_with_policy(policy);
         let auth = CedarAuthorizer::new(&source).unwrap();
-        let _ = auth.allows(&AgentId::new("ghost"), &ToolId::new("endorsed-tool"), &test_state(), &test_background());
+        let _ = auth.allows(
+            &AgentId::new("ghost"),
+            &ToolId::new("endorsed-tool"),
+            &test_state(),
+            &test_background(),
+        );
     }
 
     #[test]
@@ -197,7 +234,12 @@ mod tests {
         let policy = r#"permit(principal, action == Argus::Action::"invoke", resource) when { resource.endorsed == true };"#;
         let source = source_with_policy(policy);
         let auth = CedarAuthorizer::new(&source).unwrap();
-        assert!(!auth.allows(&AgentId::new("worker"), &ToolId::new("nonexistent"), &test_state(), &test_background()));
+        assert!(!auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("nonexistent"),
+            &test_state(),
+            &test_background()
+        ));
     }
 
     #[test]
@@ -218,7 +260,17 @@ mod tests {
         };
         let bg = test_background();
         let auth = CedarAuthorizer::new(&source).unwrap();
-        assert!(auth.allows(&AgentId::new("worker"), &ToolId::new("endorsed-tool"), &test_state(), &bg));
-        assert!(!auth.allows(&AgentId::new("worker"), &ToolId::new("unendorsed-tool"), &test_state(), &bg));
+        assert!(auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("endorsed-tool"),
+            &test_state(),
+            &bg
+        ));
+        assert!(!auth.allows(
+            &AgentId::new("worker"),
+            &ToolId::new("unendorsed-tool"),
+            &test_state(),
+            &bg
+        ));
     }
 }

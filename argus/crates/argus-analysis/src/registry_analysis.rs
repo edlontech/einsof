@@ -118,7 +118,10 @@ where
 
         let user_prompt = build_registry_user_prompt(&target_path);
 
-        info!(max_turns = config.max_turns, "Starting registry analysis orchestrator");
+        info!(
+            max_turns = config.max_turns,
+            "Starting registry analysis orchestrator"
+        );
         let response = agent
             .prompt(&user_prompt)
             .multi_turn(config.max_turns)
@@ -187,11 +190,9 @@ impl RegistryAnalyzer {
                 model, api_key_env, ..
             } => {
                 let api_key = get_env_var(api_key_env)?;
-                let client: openrouter::Client = openrouter::Client::new(&api_key)
-                    .map_err(|e| client_error("OpenRouter", e))?;
-                let completion_model = client
-                    .completion_model(model)
-                    .with_strict_tools();
+                let client: openrouter::Client =
+                    openrouter::Client::new(&api_key).map_err(|e| client_error("OpenRouter", e))?;
+                let completion_model = client.completion_model(model).with_strict_tools();
                 Arc::new(RegistryOrchestrateImpl {
                     model: completion_model,
                 })
@@ -210,8 +211,8 @@ impl RegistryAnalyzer {
                 model, api_key_env, ..
             } => {
                 let api_key = get_env_var(api_key_env)?;
-                let client: openai::Client = openai::Client::new(&api_key)
-                    .map_err(|e| client_error("OpenAI", e))?;
+                let client: openai::Client =
+                    openai::Client::new(&api_key).map_err(|e| client_error("OpenAI", e))?;
                 make_registry_orchestrate!(client, model)
             }
             ExtractionProviderConfig::Anthropic {
@@ -229,8 +230,8 @@ impl RegistryAnalyzer {
                 model, api_key_env, ..
             } => {
                 let api_key = get_env_var(api_key_env)?;
-                let client: gemini::Client = gemini::Client::new(&api_key)
-                    .map_err(|e| client_error("Gemini", e))?;
+                let client: gemini::Client =
+                    gemini::Client::new(&api_key).map_err(|e| client_error("Gemini", e))?;
                 make_registry_orchestrate!(client, model)
             }
         };
@@ -246,10 +247,7 @@ impl RegistryAnalyzer {
         self
     }
 
-    pub async fn infer_capabilities(
-        &self,
-        source_dir: &Path,
-    ) -> Result<Vec<CapabilityFinding>> {
+    pub async fn infer_capabilities(&self, source_dir: &Path) -> Result<Vec<CapabilityFinding>> {
         if !source_dir.exists() {
             return Err(AnalysisError::InvalidPath(format!(
                 "Path does not exist: {}",
@@ -306,7 +304,9 @@ mod tests {
             config: OrchestratorConfig::default(),
         };
 
-        let result = analyzer.infer_capabilities(Path::new("/nonexistent/path/99999")).await;
+        let result = analyzer
+            .infer_capabilities(Path::new("/nonexistent/path/99999"))
+            .await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AnalysisError::InvalidPath(_)));
     }

@@ -11,7 +11,7 @@ mod restart;
 mod service;
 
 pub use error::{GatewayError, McpError, ProxyError};
-pub use grpc::{proto, ArgusGatewayServer, ArgusGrpcService};
+pub use grpc::{ArgusGatewayServer, ArgusGrpcService, proto};
 pub use llm_proxy::LlmProxy;
 pub use llm_types::{LlmFormat, ProxyConfig, UpstreamConfig};
 pub use mcp_manager::{McpManager, McpServerConfig};

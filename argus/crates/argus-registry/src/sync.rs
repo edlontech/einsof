@@ -137,11 +137,7 @@ tools_used = ["read_file"]
         )
     }
 
-    fn make_registry(
-        dir: &TempDir,
-        mcps: &[(&str, &str)],
-        skills: &[&str],
-    ) -> TomlRegistry {
+    fn make_registry(dir: &TempDir, mcps: &[(&str, &str)], skills: &[&str]) -> TomlRegistry {
         for (name, integrity) in mcps {
             write_fixture(
                 dir.path(),

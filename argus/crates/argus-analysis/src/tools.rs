@@ -364,9 +364,7 @@ mod tests {
         assert_eq!(search_def.name, "search_code");
         assert!(!search_def.description.is_empty());
 
-        let manifest_def = ReadManifestTool { ctx }
-            .definition(String::new())
-            .await;
+        let manifest_def = ReadManifestTool { ctx }.definition(String::new()).await;
         assert_eq!(manifest_def.name, "read_manifest");
         assert!(!manifest_def.description.is_empty());
     }

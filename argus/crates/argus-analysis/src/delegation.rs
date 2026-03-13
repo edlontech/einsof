@@ -1,7 +1,6 @@
 use crate::specialists::{
-    CapabilityExtractionResult, SecurityExtractionResult,
-    build_capability_prompt, build_capability_system_prompt,
-    build_security_prompt, SECURITY_PREAMBLE,
+    CapabilityExtractionResult, SECURITY_PREAMBLE, SecurityExtractionResult,
+    build_capability_prompt, build_capability_system_prompt, build_security_prompt,
 };
 use async_trait::async_trait;
 use rig::completion::{CompletionModel, ToolDefinition};
@@ -49,17 +48,13 @@ where
     }
 }
 
-pub fn build_security_extractor<M: CompletionModel>(
-    model: M,
-) -> impl SecurityExtract {
+pub fn build_security_extractor<M: CompletionModel>(model: M) -> impl SecurityExtract {
     ExtractorBuilder::<M, SecurityExtractionResult>::new(model)
         .preamble(SECURITY_PREAMBLE)
         .build()
 }
 
-pub fn build_capability_extractor<M: CompletionModel>(
-    model: M,
-) -> impl CapabilityExtract {
+pub fn build_capability_extractor<M: CompletionModel>(model: M) -> impl CapabilityExtract {
     ExtractorBuilder::<M, CapabilityExtractionResult>::new(model)
         .preamble(&build_capability_system_prompt())
         .build()
@@ -279,10 +274,7 @@ mod tests {
         struct FakeExtractor;
         #[async_trait]
         impl CapabilityExtract for FakeExtractor {
-            async fn extract(
-                &self,
-                _prompt: &str,
-            ) -> Result<CapabilityExtractionResult, String> {
+            async fn extract(&self, _prompt: &str) -> Result<CapabilityExtractionResult, String> {
                 Ok(CapabilityExtractionResult {
                     capabilities: vec![],
                     warnings: vec![],
@@ -345,10 +337,7 @@ mod tests {
         struct MockExtractor;
         #[async_trait]
         impl CapabilityExtract for MockExtractor {
-            async fn extract(
-                &self,
-                prompt: &str,
-            ) -> Result<CapabilityExtractionResult, String> {
+            async fn extract(&self, prompt: &str) -> Result<CapabilityExtractionResult, String> {
                 assert!(prompt.contains("main.py"));
                 Ok(CapabilityExtractionResult {
                     capabilities: vec![crate::specialists::CapabilityEntryResult {

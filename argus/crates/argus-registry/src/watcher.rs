@@ -65,12 +65,18 @@ impl FolderWatcher {
     }
 
     pub fn mark_authorized(&self, path: PathBuf) {
-        let mut authorized = self.authorized_paths.write().unwrap_or_else(|e| e.into_inner());
+        let mut authorized = self
+            .authorized_paths
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         authorized.insert(path);
     }
 
     pub fn is_authorized(&self, path: &Path) -> bool {
-        let authorized = self.authorized_paths.read().unwrap_or_else(|e| e.into_inner());
+        let authorized = self
+            .authorized_paths
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         authorized.contains(path)
     }
 
@@ -85,7 +91,10 @@ impl FolderWatcher {
     }
 
     pub fn clear_authorized(&self, path: &Path) {
-        let mut authorized = self.authorized_paths.write().unwrap_or_else(|e| e.into_inner());
+        let mut authorized = self
+            .authorized_paths
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         authorized.remove(path);
     }
 
@@ -503,8 +512,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
 
         let trust_store = Arc::new(TrustEventStore::in_memory().unwrap());
-        let watcher =
-            FolderWatcher::new(mode, qm, tx).with_trust_event_store(trust_store.clone());
+        let watcher = FolderWatcher::new(mode, qm, tx).with_trust_event_store(trust_store.clone());
 
         let item_path = temp.path().join("mcps").join("suspect-mcp");
         std::fs::create_dir_all(&item_path).unwrap();
@@ -515,11 +523,13 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, TrustEventType::Quarantined);
         assert_eq!(events[0].actor, "watcher");
-        assert!(events[0]
-            .rationale
-            .as_deref()
-            .unwrap()
-            .contains("unauthorized"));
+        assert!(
+            events[0]
+                .rationale
+                .as_deref()
+                .unwrap()
+                .contains("unauthorized")
+        );
     }
 
     #[tokio::test]

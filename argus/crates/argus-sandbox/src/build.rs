@@ -150,8 +150,18 @@ mod tests {
         assert_eq!(profile.net_policy, NetPolicy::Blocked);
         assert!(profile.allowed_write_paths.is_empty());
         assert!(profile.resolved_env.is_empty());
-        assert!(profile.allowed_read_paths.iter().any(|p| p == Path::new("/dev/null")));
-        assert!(profile.allowed_read_paths.iter().any(|p| p == Path::new("/usr/lib")));
+        assert!(
+            profile
+                .allowed_read_paths
+                .iter()
+                .any(|p| p == Path::new("/dev/null"))
+        );
+        assert!(
+            profile
+                .allowed_read_paths
+                .iter()
+                .any(|p| p == Path::new("/usr/lib"))
+        );
     }
 
     #[test]
@@ -160,7 +170,12 @@ mod tests {
             .extra_read(vec!["/tmp/data".into()])
             .build()
             .unwrap();
-        assert!(profile.allowed_read_paths.iter().any(|p| p == Path::new("/tmp/data")));
+        assert!(
+            profile
+                .allowed_read_paths
+                .iter()
+                .any(|p| p == Path::new("/tmp/data"))
+        );
     }
 
     #[test]
@@ -210,7 +225,12 @@ mod tests {
             .command_path(PathBuf::from("/usr/bin/node"))
             .build()
             .unwrap();
-        assert!(profile.allowed_read_paths.iter().any(|p| p == Path::new("/usr/bin/node")));
+        assert!(
+            profile
+                .allowed_read_paths
+                .iter()
+                .any(|p| p == Path::new("/usr/bin/node"))
+        );
     }
 
     #[test]
@@ -219,10 +239,7 @@ mod tests {
         vars.insert("API_KEY".into(), "secret123".into());
         vars.insert("PORT".into(), "8080".into());
 
-        let profile = ProfileBuilder::new()
-            .resolved_env(vars)
-            .build()
-            .unwrap();
+        let profile = ProfileBuilder::new().resolved_env(vars).build().unwrap();
         assert_eq!(profile.resolved_env.len(), 2);
         assert_eq!(profile.resolved_env["API_KEY"], "secret123");
     }
