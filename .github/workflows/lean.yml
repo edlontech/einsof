@@ -1,0 +1,24 @@
+name: Lean Verification
+
+on:
+  push:
+    paths:
+      - 'tzimtzum/**'
+  pull_request:
+    paths:
+      - 'tzimtzum/**'
+
+jobs:
+  lean-verify:
+    name: Verify TzimtzumV2
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tzimtzum
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Build and verify
+        run: make build

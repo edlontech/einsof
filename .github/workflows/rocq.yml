@@ -1,0 +1,31 @@
+name: Rocq Proofs
+
+on:
+  push:
+    paths:
+      - 'argus/formal/**'
+  pull_request:
+    paths:
+      - 'argus/formal/**'
+
+jobs:
+  rocq-proofs:
+    name: Verify Formal Proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          custom_image: 'rocq/rocq-prover:9.0'
+          before_script: |
+            startGroup "Fix permissions"
+              sudo chown -R 1000:1000 .
+            endGroup
+          script: |
+            startGroup "Build proofs"
+              cd argus/formal
+              coq_makefile -f _CoqProject -o Makefile.coq
+              make -f Makefile.coq -j2
+            endGroup
+          uninstall: ''
