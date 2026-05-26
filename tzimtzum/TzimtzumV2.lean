@@ -41,9 +41,17 @@ for all pairs.
   non-endorsed tools, eliminating TOCTOU races without requiring sequential execution
 - **Graduated flow enforcement**: ALLOW / INSPECT / DENY per (level, egress) pair
 
+## Out of Scope
+
+- **Capability-combination hazards (N3)**: each capability a tool requires is gated individually
+  (CHECK 1), but dangerous *combinations* of capabilities assembled across multiple grants are not
+  defended. This matches the v2.3 baseline and is an explicit non-goal (ADR 2026-05-25, follow-on
+  N3). If combination-hazards become a requirement, restore a `hazard_pair` gate on the capability
+  check rather than at any token/identity layer.
+
 ## Verification
 
-6 safety properties + 12 strengthening invariants, all verified via Veil 2.0 push-button
+9 safety properties + 12 strengthening invariants, all verified via Veil 2.0 push-button
 SMT (cvc5). No manual proofs required. See `argus/design/2026-02-16-tzimtzum-v2-protocol-design.md`
 for the full protocol design document.
 -/
@@ -63,6 +71,8 @@ type InvocationId   -- A unique identifier for a single tool invocation (in-flig
 type CapKind        -- A capability kind (filesystem_read, network_write, execution, etc.)
 type EgressKind     -- An outbound channel classification (network_external, network_internal, etc.)
 type ConfLevel      -- A confidentiality level (public < internal < sensitive < restricted)
+type IssuerId       -- An attestation issuer (Sigstore identity / registry signer) vouching for labels
+type InstructionId  -- An instruction artifact (system prompt or skill) an agent operates under
 
 /-!
 ## Ordering
@@ -100,18 +110,39 @@ invariants (tool label consistency) and the promote/demote actions.
 - `tool_conf_floor T`: the confidentiality floor -- invoking T exposes the agent to data at this level
 - `tool_endorsed T`: true if T has a bounded output schema (boolean, enum, bounded int).
   Endorsed tools don't add taint on completion because their output is information-theoretically bounded.
+- `tool_issuer T`: the attestation issuer that vouches for T's labels; `trusted_issuer` is the
+  background set of issuers the operator trusts (see A1a).
 
-**Trust assumption (A1) -- shared resources**: The protocol tracks data flow at tool
-invocation boundaries only. Inter-tool communication via shared resources (filesystem,
-database, APIs) is invisible to the protocol. Tools sharing writable resources must
-declare `tool_conf_floor` accounting for the worst-case data reachable through those
-shared resources. Layer 1 (sandbox) enforces resource isolation so that label
-declarations match actual access boundaries.
+**Trust assumption (A1) -- decomposed.** Two distinct things were historically bundled as "A1":
+
+- **(A1a) label provenance** -- the declared labels were issued by a trusted party, not forged by an
+  attacker registering a malicious tool. This is now a *proved* invariant (`tool_attestation_intact`):
+  every registered tool has a `tool_issuer` in the `trusted_issuer` set. The kernel enforces this
+  structural fact; the adapter/runtime verifies the actual Sigstore signature and validity window.
+- **(A1b) label accuracy** -- the declared labels reflect the tool's real runtime behavior, including
+  data reachable via shared resources (filesystem, database, APIs) that are invisible at invocation
+  boundaries. This remains a trust assumption discharged by Layer 1 (sandbox): resource isolation
+  makes `tool_conf_floor` declarations match actual access boundaries. Tools sharing writable
+  resources must declare `tool_conf_floor` for the worst-case reachable data.
 -/
 immutable relation tool_cap : ToolId -> CapKind -> Bool
 immutable relation tool_egress : ToolId -> EgressKind -> Bool
 immutable function tool_conf_floor : ToolId -> ConfLevel
 immutable relation tool_endorsed : ToolId -> Bool
+immutable function tool_issuer : ToolId -> IssuerId
+immutable relation trusted_issuer : IssuerId -> Bool
+
+/-!
+## Immutable Instruction Metadata
+
+Instruction artifacts (system prompts, loaded skills) carry provenance exactly as tools do.
+`instruction_issuer I` is the issuer vouching for instruction I; an agent may adopt I only when its
+issuer is in `trusted_issuer` (action `load_instruction`). This closes the prompt-injection-via-
+untrusted-skill vector at the structural level -- `instruction_attestation_intact` proves no active
+agent operates under an instruction from an untrusted source. As with tools, the kernel enforces the
+structural invariant; the adapter verifies the signature and validity window.
+-/
+immutable function instruction_issuer : InstructionId -> IssuerId
 
 /-!
 ## Immutable Flow Policy
@@ -154,6 +185,7 @@ defines a predicate over all agents.
 - `agent_active A`: agent A exists and is participating in the system
 - `agent_parent C P`: C is a direct child of P in the delegation tree
 - `agent_cap A C`: agent A holds capability C
+- `agent_instruction A I`: agent A operates under instruction artifact I (loaded via load_instruction)
 - `taint_levels A L`: agent A has been exposed to data at confidentiality level L
 - `in_flight A I`: agent A has invocation I currently executing (not yet completed)
 - `invocation_tool I`: maps each invocation ID to its tool (immutable -- binding is permanent)
@@ -168,6 +200,7 @@ the taint_levels updates but record the SOURCE of each taint addition.
 relation agent_active : AgentId -> Bool
 relation agent_parent : AgentId -> AgentId -> Bool
 relation agent_cap : AgentId -> CapKind -> Bool
+relation agent_instruction : AgentId -> InstructionId -> Bool
 relation taint_levels : AgentId -> ConfLevel -> Bool
 relation in_flight : AgentId -> InvocationId -> Bool
 immutable function invocation_tool : InvocationId -> ToolId
@@ -241,6 +274,7 @@ after_init {
   agent_active A := decide (A = root_agent);
   agent_parent A B := false;
   agent_cap A C := decide (A = root_agent);
+  agent_instruction A I := false;
   taint_levels A L := false;
   in_flight A I := false;
   tool_registered T := false;
@@ -251,7 +285,7 @@ after_init {
 /-!
 ## Actions
 
-The protocol has 9 actions. Each action has:
+The protocol has 11 actions. Each action has:
 - **Parameters**: the inputs to the action
 - **Preconditions** (`require`): conditions that must hold for the action to fire.
   If any require fails, the action is simply not taken (no error state).
@@ -269,7 +303,23 @@ to be registered.
 -/
 action register_tool (tool : ToolId) {
   require not (tool_registered tool);
+  require trusted_issuer (tool_issuer tool);
   tool_registered tool := true
+}
+
+/-!
+### load_instruction: An agent adopts an attested instruction artifact
+
+An active agent loads an instruction (system prompt or skill). The instruction may be adopted only
+if its issuer is trusted -- the instruction-provenance analog of register_tool's attestation gate.
+Combined with `instruction_attestation_intact`, this proves no active agent ever operates under an
+instruction from an untrusted source, structurally closing the prompt-injection-via-untrusted-skill
+vector. The kernel enforces provenance; the adapter verifies the signature and validity window.
+-/
+action load_instruction (a : AgentId) (instr : InstructionId) {
+  require agent_active a;
+  require trusted_issuer (instruction_issuer instr);
+  agent_instruction a instr := true
 }
 
 /-!
@@ -292,6 +342,7 @@ action delegate (grantor grantee : AgentId) {
   agent_parent C P := decide $
     (C = grantee /\ P = grantor) \/ (agent_parent C P /\ C != grantee /\ P != grantee);
   agent_cap grantee C := false;
+  agent_instruction grantee I := false;
   taint_levels grantee L := false;
   in_flight grantee I := false;
   gh_taint_invoked grantee L := false;
@@ -330,6 +381,7 @@ action revoke (prnt target : AgentId) {
   agent_active target := false;
   agent_parent C P := decide $ agent_parent C P /\ C != target;
   agent_cap target C := false;
+  agent_instruction target I := false;
   taint_levels target L := false;
   in_flight target I := false;
   gh_taint_invoked target L := false;
@@ -365,6 +417,7 @@ action cascade_revoke (child prnt : AgentId) {
   agent_active child := false;
   agent_parent C P := decide $ agent_parent C P /\ C != child;
   agent_cap child C := false;
+  agent_instruction child I := false;
   taint_levels child L := false;
   in_flight child I := false;
   gh_taint_invoked child L := false;
@@ -613,6 +666,26 @@ This proves the taint tracking is sound -- no "phantom taint" can appear.
 safety [taint_integrity]
   taint_levels A L /\ agent_active A ->
     gh_taint_invoked A L \/ gh_taint_received A L
+
+/-!
+**tool_attestation_intact**: Every registered tool's labels come from a trusted issuer. Because
+invoke_start requires the tool to be registered, every in-flight invocation -- and thus every label
+(`tool_conf_floor`, `tool_egress`, `tool_endorsed`, `tool_cap`) consumed by the flow, capability,
+and authorizer gates -- provably originates from a `trusted_issuer`. This converts the former trust
+axiom A1a ("tool labels are honest") into a proved invariant. The kernel enforces provenance
+structurally; the adapter/runtime verifies the underlying Sigstore signature.
+-/
+safety [tool_attestation_intact]
+  tool_registered T -> trusted_issuer (tool_issuer T)
+
+/-!
+**instruction_attestation_intact**: Every instruction an agent operates under comes from a trusted
+issuer. Structurally identical to tool_attestation_intact, this closes the prompt-injection-via-
+untrusted-skill vector: no agent can adopt a system prompt or skill that a trusted party did not
+vouch for.
+-/
+safety [instruction_attestation_intact]
+  agent_instruction A I -> trusted_issuer (instruction_issuer I)
 
 /-!
 ## Strengthening Invariants
