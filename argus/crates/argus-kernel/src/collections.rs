@@ -93,6 +93,155 @@ impl<K: Clone + PartialEq, V: Clone> VecMap<K, V> {
     pub fn val_at(&self, i: usize) -> &V {
         &self.entries[i].1
     }
+
+    /// Owned lookup. Like `get`, but clones the value out instead of borrowing it. Callers that
+    /// need to call a (looping) method on the result use this: binding the borrow from `get` and
+    /// consuming it triggers an Aeneas region-inference internal error, whereas an owned local is
+    /// fine. The clone is cheap (the state is small).
+    pub fn get_cloned(&self, key: &K) -> Option<V> {
+        let mut idx = self.entries.len();
+        let mut i = 0;
+        while i < self.entries.len() {
+            if self.entries[i].0 == *key {
+                idx = i;
+            }
+            i += 1;
+        }
+        if idx < self.entries.len() {
+            Some(self.entries[idx].1.clone())
+        } else {
+            None
+        }
+    }
+}
+
+impl<K: Clone + PartialEq, T: Clone + PartialEq> VecMap<K, VecSet<T>> {
+    /// `entry(key).or_default().insert(elem)`: insert `elem` into the set at `key`,
+    /// materialising an empty set first if `key` is absent. Value-based (clone-modify-store)
+    /// so no interior `&mut` escapes -- the extraction-robust shape.
+    pub fn insert_into(&mut self, key: K, elem: T) {
+        let mut idx = self.entries.len();
+        let mut i = 0;
+        while i < self.entries.len() {
+            if self.entries[i].0 == key {
+                idx = i;
+            }
+            i += 1;
+        }
+        if idx < self.entries.len() {
+            let mut s = self.entries[idx].1.clone();
+            s.insert(elem);
+            self.entries[idx] = (key, s);
+        } else {
+            let mut s = VecSet::new();
+            s.insert(elem);
+            self.entries.push((key, s));
+        }
+    }
+
+    /// `entry(key).or_default().extend(other)`: union `other` into the set at `key`.
+    pub fn extend_into(&mut self, key: K, other: &VecSet<T>) {
+        let mut idx = self.entries.len();
+        let mut i = 0;
+        while i < self.entries.len() {
+            if self.entries[i].0 == key {
+                idx = i;
+            }
+            i += 1;
+        }
+        if idx < self.entries.len() {
+            let mut s = self.entries[idx].1.clone();
+            s.union_with(other);
+            self.entries[idx] = (key, s);
+        } else {
+            let mut s = VecSet::new();
+            s.union_with(other);
+            self.entries.push((key, s));
+        }
+    }
+
+    /// The set at `key`, or empty if absent (owned).
+    pub fn get_set_or_empty(&self, key: &K) -> VecSet<T> {
+        match self.get_cloned(key) {
+            Some(set) => set,
+            None => VecSet::new(),
+        }
+    }
+
+    /// `key`'s set contains `elem` (false if `key` absent). Owned so no escaping borrow.
+    pub fn set_contains(&self, key: &K, elem: &T) -> bool {
+        match self.get_cloned(key) {
+            Some(set) => set.contains(elem),
+            None => false,
+        }
+    }
+
+    /// `key` maps to a non-empty set (false if absent).
+    pub fn set_nonempty(&self, key: &K) -> bool {
+        match self.get_cloned(key) {
+            Some(set) => !set.is_empty(),
+            None => false,
+        }
+    }
+
+    /// Some value-set contains `elem` (across all keys). For the "is this invocation in flight for
+    /// any agent" check. Each value is cloned to a local before the membership test.
+    pub fn any_value_contains(&self, elem: &T) -> bool {
+        let mut found = false;
+        let mut i = 0;
+        while i < self.entries.len() {
+            let set = self.entries[i].1.clone();
+            if set.contains(elem) {
+                found = true;
+            }
+            i += 1;
+        }
+        found
+    }
+
+    /// Remove `elem` from the set at `key` (no-op if `key` absent).
+    pub fn remove_from(&mut self, key: &K, elem: &T) {
+        let mut idx = self.entries.len();
+        let mut i = 0;
+        while i < self.entries.len() {
+            if self.entries[i].0 == *key {
+                idx = i;
+            }
+            i += 1;
+        }
+        if idx < self.entries.len() {
+            let k = self.entries[idx].0.clone();
+            let mut s = self.entries[idx].1.clone();
+            s.remove(elem);
+            self.entries[idx] = (k, s);
+        }
+    }
+}
+
+// Iterator-based ergonomics for non-extracted call sites (tests, `registered_tools`). These are
+// not reachable from the Charon entry points (`crate::transitions`, `state::initial`), so their
+// use of `.iter()`/`FromIterator` never reaches Aeneas; production transitions use only the
+// index-loop methods above.
+impl<K, V> VecMap<K, V> {
+    pub fn iter(&self) -> core::slice::Iter<'_, (K, V)> {
+        self.entries.iter()
+    }
+}
+
+impl<K: Clone + PartialEq, V: Clone> FromIterator<(K, V)> for VecMap<K, V> {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut m = VecMap::new();
+        for (k, v) in iter {
+            m.insert(k, v);
+        }
+        m
+    }
+}
+
+impl<K: Clone + PartialEq, V: Clone> Default for VecMap<K, V> {
+    fn default() -> Self {
+        VecMap::new()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +306,40 @@ impl<T: Clone + PartialEq> VecSet<T> {
             self.insert(other.items[i].clone());
             i += 1;
         }
+    }
+}
+
+// Iterator-based ergonomics for non-extracted call sites (tests). Not reachable from the Charon
+// entry points; production code uses only the index-loop methods above.
+impl<T> VecSet<T> {
+    pub fn iter(&self) -> core::slice::Iter<'_, T> {
+        self.items.iter()
+    }
+}
+
+impl<T: Clone + PartialEq> FromIterator<T> for VecSet<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut s = VecSet::new();
+        for x in iter {
+            s.insert(x);
+        }
+        s
+    }
+}
+
+impl<T: Clone + PartialEq, const N: usize> From<[T; N]> for VecSet<T> {
+    fn from(arr: [T; N]) -> Self {
+        let mut s = VecSet::new();
+        for x in arr {
+            s.insert(x);
+        }
+        s
+    }
+}
+
+impl<T: Clone + PartialEq> Default for VecSet<T> {
+    fn default() -> Self {
+        VecSet::new()
     }
 }
 

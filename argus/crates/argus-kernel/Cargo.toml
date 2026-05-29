@@ -22,11 +22,6 @@ start_from = [
     "crate::transitions",
     "crate::state::_::initial",
 ]
-# Opaque iteration helpers: the remaining BTreeSet iterations are isolated here (emitted as
-# axiom signatures) pending their VecSet swap. `agent_parent` is now a Vec-backed `VecMap`, so
-# its drop helpers iterate transparently (Aeneas models Vec) and were removed from this list.
-opaque = [
-    "crate::transitions::btree_set_union",
-    "crate::transitions::sentinel_flow_gate",
-    "crate::state::_::speculative_taint",
-]
+# No opaque helpers: all kernel state is now Vec-backed (`VecMap`/`VecSet`), which Aeneas models
+# transparently (Vec + its iterator), so every transition body extracts as a transparent `def`.
+opaque = []

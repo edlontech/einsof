@@ -1,8 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::background::{BackgroundTheory, FlowMode};
 use crate::capability::CapKind;
-use crate::collections::VecMap;
+use crate::collections::{VecMap, VecSet};
 use crate::error::KernelError;
 use crate::event::KernelAction;
 use crate::state::KernelState;
@@ -101,47 +99,42 @@ fn agent_parent_drop_child(
     kept
 }
 
-/// Set union `a ∪ b`. Opaque iteration helper (BTreeSet iteration) — the refinement models it
-/// with the obvious membership axiom. Used to apply consumed-override / inherited-taint sets.
-fn btree_set_union<T: Ord + Clone>(mut a: BTreeSet<T>, b: BTreeSet<T>) -> BTreeSet<T> {
-    for x in b {
-        a.insert(x);
-    }
-    a
+/// Accumulator threaded through the flow-gate loops. `denied` is monotone (set on any DENY);
+/// `to_consume` collects the single-use overrides spent on the accepted flows. No early `return`
+/// inside the loops -- callers inspect `denied` after the fold. This (plus index loops) is the
+/// shape Aeneas extracts transparently; the previous early-return-in-loop form forced an axiom.
+struct GateAccum {
+    denied: bool,
+    to_consume: VecSet<OverrideKey>,
 }
 
-/// Opaque flow-gate helper for `sentinel_elevate_taint`: over the agent's in-flight tools and
-/// their egress kinds, apply `flow_decision` at the raised `level`; return the overrides to
-/// consume, or the blocking error. Opaque to the extractor (BTree iteration); the refinement's
-/// Lean axiom states it as the fold of the (transparent) `flow_decision` over in-flight × egress.
-fn sentinel_flow_gate<C: ContentGateOracle>(
+/// Fold `flow_decision` over a tool's egress kinds at `level`, updating the accumulator. Shared
+/// innermost gate; the per-transition in-flight / taint loops call it and thread `acc`.
+fn gate_egress<C: ContentGateOracle>(
     bg: &BackgroundTheory,
     content_gate: &C,
     agent: &AgentId,
-    level: ConfLevel,
+    tool: &ToolId,
     st: &KernelState,
-) -> Result<BTreeSet<OverrideKey>, KernelError> {
-    let mut to_consume: BTreeSet<OverrideKey> = BTreeSet::new();
-    if let Some(in_flight_invs) = st.in_flight.get(agent) {
-        for inv in in_flight_invs {
-            let tool = st
-                .invocation_tool
-                .get(inv)
-                .ok_or(KernelError::MissingToolBinding)?;
-            if let Some(tmeta) = bg.tool_metadata(tool) {
-                for &egress in &tmeta.egress {
-                    match flow_decision(bg, content_gate, agent, tool, st, level, egress) {
-                        FlowDecision::Allowed => {}
-                        FlowDecision::ConsumedOverride => {
-                            to_consume.insert(OverrideKey { tool: tool.clone(), level });
-                        }
-                        FlowDecision::Denied => return Err(KernelError::FlowGateBlocked),
-                    }
-                }
+    level: ConfLevel,
+    egress_set: &VecSet<EgressKind>,
+    mut acc: GateAccum,
+) -> GateAccum {
+    let mut i = 0;
+    while i < egress_set.len() {
+        let egress = *egress_set.at(i);
+        match flow_decision(bg, content_gate, agent, tool, st, level, egress) {
+            FlowDecision::Allowed => {}
+            FlowDecision::ConsumedOverride => {
+                acc.to_consume.insert(OverrideKey { tool: tool.clone(), level });
+            }
+            FlowDecision::Denied => {
+                acc.denied = true;
             }
         }
+        i += 1;
     }
-    Ok(to_consume)
+    acc
 }
 
 pub fn register_tool(
@@ -182,11 +175,7 @@ pub fn load_instruction(
         return Err(KernelError::UntrustedIssuer);
     }
 
-    st
-        .agent_instruction
-        .entry(agent.clone())
-        .or_default()
-        .insert(instr.clone());
+    st.agent_instruction.insert_into(agent.clone(), instr.clone());
 
     Ok((st, KernelAction::LoadInstruction { agent, instr }))
 }
@@ -210,7 +199,7 @@ pub fn delegate(
     st.agent_active.insert(grantee.clone());
     st.agent_parent = agent_parent_drop_endpoint(&st.agent_parent, &grantee);
     st.agent_parent.insert(grantee.clone(), grantor.clone());
-    st.agent_cap.insert(grantee.clone(), BTreeSet::new());
+    st.agent_cap.insert(grantee.clone(), VecSet::new());
     clear_agent_state(&mut st, &grantee);
 
     Ok((st, KernelAction::Delegate { grantor, grantee }))
@@ -232,19 +221,11 @@ pub fn grant_capability(
     if st.agent_parent.get(&child) != Some(&parent) {
         return Err(KernelError::NotDirectChild);
     }
-    if !st
-        .agent_cap
-        .get(&parent)
-        .is_some_and(|caps| caps.contains(&cap))
-    {
+    if !st.agent_cap.set_contains(&parent, &cap) {
         return Err(KernelError::CapabilityMissing);
     }
 
-    st
-        .agent_cap
-        .entry(child.clone())
-        .or_default()
-        .insert(cap);
+    st.agent_cap.insert_into(child.clone(), cap);
 
     Ok((st, KernelAction::GrantCapability { parent, child, cap }))
 }
@@ -324,115 +305,88 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     if st.invocation_tool.contains_key(&inv) {
         return Err(KernelError::InvocationExists);
     }
-    for flights in st.in_flight.values() {
-        if flights.contains(&inv) {
-            return Err(KernelError::InvocationInFlight);
-        }
+    if st.in_flight.any_value_contains(&inv) {
+        return Err(KernelError::InvocationInFlight);
     }
 
-    let tool_meta = bg.tool_metadata(&tool).ok_or(KernelError::ToolNotInTheory)?;
+    // Clone the tool's metadata to an owned local: holding the `bg` borrow while it is read across
+    // the gate loops and used to clone egress sets keeps the extractor's region analysis happy.
+    let tool_meta = match bg.tool_metadata(&tool) {
+        Some(m) => m,
+        None => return Err(KernelError::ToolNotInTheory),
+    };
+    let conf_floor = tool_meta.conf_floor;
 
-    let agent_caps = st.agent_cap.get(&agent);
-    for required_cap in &tool_meta.capabilities {
-        if !agent_caps.is_some_and(|caps| caps.contains(required_cap)) {
-            return Err(KernelError::CapabilityMissing);
+    let mut missing_cap = false;
+    let mut ci = 0;
+    while ci < tool_meta.capabilities.len() {
+        let required_cap = tool_meta.capabilities.at(ci);
+        if !st.agent_cap.set_contains(&agent, required_cap) {
+            missing_cap = true;
         }
+        ci += 1;
+    }
+    if missing_cap {
+        return Err(KernelError::CapabilityMissing);
     }
 
-    // Override grants that are the *sole* justification for a flow this transition; spent
-    // on success (single-use, MF-3). Keyed by (tool, level) for the invoking `agent`.
-    let mut to_consume: BTreeSet<OverrideKey> = BTreeSet::new();
+    // Override grants that are the *sole* justification for a flow this transition; spent on
+    // success (single-use, MF-3). Folded with no early return (the extractable shape); `denied`
+    // is checked once after all three checks.
+    let mut acc = GateAccum { denied: false, to_consume: VecSet::new() };
 
+    // CHECK 2a: the new tool's egress against every speculative-taint level the agent carries.
     let spec_taint = st.speculative_taint(&agent, bg);
-    for &level in &spec_taint {
-        for &egress in &tool_meta.egress {
-            match flow_decision(bg, content_gate, &agent, &tool, &st, level, egress) {
-                FlowDecision::Allowed => {}
-                FlowDecision::ConsumedOverride => {
-                    to_consume.insert(OverrideKey { tool: tool.clone(), level });
-                }
-                FlowDecision::Denied => {
-                    return Err(KernelError::FlowGateBlocked);
-                }
-            }
-        }
+    let mut li = 0;
+    while li < spec_taint.len() {
+        let level = *spec_taint.at(li);
+        acc = gate_egress(bg, content_gate, &agent, &tool, &st, level, &tool_meta.egress, acc);
+        li += 1;
     }
 
-    // CHECK 2b/2c run for ALL tools -- bounded is NOT excluded. With conformance-gating a
-    // bounded tool may still add taint on completion (if it fails conformance), so its floor
-    // must be flow-compatible just like a non-bounded tool (worst-case / fail-closed).
-    if let Some(agent_flights) = st.in_flight.get(&agent) {
-        for flight_inv in agent_flights {
-            if let Some(flight_tool_id) = st.invocation_tool.get(flight_inv)
-                && let Some(flight_meta) = bg.tool_metadata(flight_tool_id)
-            {
-                for &egress in &flight_meta.egress {
-                    match flow_decision(
-                        bg,
-                        content_gate,
-                        &agent,
-                        flight_tool_id,
-                        &st,
-                        tool_meta.conf_floor,
-                        egress,
-                    ) {
-                        FlowDecision::Allowed => {}
-                        FlowDecision::ConsumedOverride => {
-                            to_consume.insert(OverrideKey {
-                                tool: flight_tool_id.clone(),
-                                level: tool_meta.conf_floor,
-                            });
-                        }
-                        FlowDecision::Denied => {
-                            return Err(KernelError::FlowGateBlocked);
-                        }
-                    }
-                }
-            }
+    // CHECK 2b/2c run for ALL tools -- bounded is NOT excluded. With conformance-gating a bounded
+    // tool may still add taint on completion (if it fails conformance), so its floor must be
+    // flow-compatible just like a non-bounded tool (worst-case / fail-closed).
+    let agent_flights = st.in_flight.get_set_or_empty(&agent);
+    let mut fi = 0;
+    while fi < agent_flights.len() {
+        let flight_inv = agent_flights.at(fi);
+        if let Some(flight_tool_id) = st.invocation_tool.get_cloned(flight_inv) {
+            let flight_egress = match bg.tool_metadata(&flight_tool_id) {
+                Some(m) => m.egress.clone(),
+                None => VecSet::new(),
+            };
+            acc = gate_egress(
+                bg,
+                content_gate,
+                &agent,
+                &flight_tool_id,
+                &st,
+                conf_floor,
+                &flight_egress,
+                acc,
+            );
         }
+        fi += 1;
     }
 
-    for &egress in &tool_meta.egress {
-        match flow_decision(
-            bg,
-            content_gate,
-            &agent,
-            &tool,
-            &st,
-            tool_meta.conf_floor,
-            egress,
-        ) {
-            FlowDecision::Allowed => {}
-            FlowDecision::ConsumedOverride => {
-                to_consume.insert(OverrideKey {
-                    tool: tool.clone(),
-                    level: tool_meta.conf_floor,
-                });
-            }
-            FlowDecision::Denied => {
-                return Err(KernelError::FlowGateBlocked);
-            }
-        }
+    // CHECK: the new tool's own egress at its floor.
+    acc = gate_egress(bg, content_gate, &agent, &tool, &st, conf_floor, &tool_meta.egress, acc);
+
+    if acc.denied {
+        return Err(KernelError::FlowGateBlocked);
     }
 
     if !authorizer.allows(&agent, &tool, &st, bg) {
         return Err(KernelError::AuthorizerDenied);
     }
 
-    if !to_consume.is_empty() {
-        st
-            .override_used
-            .entry(agent.clone())
-            .or_default()
-            .extend(to_consume);
+    if !acc.to_consume.is_empty() {
+        st.override_used.extend_into(agent.clone(), &acc.to_consume);
     }
 
     st.invocation_tool.insert(inv.clone(), tool.clone());
-    st
-        .in_flight
-        .entry(agent.clone())
-        .or_default()
-        .insert(inv.clone());
+    st.in_flight.insert_into(agent.clone(), inv.clone());
 
     Ok((st, KernelAction::InvokeStart { agent, tool, inv }))
 }
@@ -444,45 +398,35 @@ pub fn invoke_complete<F: ConformanceOracle>(
     agent: AgentId,
     inv: InvocationId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
-    if !st
-        .in_flight
-        .get(&agent)
-        .is_some_and(|flights| flights.contains(&inv))
-    {
+    if !st.in_flight.set_contains(&agent, &inv) {
         return Err(KernelError::NotInFlight);
     }
     if !st.agent_active.contains(&agent) {
         return Err(KernelError::AgentInactive);
     }
 
-    if let Some(flights) = st.in_flight.get_mut(&agent) {
-        flights.remove(&inv);
-    }
+    st.in_flight.remove_from(&agent, &inv);
 
-    if let Some(tool_id) = st.invocation_tool.get(&inv).cloned()
-        && let Some(tmeta) = bg.tool_metadata(&tool_id)
-    {
-        let conf_floor = tmeta.conf_floor;
-        // Zero-taint (endorsed) path = bounded declaration AND runtime conformance AND budget
-        // available. Otherwise full taint at the tool's floor (fail-closed). Mirrors Veil
-        // invoke_complete: a bounded-but-non-conforming or out-of-budget tool taints in full.
-        let zero_taint = tmeta.output_bounded
-            && conformance.conforms(&agent, &tool_id, &st, bg)
-            && !st.budget_exhausted(&agent);
-        if zero_taint {
-            // Charge the agent's own budget for the in-agent declassification.
-            st.debit_budget(&agent);
-        } else {
-            st
-                .taint_levels
-                .entry(agent.clone())
-                .or_default()
-                .insert(conf_floor);
-            st
-                .gh_taint_invoked
-                .entry(agent.clone())
-                .or_default()
-                .insert(conf_floor);
+    // Owned binding so the read of `invocation_tool` ends before the taint updates mutate `st`.
+    if let Some(tool_id) = st.invocation_tool.get_cloned(&inv) {
+        let meta_info = match bg.tool_metadata(&tool_id) {
+            Some(tmeta) => Some((tmeta.conf_floor, tmeta.output_bounded)),
+            None => None,
+        };
+        if let Some((conf_floor, output_bounded)) = meta_info {
+            // Zero-taint (endorsed) path = bounded declaration AND runtime conformance AND budget
+            // available. Otherwise full taint at the tool's floor (fail-closed). Mirrors Veil
+            // invoke_complete: a bounded-but-non-conforming or out-of-budget tool taints in full.
+            let zero_taint = output_bounded
+                && conformance.conforms(&agent, &tool_id, &st, bg)
+                && !st.budget_exhausted(&agent);
+            if zero_taint {
+                // Charge the agent's own budget for the in-agent declassification.
+                st.debit_budget(&agent);
+            } else {
+                st.taint_levels.insert_into(agent.clone(), conf_floor);
+                st.gh_taint_invoked.insert_into(agent.clone(), conf_floor);
+            }
         }
     }
 
@@ -504,22 +448,14 @@ pub fn return_endorsed(
     if !st.agent_active.contains(&parent) {
         return Err(KernelError::AgentInactive);
     }
-    if st
-        .in_flight
-        .get(&child)
-        .is_some_and(|flights| !flights.is_empty())
-    {
+    if st.in_flight.set_nonempty(&child) {
         return Err(KernelError::ChildHasInFlight);
     }
     // Cross-boundary declassification tier: the child must be authorised to declassify, and the
     // RECIPIENT (parent) is charged budget -- a per-agent bound on the parent's total endorsed
     // inflow across its whole subtree (smurfing defense). A child lacking the cap, or an
     // out-of-budget parent, must use return_unendorsed (full taint) instead.
-    if !st
-        .agent_cap
-        .get(&child)
-        .is_some_and(|caps| caps.contains(&CapKind::Declassify))
-    {
+    if !st.agent_cap.set_contains(&child, &CapKind::Declassify) {
         return Err(KernelError::CapabilityMissing);
     }
     if st.budget_exhausted(&parent) {
@@ -546,59 +482,44 @@ pub fn return_unendorsed<C: ContentGateOracle>(
     if !st.agent_active.contains(&parent) {
         return Err(KernelError::AgentInactive);
     }
-    if st
-        .in_flight
-        .get(&child)
-        .is_some_and(|flights| !flights.is_empty())
-    {
+    if st.in_flight.set_nonempty(&child) {
         return Err(KernelError::ChildHasInFlight);
     }
 
-    let child_taint = st.taint_levels.get(&child).cloned().unwrap_or_default();
-    let empty_flights = BTreeSet::new();
-    let parent_flights = st.in_flight.get(&parent).unwrap_or(&empty_flights);
+    let child_taint = st.taint_levels.get_set_or_empty(&child);
 
-    // Override grants spent on success (single-use, MF-3). Charged to the recipient `parent`.
-    let mut to_consume: BTreeSet<OverrideKey> = BTreeSet::new();
-    for &level in &child_taint {
-        for inv in parent_flights {
-            if let Some(tool_id) = st.invocation_tool.get(inv)
-                && let Some(tmeta) = bg.tool_metadata(tool_id)
-            {
-                for &egress in &tmeta.egress {
-                    match flow_decision(bg, content_gate, &parent, tool_id, &st, level, egress) {
-                        FlowDecision::Allowed => {}
-                        FlowDecision::ConsumedOverride => {
-                            to_consume.insert(OverrideKey { tool: tool_id.clone(), level });
-                        }
-                        FlowDecision::Denied => {
-                            return Err(KernelError::FlowGateBlocked);
-                        }
-                    }
-                }
+    // Override grants spent on success (single-use, MF-3), charged to the recipient `parent`.
+    // Folded over child-taint levels x parent's in-flight tools with no early return.
+    let mut acc = GateAccum { denied: false, to_consume: VecSet::new() };
+    let parent_flights = st.in_flight.get_set_or_empty(&parent);
+    let mut li = 0;
+    while li < child_taint.len() {
+        let level = *child_taint.at(li);
+        let mut fi = 0;
+        while fi < parent_flights.len() {
+            let inv = parent_flights.at(fi);
+            if let Some(tool_id) = st.invocation_tool.get_cloned(inv) {
+                let egress = match bg.tool_metadata(&tool_id) {
+                    Some(m) => m.egress.clone(),
+                    None => VecSet::new(),
+                };
+                acc = gate_egress(bg, content_gate, &parent, &tool_id, &st, level, &egress, acc);
             }
+            fi += 1;
         }
+        li += 1;
+    }
+    if acc.denied {
+        return Err(KernelError::FlowGateBlocked);
     }
 
     if !child_taint.is_empty() {
-        st
-            .taint_levels
-            .entry(parent.clone())
-            .or_default()
-            .extend(&child_taint);
-        st
-            .gh_taint_received
-            .entry(parent.clone())
-            .or_default()
-            .extend(&child_taint);
+        st.taint_levels.extend_into(parent.clone(), &child_taint);
+        st.gh_taint_received.extend_into(parent.clone(), &child_taint);
     }
 
-    if !to_consume.is_empty() {
-        st
-            .override_used
-            .entry(parent.clone())
-            .or_default()
-            .extend(to_consume);
+    if !acc.to_consume.is_empty() {
+        st.override_used.extend_into(parent.clone(), &acc.to_consume);
     }
 
     Ok((st, KernelAction::ReturnUnendorsed { child, parent }))
@@ -616,24 +537,41 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
     }
 
     // Override grants spent on success (single-use, MF-3) -- uniform with invoke_start /
-    // return_unendorsed. The flow gate (BTree iteration) lives in the opaque `sentinel_flow_gate`
-    // helper; the rest is point-ops.
-    let to_consume = sentinel_flow_gate(bg, content_gate, &agent, level, &st)?;
-
-    if !to_consume.is_empty() {
-        let cur = match st.override_used.get(&agent) {
-            Some(s) => s.clone(),
-            None => BTreeSet::new(),
-        };
-        st.override_used
-            .insert(agent.clone(), btree_set_union(cur, to_consume));
+    // return_unendorsed. Flow gate folded over the agent's in-flight tools x egress at the raised
+    // `level`, with no early return; `missing_binding` / `denied` are checked once after the fold.
+    let mut acc = GateAccum { denied: false, to_consume: VecSet::new() };
+    let mut missing_binding = false;
+    let in_flight_invs = st.in_flight.get_set_or_empty(&agent);
+    let mut fi = 0;
+    while fi < in_flight_invs.len() {
+        let inv = in_flight_invs.at(fi);
+        match st.invocation_tool.get_cloned(inv) {
+            Some(tool) => {
+                let egress = match bg.tool_metadata(&tool) {
+                    Some(m) => m.egress.clone(),
+                    None => VecSet::new(),
+                };
+                acc = gate_egress(bg, content_gate, &agent, &tool, &st, level, &egress, acc);
+            }
+            None => {
+                missing_binding = true;
+            }
+        }
+        fi += 1;
+    }
+    if missing_binding {
+        return Err(KernelError::MissingToolBinding);
+    }
+    if acc.denied {
+        return Err(KernelError::FlowGateBlocked);
     }
 
-    st.taint_levels.entry(agent.clone()).or_default().insert(level);
-    st.gh_taint_invoked
-        .entry(agent.clone())
-        .or_default()
-        .insert(level);
+    if !acc.to_consume.is_empty() {
+        st.override_used.extend_into(agent.clone(), &acc.to_consume);
+    }
+
+    st.taint_levels.insert_into(agent.clone(), level);
+    st.gh_taint_invoked.insert_into(agent.clone(), level);
 
     Ok((st, KernelAction::SentinelElevateTaint { agent, level }))
 }
@@ -651,11 +589,7 @@ pub fn sentinel_refresh_budget(
     if !st.agent_active.contains(&agent) {
         return Err(KernelError::AgentInactive);
     }
-    if !st
-        .agent_cap
-        .get(&agent)
-        .is_some_and(|caps| caps.contains(&CapKind::RefreshBudget))
-    {
+    if !st.agent_cap.set_contains(&agent, &CapKind::RefreshBudget) {
         return Err(KernelError::CapabilityMissing);
     }
     // Reset to full. Absence == full, so removing the entry is the canonical "full" st.
@@ -703,8 +637,8 @@ mod tests {
 
     fn tool_meta_simple() -> ToolMetadata {
         ToolMetadata {
-            capabilities: BTreeSet::new(),
-            egress: BTreeSet::from([EgressKind::NetworkExternal]),
+            capabilities: VecSet::new(),
+            egress: VecSet::from([EgressKind::NetworkExternal]),
             conf_floor: ConfLevel::Public,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
@@ -724,8 +658,8 @@ mod tests {
         b.register_tool(
             ToolId::new("read_file"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::from([CapKind::FilesystemRead]),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -734,8 +668,8 @@ mod tests {
         b.register_tool(
             ToolId::new("send_email"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::NetworkEgress]),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -744,8 +678,8 @@ mod tests {
         b.register_tool(
             ToolId::new("check_exists"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::from([CapKind::FilesystemRead]),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
@@ -818,7 +752,7 @@ mod tests {
             new_state
                 .agent_cap
                 .get(&grantee)
-                .map_or(true, |s| s.is_empty())
+                .is_none_or(|s| s.is_empty())
         );
         assert!(new_state.taint_levels.get(&grantee).is_none());
         assert_eq!(action, KernelAction::Delegate { grantor, grantee });
@@ -865,7 +799,7 @@ mod tests {
         let child = AgentId::new("child-1");
         st.agent_active.insert(child.clone());
         st.agent_parent.insert(child.clone(), AgentId::root());
-        st.agent_cap.insert(child.clone(), BTreeSet::new());
+        st.agent_cap.insert(child.clone(), VecSet::new());
 
         let (new_state, action) = grant_capability(
             st,
@@ -901,8 +835,8 @@ mod tests {
         st.agent_active.insert(parent.clone());
         st.agent_active.insert(child.clone());
         st.agent_parent.insert(child.clone(), parent.clone());
-        st.agent_cap.insert(parent, BTreeSet::new());
-        st.agent_cap.insert(child.clone(), BTreeSet::new());
+        st.agent_cap.insert(parent, VecSet::new());
+        st.agent_cap.insert(child.clone(), VecSet::new());
         assert!(
             grant_capability(
                 st,
@@ -937,10 +871,10 @@ mod tests {
         st.agent_parent.insert(child.clone(), AgentId::root());
         st
             .agent_cap
-            .insert(child.clone(), BTreeSet::from([CapKind::FilesystemRead]));
+            .insert(child.clone(), VecSet::from([CapKind::FilesystemRead]));
         st
             .taint_levels
-            .insert(child.clone(), BTreeSet::from([ConfLevel::Internal]));
+            .insert(child.clone(), VecSet::from([ConfLevel::Internal]));
 
         let (new_state, action) = revoke(st, &bg, AgentId::root(), child.clone()).unwrap();
         assert!(!new_state.agent_active.contains(&child));
@@ -1017,9 +951,7 @@ mod tests {
         st.agent_active.insert(agent.clone());
         st
             .in_flight
-            .entry(agent.clone())
-            .or_default()
-            .insert(inv.clone());
+            .insert_into(agent.clone(), inv.clone());
         st.invocation_tool.insert(inv.clone(), tool.clone());
 
         let mut builder = BackgroundTheoryBuilder::new();
@@ -1027,8 +959,8 @@ mod tests {
         builder.register_tool(
             tool,
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::new(),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1042,7 +974,7 @@ mod tests {
             !new_state
                 .in_flight
                 .get(&agent)
-                .map_or(false, |s| s.contains(&inv))
+                .is_some_and(|s| s.contains(&inv))
         );
         assert!(
             new_state
@@ -1071,9 +1003,7 @@ mod tests {
         st.agent_active.insert(agent.clone());
         st
             .in_flight
-            .entry(agent.clone())
-            .or_default()
-            .insert(inv.clone());
+            .insert_into(agent.clone(), inv.clone());
         st.invocation_tool.insert(inv.clone(), tool.clone());
 
         let mut builder = BackgroundTheoryBuilder::new();
@@ -1081,8 +1011,8 @@ mod tests {
         builder.register_tool(
             tool,
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
@@ -1115,7 +1045,7 @@ mod tests {
         // Cross-boundary declassification now requires the child to hold cap_declassify.
         st
             .agent_cap
-            .insert(child.clone(), BTreeSet::from([CapKind::Declassify]));
+            .insert(child.clone(), VecSet::from([CapKind::Declassify]));
 
         let (new_state, action) =
             return_endorsed(st.clone(), &bg, child.clone(), AgentId::root()).unwrap();
@@ -1138,9 +1068,7 @@ mod tests {
         st.agent_parent.insert(child.clone(), AgentId::root());
         st
             .in_flight
-            .entry(child.clone())
-            .or_default()
-            .insert(InvocationId::new("inv-1"));
+            .insert_into(child.clone(), InvocationId::new("inv-1"));
         st
             .invocation_tool
             .insert(InvocationId::new("inv-1"), ToolId::new("t"));
@@ -1166,17 +1094,15 @@ mod tests {
         st.invocation_tool.insert(inv.clone(), tool.clone());
         st
             .in_flight
-            .entry(AgentId::new("a1"))
-            .or_default()
-            .insert(inv);
+            .insert_into(AgentId::new("a1"), inv);
 
         let mut b = BackgroundTheoryBuilder::new();
         b.trust_issuer(IssuerId::new("trusted"));
         b.register_tool(
             tool,
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
                 conf_floor,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
@@ -1258,14 +1184,14 @@ mod tests {
         st.agent_parent.insert(c.clone(), p.clone());
         st
             .agent_cap
-            .insert(c, BTreeSet::from([CapKind::Declassify]));
+            .insert(c, VecSet::from([CapKind::Declassify]));
         st
     }
 
     #[test]
     fn return_endorsed_requires_declassify_cap() {
         let mut st = parent_child_state();
-        st.agent_cap.insert(AgentId::new("c"), BTreeSet::new());
+        st.agent_cap.insert(AgentId::new("c"), VecSet::new());
         let bg = BackgroundTheoryBuilder::new().build();
         assert!(
             return_endorsed(st, &bg, AgentId::new("c"), AgentId::new("p")).is_err(),
@@ -1340,7 +1266,7 @@ mod tests {
         st.agent_parent.insert(child.clone(), AgentId::root());
         st
             .taint_levels
-            .insert(child.clone(), BTreeSet::from([ConfLevel::Sensitive]));
+            .insert(child.clone(), VecSet::from([ConfLevel::Sensitive]));
 
         let bg = BackgroundTheoryBuilder::new().build();
 
@@ -1380,12 +1306,10 @@ mod tests {
         st.agent_parent.insert(child.clone(), AgentId::root());
         st
             .taint_levels
-            .insert(child.clone(), BTreeSet::from([ConfLevel::Sensitive]));
+            .insert(child.clone(), VecSet::from([ConfLevel::Sensitive]));
         st
             .in_flight
-            .entry(AgentId::root())
-            .or_default()
-            .insert(parent_inv.clone());
+            .insert_into(AgentId::root(), parent_inv.clone());
         st
             .invocation_tool
             .insert(parent_inv, parent_tool.clone());
@@ -1395,8 +1319,8 @@ mod tests {
         builder.register_tool(
             parent_tool,
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::new(),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1416,9 +1340,7 @@ mod tests {
         st.agent_parent.insert(child.clone(), AgentId::root());
         st
             .in_flight
-            .entry(child.clone())
-            .or_default()
-            .insert(InvocationId::new("i"));
+            .insert_into(child.clone(), InvocationId::new("i"));
         st
             .invocation_tool
             .insert(InvocationId::new("i"), ToolId::new("t"));
@@ -1577,7 +1499,7 @@ mod tests {
         let mut st = state_with_agent("a1", &[CapKind::NetworkEgress]);
         st
             .taint_levels
-            .insert(AgentId::new("a1"), BTreeSet::from([ConfLevel::Sensitive]));
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
         let bg = bg_with_tools();
         assert!(
             invoke_start(
@@ -1598,14 +1520,14 @@ mod tests {
         let mut st = state_with_agent("a1", &[CapKind::NetworkEgress]);
         st
             .taint_levels
-            .insert(AgentId::new("a1"), BTreeSet::from([ConfLevel::Sensitive]));
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
             ToolId::new("send_email"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::NetworkEgress]),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1644,14 +1566,14 @@ mod tests {
         let mut st = state_with_agent("a1", &[CapKind::NetworkEgress]);
         st
             .taint_levels
-            .insert(AgentId::new("a1"), BTreeSet::from([ConfLevel::Sensitive]));
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
             ToolId::new("send_email"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::NetworkEgress]),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1721,14 +1643,14 @@ mod tests {
         let mut st = state_with_agent("a1", &[CapKind::NetworkEgress]);
         st
             .taint_levels
-            .insert(AgentId::new("a1"), BTreeSet::from([ConfLevel::Sensitive]));
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
             ToolId::new("send_email"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::NetworkEgress]),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1777,9 +1699,7 @@ mod tests {
         let mut st = state_with_agent("a1", &[CapKind::NetworkEgress]);
         st
             .override_used
-            .entry(AgentId::new("a1"))
-            .or_default()
-            .insert(OverrideKey {
+            .insert_into(AgentId::new("a1"), OverrideKey {
                 tool: ToolId::new("send_email"),
                 level: ConfLevel::Sensitive,
             });
@@ -1808,18 +1728,18 @@ mod tests {
         st
             .invocation_tool
             .insert(inv.clone(), ToolId::new("send_email"));
-        st.in_flight.entry(parent.clone()).or_default().insert(inv);
+        st.in_flight.insert_into(parent.clone(), inv);
         st
             .taint_levels
-            .insert(child.clone(), BTreeSet::from([ConfLevel::Sensitive]));
+            .insert(child.clone(), VecSet::from([ConfLevel::Sensitive]));
 
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
             ToolId::new("send_email"),
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::new(),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1860,15 +1780,15 @@ mod tests {
         st
             .invocation_tool
             .insert(inv.clone(), ToolId::new("send_email"));
-        st.in_flight.entry(agent.clone()).or_default().insert(inv);
+        st.in_flight.insert_into(agent.clone(), inv);
 
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
             ToolId::new("send_email"),
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::new(),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1900,9 +1820,7 @@ mod tests {
         let email_inv = InvocationId::new("email-inv");
         st
             .in_flight
-            .entry(AgentId::new("a1"))
-            .or_default()
-            .insert(email_inv.clone());
+            .insert_into(AgentId::new("a1"), email_inv.clone());
         st
             .invocation_tool
             .insert(email_inv, ToolId::new("send_email"));
@@ -1912,8 +1830,8 @@ mod tests {
         builder.register_tool(
             ToolId::new("read_file"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::from([CapKind::FilesystemRead]),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -1922,8 +1840,8 @@ mod tests {
         builder.register_tool(
             ToolId::new("send_email"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::NetworkEgress]),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -2014,8 +1932,8 @@ mod tests {
         builder.register_tool(
             ToolId::new("evil"),
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Public,
                 output_bounded: true,
                 issuer: IssuerId::new("rogue"),

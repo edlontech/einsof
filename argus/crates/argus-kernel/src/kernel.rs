@@ -205,7 +205,7 @@ mod tests {
     use crate::background::{BackgroundTheory, BackgroundTheoryBuilder, FlowMode, ToolMetadata};
     use crate::types::{ConfLevel, EgressKind, IssuerId};
     use std::cell::RefCell;
-    use std::collections::BTreeSet;
+    use crate::collections::VecSet;
 
     struct AllowAll;
     impl AuthorizerOracle for AllowAll {
@@ -245,8 +245,8 @@ mod tests {
         builder.register_tool(
             ToolId::new("read_file"),
             ToolMetadata {
-                capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::from([CapKind::FilesystemRead]),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -320,8 +320,8 @@ mod tests {
         builder.register_tool(
             ToolId::new("t"),
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Public,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),

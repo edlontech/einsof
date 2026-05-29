@@ -1,5 +1,5 @@
 use argus_kernel::*;
-use std::collections::BTreeSet;
+use argus_kernel::VecSet;
 
 struct AllowAll;
 impl AuthorizerOracle for AllowAll {
@@ -32,8 +32,8 @@ fn test_kernel() -> Kernel<AllowAll, PassAll, ConformsAll, NoopStore> {
     b.register_tool(
         ToolId::new("read_file"),
         ToolMetadata {
-            capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-            egress: BTreeSet::new(),
+            capabilities: VecSet::from([CapKind::FilesystemRead]),
+            egress: VecSet::new(),
             conf_floor: ConfLevel::Sensitive,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
@@ -42,8 +42,8 @@ fn test_kernel() -> Kernel<AllowAll, PassAll, ConformsAll, NoopStore> {
     b.register_tool(
         ToolId::new("send_email"),
         ToolMetadata {
-            capabilities: BTreeSet::from([CapKind::NetworkEgress]),
-            egress: BTreeSet::from([EgressKind::NetworkExternal]),
+            capabilities: VecSet::from([CapKind::NetworkEgress]),
+            egress: VecSet::from([EgressKind::NetworkExternal]),
             conf_floor: ConfLevel::Public,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
@@ -52,8 +52,8 @@ fn test_kernel() -> Kernel<AllowAll, PassAll, ConformsAll, NoopStore> {
     b.register_tool(
         ToolId::new("check_exists"),
         ToolMetadata {
-            capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-            egress: BTreeSet::new(),
+            capabilities: VecSet::from([CapKind::FilesystemRead]),
+            egress: VecSet::new(),
             conf_floor: ConfLevel::Sensitive,
             output_bounded: true,
             issuer: IssuerId::new("trusted"),
@@ -357,8 +357,8 @@ fn test_kernel_with_deny_flow() -> Kernel<AllowAll, PassAll, ConformsAll, NoopSt
     b.register_tool(
         ToolId::new("read_file"),
         ToolMetadata {
-            capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-            egress: BTreeSet::new(),
+            capabilities: VecSet::from([CapKind::FilesystemRead]),
+            egress: VecSet::new(),
             conf_floor: ConfLevel::Sensitive,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
@@ -367,8 +367,8 @@ fn test_kernel_with_deny_flow() -> Kernel<AllowAll, PassAll, ConformsAll, NoopSt
     b.register_tool(
         ToolId::new("send_email"),
         ToolMetadata {
-            capabilities: BTreeSet::from([CapKind::NetworkEgress]),
-            egress: BTreeSet::from([EgressKind::NetworkExternal]),
+            capabilities: VecSet::from([CapKind::NetworkEgress]),
+            egress: VecSet::from([EgressKind::NetworkExternal]),
             conf_floor: ConfLevel::Public,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
@@ -504,8 +504,8 @@ fn registered_tools_have_trusted_issuer() {
     b.register_tool(
         ToolId::new("good"),
         ToolMetadata {
-            capabilities: BTreeSet::new(),
-            egress: BTreeSet::new(),
+            capabilities: VecSet::new(),
+            egress: VecSet::new(),
             conf_floor: ConfLevel::Public,
             output_bounded: true,
             issuer: IssuerId::new("trusted"),
@@ -514,8 +514,8 @@ fn registered_tools_have_trusted_issuer() {
     b.register_tool(
         ToolId::new("bad"),
         ToolMetadata {
-            capabilities: BTreeSet::new(),
-            egress: BTreeSet::new(),
+            capabilities: VecSet::new(),
+            egress: VecSet::new(),
             conf_floor: ConfLevel::Public,
             output_bounded: true,
             issuer: IssuerId::new("rogue"),
@@ -528,8 +528,8 @@ fn registered_tools_have_trusted_issuer() {
     assert!(k.register_tool(ToolId::new("bad")).is_err());
 
     for tool in k.state().tool_registered.iter() {
-        let issuer = &k.background().tool_metadata(tool).unwrap().issuer;
-        assert!(k.background().is_trusted_issuer(issuer));
+        let issuer = k.background().tool_metadata(tool).unwrap().issuer;
+        assert!(k.background().is_trusted_issuer(&issuer));
     }
 }
 

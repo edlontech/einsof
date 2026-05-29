@@ -1,69 +1,69 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
-use crate::collections::VecMap;
+use crate::collections::{VecMap, VecSet};
 use crate::types::{AgentId, BudgetLevel, ConfLevel, InstructionId, InvocationId, OverrideKey, ToolId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelState {
-    pub agent_active: BTreeSet<AgentId>,
+    pub agent_active: VecSet<AgentId>,
     pub agent_parent: VecMap<AgentId, AgentId>,
-    pub agent_cap: BTreeMap<AgentId, BTreeSet<CapKind>>,
-    pub taint_levels: BTreeMap<AgentId, BTreeSet<ConfLevel>>,
-    pub in_flight: BTreeMap<AgentId, BTreeSet<InvocationId>>,
-    pub invocation_tool: BTreeMap<InvocationId, ToolId>,
-    pub tool_registered: BTreeSet<ToolId>,
-    pub gh_taint_invoked: BTreeMap<AgentId, BTreeSet<ConfLevel>>,
-    pub gh_taint_received: BTreeMap<AgentId, BTreeSet<ConfLevel>>,
-    pub agent_instruction: BTreeMap<AgentId, BTreeSet<InstructionId>>,
+    pub agent_cap: VecMap<AgentId, VecSet<CapKind>>,
+    pub taint_levels: VecMap<AgentId, VecSet<ConfLevel>>,
+    pub in_flight: VecMap<AgentId, VecSet<InvocationId>>,
+    pub invocation_tool: VecMap<InvocationId, ToolId>,
+    pub tool_registered: VecSet<ToolId>,
+    pub gh_taint_invoked: VecMap<AgentId, VecSet<ConfLevel>>,
+    pub gh_taint_received: VecMap<AgentId, VecSet<ConfLevel>>,
+    pub agent_instruction: VecMap<AgentId, VecSet<InstructionId>>,
     /// Single-use flow_override consumption (MF-3). Records the `(tool, level)` override
     /// grants an agent has already spent, so each immutable grant rescues at most one
     /// flow. Write-only on the hot path; cleared per-agent by `clear_agent_state`.
-    pub override_used: BTreeMap<AgentId, BTreeSet<OverrideKey>>,
+    pub override_used: VecMap<AgentId, VecSet<OverrideKey>>,
     /// Per-agent declassification budget (TzimtzumV2 `agent_budget`). Absence == full (`L5`):
     /// a fresh or budget-refreshed agent has no entry. Debited on each endorsement; `Exhausted`
     /// forces the fail-closed full-taint path. Reset to full by `clear_agent_state`.
-    pub agent_budget: BTreeMap<AgentId, BudgetLevel>,
+    pub agent_budget: VecMap<AgentId, BudgetLevel>,
 }
 
 impl KernelState {
     pub fn initial() -> Self {
         let root = AgentId::root();
-        let mut all_caps: BTreeSet<CapKind> = BTreeSet::new();
-        for cap in CapKind::ALL {
-            all_caps.insert(cap);
+        let mut all_caps: VecSet<CapKind> = VecSet::new();
+        let mut i = 0;
+        while i < CapKind::ALL.len() {
+            all_caps.insert(CapKind::ALL[i]);
+            i += 1;
         }
 
-        let mut agent_active = BTreeSet::new();
+        let mut agent_active = VecSet::new();
         agent_active.insert(root.clone());
 
-        let mut agent_cap = BTreeMap::new();
+        let mut agent_cap = VecMap::new();
         agent_cap.insert(root, all_caps);
 
         Self {
             agent_active,
             agent_parent: VecMap::new(),
             agent_cap,
-            taint_levels: BTreeMap::new(),
-            in_flight: BTreeMap::new(),
-            invocation_tool: BTreeMap::new(),
-            tool_registered: BTreeSet::new(),
-            gh_taint_invoked: BTreeMap::new(),
-            gh_taint_received: BTreeMap::new(),
-            agent_instruction: BTreeMap::new(),
-            override_used: BTreeMap::new(),
-            agent_budget: BTreeMap::new(),
+            taint_levels: VecMap::new(),
+            in_flight: VecMap::new(),
+            invocation_tool: VecMap::new(),
+            tool_registered: VecSet::new(),
+            gh_taint_invoked: VecMap::new(),
+            gh_taint_received: VecMap::new(),
+            agent_instruction: VecMap::new(),
+            override_used: VecMap::new(),
+            agent_budget: VecMap::new(),
         }
     }
 
     /// True if `agent` has already spent its single-use `flow_override` grant for
     /// `(tool, level)`. A consumed grant no longer rescues a DENY-mode flow.
     pub fn override_consumed(&self, agent: &AgentId, tool: &ToolId, level: ConfLevel) -> bool {
-        self.override_used
-            .get(agent)
-            .is_some_and(|used| used.contains(&OverrideKey { tool: tool.clone(), level }))
+        match self.override_used.get(agent) {
+            Some(used) => used.contains(&OverrideKey { tool: tool.clone(), level }),
+            None => false,
+        }
     }
 
     /// Current declassification budget for `agent` (absence == full, `L5`).
@@ -85,23 +85,22 @@ impl KernelState {
         self.agent_budget.insert(agent.clone(), next);
     }
 
-    pub fn speculative_taint(&self, agent: &AgentId, bg: &BackgroundTheory) -> BTreeSet<ConfLevel> {
-        let mut taint: BTreeSet<ConfLevel> = match self.taint_levels.get(agent) {
-            Some(levels) => levels.clone(),
-            None => BTreeSet::new(),
-        };
+    pub fn speculative_taint(&self, agent: &AgentId, bg: &BackgroundTheory) -> VecSet<ConfLevel> {
+        let mut taint: VecSet<ConfLevel> = self.taint_levels.get_set_or_empty(agent);
 
-        if let Some(flights) = self.in_flight.get(agent) {
-            for inv in flights {
-                // Conformance-gating made the old bounded-tool exclusion unsound: a bounded
-                // in-flight tool may still add taint on completion (if it fails conformance),
-                // so every in-flight tool contributes its floor (worst-case / fail-closed).
-                if let Some(tool_id) = self.invocation_tool.get(inv)
-                    && let Some(tmeta) = bg.tool_metadata(tool_id)
-                {
+        // Conformance-gating made the old bounded-tool exclusion unsound: a bounded in-flight
+        // tool may still add taint on completion (if it fails conformance), so every in-flight
+        // tool contributes its floor (worst-case / fail-closed). Owned locals + index loop.
+        let flights = self.in_flight.get_set_or_empty(agent);
+        let mut j = 0;
+        while j < flights.len() {
+            let inv = flights.at(j);
+            if let Some(tool_id) = self.invocation_tool.get_cloned(inv) {
+                if let Some(tmeta) = bg.tool_metadata(&tool_id) {
                     taint.insert(tmeta.conf_floor);
                 }
             }
+            j += 1;
         }
 
         taint
@@ -166,17 +165,15 @@ mod tests {
         state.invocation_tool.insert(inv.clone(), tool.clone());
         state
             .in_flight
-            .entry(agent.clone())
-            .or_default()
-            .insert(inv);
+            .insert_into(agent.clone(), inv);
 
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
             tool,
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::from([EgressKind::NetworkExternal]),
+                capabilities: VecSet::new(),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
@@ -202,17 +199,15 @@ mod tests {
         state.invocation_tool.insert(inv.clone(), tool.clone());
         state
             .in_flight
-            .entry(agent.clone())
-            .or_default()
-            .insert(inv);
+            .insert_into(agent.clone(), inv);
 
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
             tool,
             ToolMetadata {
-                capabilities: BTreeSet::new(),
-                egress: BTreeSet::new(),
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),

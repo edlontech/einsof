@@ -1,13 +1,13 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-
 use crate::capability::CapKind;
-use crate::types::{AgentId, ConfLevel, EgressKind, InstructionId, IssuerId, ToolId};
+use crate::collections::{VecMap, VecSet};
+use crate::types::{
+    AgentId, ConfLevel, EgressKind, FlowKey, InstructionId, IssuerId, OverrideEntry, ToolId,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolMetadata {
-    pub capabilities: BTreeSet<CapKind>,
-    pub egress: BTreeSet<EgressKind>,
+    pub capabilities: VecSet<CapKind>,
+    pub egress: VecSet<EgressKind>,
     pub conf_floor: ConfLevel,
     pub output_bounded: bool,
     pub issuer: IssuerId,
@@ -22,11 +22,11 @@ pub enum FlowMode {
 
 #[derive(Clone, Debug)]
 pub struct BackgroundTheory {
-    tools: BTreeMap<ToolId, ToolMetadata>,
-    flow_policy: BTreeMap<(ConfLevel, EgressKind), FlowMode>,
-    flow_overrides: BTreeSet<(AgentId, ToolId, ConfLevel)>,
-    trusted_issuers: BTreeSet<IssuerId>,
-    instruction_issuer: BTreeMap<InstructionId, IssuerId>,
+    tools: VecMap<ToolId, ToolMetadata>,
+    flow_policy: VecMap<FlowKey, FlowMode>,
+    flow_overrides: VecSet<OverrideEntry>,
+    trusted_issuers: VecSet<IssuerId>,
+    instruction_issuer: VecMap<InstructionId, IssuerId>,
 }
 
 impl BackgroundTheory {
@@ -34,24 +34,27 @@ impl BackgroundTheory {
         self.tools.contains_key(tool)
     }
 
-    pub fn tool_metadata(&self, tool: &ToolId) -> Option<&ToolMetadata> {
-        self.tools.get(tool)
+    pub fn tool_metadata(&self, tool: &ToolId) -> Option<ToolMetadata> {
+        self.tools.get_cloned(tool)
     }
 
     pub fn flow_mode(&self, level: ConfLevel, egress: EgressKind) -> FlowMode {
-        self.flow_policy
-            .get(&(level, egress))
-            .copied()
-            .unwrap_or(FlowMode::Deny)
+        match self.flow_policy.get(&FlowKey { level, egress }) {
+            Some(mode) => *mode,
+            None => FlowMode::Deny,
+        }
     }
 
     pub fn has_flow_override(&self, agent: &AgentId, tool: &ToolId, level: ConfLevel) -> bool {
-        self.flow_overrides
-            .contains(&(agent.clone(), tool.clone(), level))
+        self.flow_overrides.contains(&OverrideEntry {
+            agent: agent.clone(),
+            tool: tool.clone(),
+            level,
+        })
     }
 
     pub fn registered_tools(&self) -> impl Iterator<Item = &ToolId> {
-        self.tools.keys()
+        self.tools.iter().map(|(tool, _)| tool)
     }
 
     pub fn is_trusted_issuer(&self, issuer: &IssuerId) -> bool {
@@ -64,21 +67,21 @@ impl BackgroundTheory {
 }
 
 pub struct BackgroundTheoryBuilder {
-    tools: BTreeMap<ToolId, ToolMetadata>,
-    flow_policy: BTreeMap<(ConfLevel, EgressKind), FlowMode>,
-    flow_overrides: BTreeSet<(AgentId, ToolId, ConfLevel)>,
-    trusted_issuers: BTreeSet<IssuerId>,
-    instruction_issuer: BTreeMap<InstructionId, IssuerId>,
+    tools: VecMap<ToolId, ToolMetadata>,
+    flow_policy: VecMap<FlowKey, FlowMode>,
+    flow_overrides: VecSet<OverrideEntry>,
+    trusted_issuers: VecSet<IssuerId>,
+    instruction_issuer: VecMap<InstructionId, IssuerId>,
 }
 
 impl BackgroundTheoryBuilder {
     pub fn new() -> Self {
         Self {
-            tools: BTreeMap::new(),
-            flow_policy: BTreeMap::new(),
-            flow_overrides: BTreeSet::new(),
-            trusted_issuers: BTreeSet::new(),
-            instruction_issuer: BTreeMap::new(),
+            tools: VecMap::new(),
+            flow_policy: VecMap::new(),
+            flow_overrides: VecSet::new(),
+            trusted_issuers: VecSet::new(),
+            instruction_issuer: VecMap::new(),
         }
     }
 
@@ -88,12 +91,12 @@ impl BackgroundTheoryBuilder {
     }
 
     pub fn set_flow(&mut self, level: ConfLevel, egress: EgressKind, mode: FlowMode) -> &mut Self {
-        self.flow_policy.insert((level, egress), mode);
+        self.flow_policy.insert(FlowKey { level, egress }, mode);
         self
     }
 
     pub fn add_override(&mut self, agent: AgentId, tool: ToolId, level: ConfLevel) -> &mut Self {
-        self.flow_overrides.insert((agent, tool, level));
+        self.flow_overrides.insert(OverrideEntry { agent, tool, level });
         self
     }
 
@@ -161,8 +164,8 @@ mod tests {
     fn tool_metadata_lookup() {
         let mut builder = BackgroundTheoryBuilder::new();
         let meta = ToolMetadata {
-            capabilities: BTreeSet::from([CapKind::FilesystemRead]),
-            egress: BTreeSet::from([EgressKind::NetworkExternal]),
+            capabilities: VecSet::from([CapKind::FilesystemRead]),
+            egress: VecSet::from([EgressKind::NetworkExternal]),
             conf_floor: ConfLevel::Internal,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
@@ -171,7 +174,7 @@ mod tests {
         let bg = builder.build();
 
         let found = bg.tool_metadata(&ToolId::new("read_file")).unwrap();
-        assert_eq!(found, &meta);
+        assert_eq!(found, meta);
         assert!(bg.tool_metadata(&ToolId::new("nonexistent")).is_none());
     }
 
