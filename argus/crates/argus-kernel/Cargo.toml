@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-thiserror = { workspace = true }
+# (zero runtime dependencies — extraction-friendly; errors are a payload-free enum)
 
 [dev-dependencies]
 serde = { workspace = true }

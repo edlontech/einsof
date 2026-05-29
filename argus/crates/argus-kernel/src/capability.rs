@@ -23,27 +23,26 @@ pub enum CapKind {
 }
 
 impl CapKind {
-    pub fn all() -> &'static [CapKind] {
-        &[
-            Self::FilesystemRead,
-            Self::FilesystemWrite,
-            Self::FilesystemDelete,
-            Self::NetworkEgress,
-            Self::NetworkIngress,
-            Self::ExecutionShell,
-            Self::ExecutionCode,
-            Self::Credentials,
-            Self::SystemInfo,
-            Self::SystemModify,
-            Self::Clipboard,
-            Self::BrowserNavigate,
-            Self::DatabaseRead,
-            Self::DatabaseWrite,
-            Self::Ipc,
-            Self::Declassify,
-            Self::RefreshBudget,
-        ]
-    }
+    /// All capability kinds, as an owned array (extraction-friendly: no `&'static` slice).
+    pub const ALL: [CapKind; 17] = [
+        Self::FilesystemRead,
+        Self::FilesystemWrite,
+        Self::FilesystemDelete,
+        Self::NetworkEgress,
+        Self::NetworkIngress,
+        Self::ExecutionShell,
+        Self::ExecutionCode,
+        Self::Credentials,
+        Self::SystemInfo,
+        Self::SystemModify,
+        Self::Clipboard,
+        Self::BrowserNavigate,
+        Self::DatabaseRead,
+        Self::DatabaseWrite,
+        Self::Ipc,
+        Self::Declassify,
+        Self::RefreshBudget,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -126,12 +125,12 @@ mod tests {
 
     #[test]
     fn cap_kind_all_variants_count() {
-        assert_eq!(CapKind::all().len(), 17);
+        assert_eq!(CapKind::ALL.len(), 17);
     }
 
     #[test]
     fn cap_kind_display_roundtrip() {
-        for &kind in CapKind::all() {
+        for kind in CapKind::ALL {
             let name = kind.as_str();
             let parsed = CapKind::from_catalog_name(name);
             assert_eq!(parsed, Some(kind), "roundtrip failed for {name}");

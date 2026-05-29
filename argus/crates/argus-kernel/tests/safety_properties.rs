@@ -425,7 +425,7 @@ fn sentinel_elevate_taint_flow_incompatible_rejected() {
     let mut k = test_kernel_with_deny_flow();
     k.register_tool(ToolId::new("send_email")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
-    for &cap in CapKind::all() {
+    for cap in CapKind::ALL {
         let _ = k.grant_capability(AgentId::root(), AgentId::new("a1"), cap);
     }
 
@@ -461,7 +461,7 @@ fn flow_confinement_holds_after_sentinel_taint() {
     let mut k = test_kernel();
     k.register_tool(ToolId::new("send_email")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
-    for &cap in CapKind::all() {
+    for cap in CapKind::ALL {
         let _ = k.grant_capability(AgentId::root(), AgentId::new("a1"), cap);
     }
 
@@ -482,7 +482,7 @@ fn event_store_failure_preserves_consistency() {
     struct FailStore;
     impl EventStore for FailStore {
         fn append(&self, _: &KernelEvent) -> Result<(), KernelError> {
-            Err(KernelError::EventStoreError("simulated failure".into()))
+            Err(KernelError::EventStore)
         }
     }
 

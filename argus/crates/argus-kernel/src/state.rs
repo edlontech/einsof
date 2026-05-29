@@ -30,7 +30,10 @@ pub struct KernelState {
 impl KernelState {
     pub fn initial() -> Self {
         let root = AgentId::root();
-        let all_caps: BTreeSet<CapKind> = CapKind::all().iter().copied().collect();
+        let mut all_caps: BTreeSet<CapKind> = BTreeSet::new();
+        for cap in CapKind::ALL {
+            all_caps.insert(cap);
+        }
 
         let mut agent_active = BTreeSet::new();
         agent_active.insert(root.clone());
@@ -122,7 +125,7 @@ mod tests {
     fn initial_state_root_has_all_caps() {
         let state = KernelState::initial();
         let root_caps = state.agent_cap.get(&AgentId::root()).unwrap();
-        for &kind in CapKind::all() {
+        for kind in CapKind::ALL {
             assert!(root_caps.contains(&kind), "root missing cap: {kind}");
         }
     }
