@@ -15,9 +15,10 @@ CLI have been removed.
 
 ## argus-kernel
 
-Pure functional state machine implementing the TzimtzumV2 transitions. Zero workspace
-dependencies (only `thiserror`), compatible with Aeneas/Charon (Lean) extraction. Uses
-`BTreeMap`/`BTreeSet` exclusively.
+Pure functional state machine implementing the TzimtzumV2 transitions. Zero dependencies
+(`serde`/`serde_json` are dev-only), compatible with Aeneas/Charon (Lean) extraction. State is
+held in `Vec`-backed `VecMap`/`VecSet` wrappers (`collections.rs`): Aeneas models `Vec` and its
+iterator but has **no** model for `BTreeMap`/`BTreeSet` iteration, so the kernel avoids B-trees.
 
 Each transition takes an immutable state and a fixed background theory, and returns a new state
 plus an event:
@@ -33,8 +34,9 @@ monomorphized (no `Arc<dyn Trait>`).
 
 The protocol is verified in Lean 4 (see [`tzimtzum/`](../tzimtzum/) on the [Kav](../kav/)
 framework). The Rust kernel is mechanically extracted to Lean via Aeneas/Charon (output under
-`formal-lean/`) and refined against that specification. This refinement is **work in progress**
-and is not yet a completed end-to-end proof.
+`formal-lean/`) and refined against that specification. The extracted model is now fully
+transparent (12/12 transitions, no axiom/sorry) and elaborates on Lean 4.30; the refinement of
+that model against the spec is **work in progress** and is not yet a completed end-to-end proof.
 
 ## Building
 
