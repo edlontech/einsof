@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
-use crate::types::{AgentId, BudgetLevel, ConfLevel, InstructionId, InvocationId, ToolId};
+use crate::types::{AgentId, BudgetLevel, ConfLevel, InstructionId, InvocationId, OverrideKey, ToolId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelState {
@@ -20,7 +20,7 @@ pub struct KernelState {
     /// Single-use flow_override consumption (MF-3). Records the `(tool, level)` override
     /// grants an agent has already spent, so each immutable grant rescues at most one
     /// flow. Write-only on the hot path; cleared per-agent by `clear_agent_state`.
-    pub override_used: BTreeMap<AgentId, BTreeSet<(ToolId, ConfLevel)>>,
+    pub override_used: BTreeMap<AgentId, BTreeSet<OverrideKey>>,
     /// Per-agent declassification budget (TzimtzumV2 `agent_budget`). Absence == full (`L5`):
     /// a fresh or budget-refreshed agent has no entry. Debited on each endorsement; `Exhausted`
     /// forces the fail-closed full-taint path. Reset to full by `clear_agent_state`.
@@ -62,7 +62,7 @@ impl KernelState {
     pub fn override_consumed(&self, agent: &AgentId, tool: &ToolId, level: ConfLevel) -> bool {
         self.override_used
             .get(agent)
-            .is_some_and(|used| used.contains(&(tool.clone(), level)))
+            .is_some_and(|used| used.contains(&OverrideKey { tool: tool.clone(), level }))
     }
 
     /// Current declassification budget for `agent` (absence == full, `L5`).

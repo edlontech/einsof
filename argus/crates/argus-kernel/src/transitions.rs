@@ -6,7 +6,7 @@ use crate::error::KernelError;
 use crate::event::KernelAction;
 use crate::state::KernelState;
 use crate::traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle};
-use crate::types::{AgentId, ConfLevel, EgressKind, InstructionId, InvocationId, ToolId};
+use crate::types::{AgentId, ConfLevel, EgressKind, InstructionId, InvocationId, OverrideKey, ToolId};
 
 /// Outcome of a flow-gate check at a consuming site (`invoke_start` / `return_unendorsed` /
 /// `sentinel_elevate_taint`). Distinguishes a flow permitted outright (ALLOW, or INSPECT with a
@@ -115,8 +115,8 @@ fn sentinel_flow_gate<C: ContentGateOracle>(
     agent: &AgentId,
     level: ConfLevel,
     st: &KernelState,
-) -> Result<BTreeSet<(ToolId, ConfLevel)>, KernelError> {
-    let mut to_consume: BTreeSet<(ToolId, ConfLevel)> = BTreeSet::new();
+) -> Result<BTreeSet<OverrideKey>, KernelError> {
+    let mut to_consume: BTreeSet<OverrideKey> = BTreeSet::new();
     if let Some(in_flight_invs) = st.in_flight.get(agent) {
         for inv in in_flight_invs {
             let tool = st
@@ -128,7 +128,7 @@ fn sentinel_flow_gate<C: ContentGateOracle>(
                     match flow_decision(bg, content_gate, agent, tool, st, level, egress) {
                         FlowDecision::Allowed => {}
                         FlowDecision::ConsumedOverride => {
-                            to_consume.insert((tool.clone(), level));
+                            to_consume.insert(OverrideKey { tool: tool.clone(), level });
                         }
                         FlowDecision::Denied => return Err(KernelError::FlowGateBlocked),
                     }
@@ -336,7 +336,7 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
 
     // Override grants that are the *sole* justification for a flow this transition; spent
     // on success (single-use, MF-3). Keyed by (tool, level) for the invoking `agent`.
-    let mut to_consume: BTreeSet<(ToolId, ConfLevel)> = BTreeSet::new();
+    let mut to_consume: BTreeSet<OverrideKey> = BTreeSet::new();
 
     let spec_taint = st.speculative_taint(&agent, bg);
     for &level in &spec_taint {
@@ -344,7 +344,7 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
             match flow_decision(bg, content_gate, &agent, &tool, &st, level, egress) {
                 FlowDecision::Allowed => {}
                 FlowDecision::ConsumedOverride => {
-                    to_consume.insert((tool.clone(), level));
+                    to_consume.insert(OverrideKey { tool: tool.clone(), level });
                 }
                 FlowDecision::Denied => {
                     return Err(KernelError::FlowGateBlocked);
@@ -373,7 +373,10 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
                     ) {
                         FlowDecision::Allowed => {}
                         FlowDecision::ConsumedOverride => {
-                            to_consume.insert((flight_tool_id.clone(), tool_meta.conf_floor));
+                            to_consume.insert(OverrideKey {
+                                tool: flight_tool_id.clone(),
+                                level: tool_meta.conf_floor,
+                            });
                         }
                         FlowDecision::Denied => {
                             return Err(KernelError::FlowGateBlocked);
@@ -396,7 +399,10 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         ) {
             FlowDecision::Allowed => {}
             FlowDecision::ConsumedOverride => {
-                to_consume.insert((tool.clone(), tool_meta.conf_floor));
+                to_consume.insert(OverrideKey {
+                    tool: tool.clone(),
+                    level: tool_meta.conf_floor,
+                });
             }
             FlowDecision::Denied => {
                 return Err(KernelError::FlowGateBlocked);
@@ -548,7 +554,7 @@ pub fn return_unendorsed<C: ContentGateOracle>(
     let parent_flights = st.in_flight.get(&parent).unwrap_or(&empty_flights);
 
     // Override grants spent on success (single-use, MF-3). Charged to the recipient `parent`.
-    let mut to_consume: BTreeSet<(ToolId, ConfLevel)> = BTreeSet::new();
+    let mut to_consume: BTreeSet<OverrideKey> = BTreeSet::new();
     for &level in &child_taint {
         for inv in parent_flights {
             if let Some(tool_id) = st.invocation_tool.get(inv)
@@ -558,7 +564,7 @@ pub fn return_unendorsed<C: ContentGateOracle>(
                     match flow_decision(bg, content_gate, &parent, tool_id, &st, level, egress) {
                         FlowDecision::Allowed => {}
                         FlowDecision::ConsumedOverride => {
-                            to_consume.insert((tool_id.clone(), level));
+                            to_consume.insert(OverrideKey { tool: tool_id.clone(), level });
                         }
                         FlowDecision::Denied => {
                             return Err(KernelError::FlowGateBlocked);
@@ -1768,7 +1774,10 @@ mod tests {
             .override_used
             .entry(AgentId::new("a1"))
             .or_default()
-            .insert((ToolId::new("send_email"), ConfLevel::Sensitive));
+            .insert(OverrideKey {
+                tool: ToolId::new("send_email"),
+                level: ConfLevel::Sensitive,
+            });
         let bg = BackgroundTheoryBuilder::new().build();
 
         let (st, _) = revoke(st, &bg, AgentId::root(), AgentId::new("a1"))

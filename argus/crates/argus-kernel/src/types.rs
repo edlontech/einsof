@@ -110,6 +110,15 @@ impl PartialOrd for ConfLevel {
     }
 }
 
+/// A consumed single-use flow-override, keyed by the `(tool, level)` it justified. A named struct
+/// (not a `(ToolId, ConfLevel)` tuple) so the extractor gets a concrete derived `Ord` instead of
+/// the tuple "Pair" comparison Aeneas cannot resolve.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct OverrideKey {
+    pub tool: ToolId,
+    pub level: ConfLevel,
+}
+
 impl fmt::Display for ConfLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

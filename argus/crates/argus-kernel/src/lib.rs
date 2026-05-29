@@ -16,5 +16,6 @@ pub use kernel::Kernel;
 pub use state::KernelState;
 pub use traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle, EventStore};
 pub use types::{
-    AgentId, BudgetLevel, ConfLevel, EgressKind, InstructionId, InvocationId, IssuerId, ToolId,
+    AgentId, BudgetLevel, ConfLevel, EgressKind, InstructionId, InvocationId, IssuerId,
+    OverrideKey, ToolId,
 };
