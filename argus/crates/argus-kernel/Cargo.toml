@@ -10,3 +10,15 @@ license.workspace = true
 [dev-dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Charon (Aeneas) extraction scoping. Entry points = the transition call-graph + the
+# initial state. Because Charon only queues items reachable from these entry points
+# (not the whole crate), this drops the Debug/Display/Hash derives, the dead
+# Scope/PathBuf types, and the catalog helpers (none reachable from the transitions),
+# while keeping Ord (genuinely needed for BTreeMap key ordering). See the design at
+# argus_and_tzimtzum/designs/2026-05-29-extraction-refactor-design.md (Obsidian).
+[package.metadata.charon]
+start_from = [
+    "crate::transitions",
+    "crate::state::_::initial",
+]

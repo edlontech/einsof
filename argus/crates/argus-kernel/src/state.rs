@@ -67,10 +67,10 @@ impl KernelState {
 
     /// Current declassification budget for `agent` (absence == full, `L5`).
     pub fn budget(&self, agent: &AgentId) -> BudgetLevel {
-        self.agent_budget
-            .get(agent)
-            .copied()
-            .unwrap_or_else(BudgetLevel::full)
+        match self.agent_budget.get(agent) {
+            Some(b) => *b,
+            None => BudgetLevel::full(),
+        }
     }
 
     /// True if `agent`'s declassification budget is exhausted (blocks the zero-taint path).
@@ -85,22 +85,20 @@ impl KernelState {
     }
 
     pub fn speculative_taint(&self, agent: &AgentId, bg: &BackgroundTheory) -> BTreeSet<ConfLevel> {
-        let mut taint: BTreeSet<ConfLevel> =
-            self.taint_levels.get(agent).cloned().unwrap_or_default();
+        let mut taint: BTreeSet<ConfLevel> = match self.taint_levels.get(agent) {
+            Some(levels) => levels.clone(),
+            None => BTreeSet::new(),
+        };
 
         if let Some(flights) = self.in_flight.get(agent) {
             for inv in flights {
-                debug_assert!(
-                    self.invocation_tool.contains_key(inv),
-                    "in_flight contains InvocationId {inv} with no invocation_tool binding"
-                );
                 // Conformance-gating made the old bounded-tool exclusion unsound: a bounded
                 // in-flight tool may still add taint on completion (if it fails conformance),
                 // so every in-flight tool contributes its floor (worst-case / fail-closed).
                 if let Some(tool_id) = self.invocation_tool.get(inv)
-                    && let Some(meta) = bg.tool_metadata(tool_id)
+                    && let Some(tmeta) = bg.tool_metadata(tool_id)
                 {
-                    taint.insert(meta.conf_floor);
+                    taint.insert(tmeta.conf_floor);
                 }
             }
         }
