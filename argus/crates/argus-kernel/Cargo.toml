@@ -22,3 +22,11 @@ start_from = [
     "crate::transitions",
     "crate::state::_::initial",
 ]
+# Opaque iteration helpers: Aeneas has no BTreeMap/Set iteration model, so the iteration is
+# isolated in these helpers (emitted as axiom signatures) and given hand-written Lean models in
+# the refinement, keeping the transition bodies transparent.
+opaque = [
+    "crate::transitions::agent_parent_drop_endpoint",
+    "crate::transitions::agent_parent_drop_child",
+    "crate::state::_::speculative_taint",
+]

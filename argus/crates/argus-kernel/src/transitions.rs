@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::background::{BackgroundTheory, FlowMode};
 use crate::capability::CapKind;
@@ -59,6 +59,41 @@ fn clear_agent_state(st: &mut KernelState, agent: &AgentId) {
     st.agent_instruction.remove(agent);
     st.override_used.remove(agent);
     st.agent_budget.remove(agent);
+}
+
+/// Drop every `agent_parent` edge that touches `dropped` on either endpoint (the stale-edge
+/// cleanup `delegate` did via `BTreeMap::retain`). Factored out and kept OPAQUE to the extractor
+/// (see `[package.metadata.charon]` `opaque`): Aeneas has no model for `BTreeMap` iteration, so
+/// the transition body stays transparent by calling this helper while the iteration is hidden.
+/// The refinement supplies a hand-written Lean axiom for its semantics (the axiomatic
+/// BTree-iteration interface).
+fn agent_parent_drop_endpoint(
+    map: &BTreeMap<AgentId, AgentId>,
+    dropped: &AgentId,
+) -> BTreeMap<AgentId, AgentId> {
+    let mut kept = BTreeMap::new();
+    for (child, parent) in map {
+        if child != dropped && parent != dropped {
+            kept.insert(child.clone(), parent.clone());
+        }
+    }
+    kept
+}
+
+/// Drop every `agent_parent` edge whose CHILD is `dropped` (the cleanup `revoke` /
+/// `cascade_revoke` did via `BTreeMap::retain`). Opaque iteration helper — see
+/// `agent_parent_drop_endpoint`.
+fn agent_parent_drop_child(
+    map: &BTreeMap<AgentId, AgentId>,
+    dropped: &AgentId,
+) -> BTreeMap<AgentId, AgentId> {
+    let mut kept = BTreeMap::new();
+    for (child, parent) in map {
+        if child != dropped {
+            kept.insert(child.clone(), parent.clone());
+        }
+    }
+    kept
 }
 
 pub fn register_tool(
@@ -125,9 +160,7 @@ pub fn delegate(
     }
 
     st.agent_active.insert(grantee.clone());
-    st
-        .agent_parent
-        .retain(|child, parent| child != &grantee && parent != &grantee);
+    st.agent_parent = agent_parent_drop_endpoint(&st.agent_parent, &grantee);
     st.agent_parent.insert(grantee.clone(), grantor.clone());
     st.agent_cap.insert(grantee.clone(), BTreeSet::new());
     clear_agent_state(&mut st, &grantee);
@@ -188,7 +221,7 @@ pub fn revoke(
     }
 
     st.agent_active.remove(&target);
-    st.agent_parent.retain(|child, _| child != &target);
+    st.agent_parent = agent_parent_drop_child(&st.agent_parent, &target);
     st.agent_cap.remove(&target);
     clear_agent_state(&mut st, &target);
 
@@ -215,7 +248,7 @@ pub fn cascade_revoke(
     }
 
     st.agent_active.remove(&child);
-    st.agent_parent.retain(|c, _| c != &child);
+    st.agent_parent = agent_parent_drop_child(&st.agent_parent, &child);
     st.agent_cap.remove(&child);
     clear_agent_state(&mut st, &child);
 
