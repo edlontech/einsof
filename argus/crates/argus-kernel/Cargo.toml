@@ -28,5 +28,7 @@ start_from = [
 opaque = [
     "crate::transitions::agent_parent_drop_endpoint",
     "crate::transitions::agent_parent_drop_child",
+    "crate::transitions::btree_set_union",
+    "crate::transitions::sentinel_flow_gate",
     "crate::state::_::speculative_taint",
 ]

@@ -96,6 +96,49 @@ fn agent_parent_drop_child(
     kept
 }
 
+/// Set union `a ∪ b`. Opaque iteration helper (BTreeSet iteration) — the refinement models it
+/// with the obvious membership axiom. Used to apply consumed-override / inherited-taint sets.
+fn btree_set_union<T: Ord + Clone>(mut a: BTreeSet<T>, b: BTreeSet<T>) -> BTreeSet<T> {
+    for x in b {
+        a.insert(x);
+    }
+    a
+}
+
+/// Opaque flow-gate helper for `sentinel_elevate_taint`: over the agent's in-flight tools and
+/// their egress kinds, apply `flow_decision` at the raised `level`; return the overrides to
+/// consume, or the blocking error. Opaque to the extractor (BTree iteration); the refinement's
+/// Lean axiom states it as the fold of the (transparent) `flow_decision` over in-flight × egress.
+fn sentinel_flow_gate<C: ContentGateOracle>(
+    bg: &BackgroundTheory,
+    content_gate: &C,
+    agent: &AgentId,
+    level: ConfLevel,
+    st: &KernelState,
+) -> Result<BTreeSet<(ToolId, ConfLevel)>, KernelError> {
+    let mut to_consume: BTreeSet<(ToolId, ConfLevel)> = BTreeSet::new();
+    if let Some(in_flight_invs) = st.in_flight.get(agent) {
+        for inv in in_flight_invs {
+            let tool = st
+                .invocation_tool
+                .get(inv)
+                .ok_or(KernelError::MissingToolBinding)?;
+            if let Some(tmeta) = bg.tool_metadata(tool) {
+                for &egress in &tmeta.egress {
+                    match flow_decision(bg, content_gate, agent, tool, st, level, egress) {
+                        FlowDecision::Allowed => {}
+                        FlowDecision::ConsumedOverride => {
+                            to_consume.insert((tool.clone(), level));
+                        }
+                        FlowDecision::Denied => return Err(KernelError::FlowGateBlocked),
+                    }
+                }
+            }
+        }
+    }
+    Ok(to_consume)
+}
+
 pub fn register_tool(
     mut st: KernelState,
     bg: &BackgroundTheory,
@@ -561,48 +604,22 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
         return Err(KernelError::AgentInactive);
     }
 
-    // Override grants that are the *sole* justification for keeping an in-flight egress tool
-    // legal under the raised taint; spent on success (single-use, MF-3) -- uniform with
-    // invoke_start / return_unendorsed. A taint-raise that pushes an in-flight egress tool past a
-    // DENY is exactly the one authorized exfil, so it consumes the exception.
-    let mut to_consume: BTreeSet<(ToolId, ConfLevel)> = BTreeSet::new();
-    if let Some(in_flight_invs) = st.in_flight.get(&agent) {
-        for inv in in_flight_invs {
-            let tool = st
-                .invocation_tool
-                .get(inv)
-                .ok_or(KernelError::MissingToolBinding)?;
-            if let Some(tmeta) = bg.tool_metadata(tool) {
-                for &egress in &tmeta.egress {
-                    match flow_decision(bg, content_gate, &agent, tool, &st, level, egress) {
-                        FlowDecision::Allowed => {}
-                        FlowDecision::ConsumedOverride => {
-                            to_consume.insert((tool.clone(), level));
-                        }
-                        FlowDecision::Denied => {
-                            return Err(KernelError::FlowGateBlocked);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Override grants spent on success (single-use, MF-3) -- uniform with invoke_start /
+    // return_unendorsed. The flow gate (BTree iteration) lives in the opaque `sentinel_flow_gate`
+    // helper; the rest is point-ops.
+    let to_consume = sentinel_flow_gate(bg, content_gate, &agent, level, &st)?;
 
     if !to_consume.is_empty() {
-        st
-            .override_used
-            .entry(agent.clone())
-            .or_default()
-            .extend(to_consume);
+        let cur = match st.override_used.get(&agent) {
+            Some(s) => s.clone(),
+            None => BTreeSet::new(),
+        };
+        st.override_used
+            .insert(agent.clone(), btree_set_union(cur, to_consume));
     }
 
-    st
-        .taint_levels
-        .entry(agent.clone())
-        .or_default()
-        .insert(level);
-    st
-        .gh_taint_invoked
+    st.taint_levels.entry(agent.clone()).or_default().insert(level);
+    st.gh_taint_invoked
         .entry(agent.clone())
         .or_default()
         .insert(level);
