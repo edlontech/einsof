@@ -1,0 +1,15 @@
+name = "tzimtzum"
+defaultTargets = ["Tzimtzum"]
+
+# The TzimtzumV2 port is built on the Kav transition-system framework.
+# mathlib / lean-auto / Duper come transitively through kav.
+[[require]]
+name = "kav"
+path = "../kav"
+
+[[lean_lib]]
+name = "Tzimtzum"
+
+[[lean_lib]]
+name = "TzimtzumTest"
+globs = ["TzimtzumTest"]

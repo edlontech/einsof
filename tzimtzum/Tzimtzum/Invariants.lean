@@ -1,0 +1,235 @@
+import Tzimtzum.Actions
+
+/-! # TzimtzumV2 — safety properties + strengthening invariants (Kav port)
+
+Faithful port of the Veil spec's safety properties and strengthening invariants
+(`tzimtzum/TzimtzumV2.lean`, lines 799-976) into the Kav framework as `Prop`
+predicates over the state, plus the assembled invariant bundle.
+
+Translation notes:
+- Veil relation/field accesses gain an `s.` prefix.
+- Prop-valued state relations replace Veil's `Bool`-typed relations, so Veil's
+  `R … = false` / `R … = true` become `¬ s.R …` / `s.R …`.
+- Named individuals: `root_agent` → `s.root_agent`, `cl_X` → `ConfLevel.X`, etc.
+- Capital quantifier binders carry explicit type annotations to avoid
+  `autoImplicit` capture.
+
+Definitions only — no proofs (proving is the next task). -/
+
+namespace Tzimtzum
+
+variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId : Type}
+
+/-! ## Safety properties (Veil lines 799-907) -/
+
+/-- **root_always_active**: the root agent can never be deactivated. -/
+def root_always_active
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  s.agent_active s.root_agent
+
+/-- **default_deny**: every in-flight invocation was explicitly authorized — the authorizer
+allowed (agent, tool) and the agent holds every capability the tool requires. -/
+def default_deny
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I : InvocationId),
+    s.in_flight A I →
+      s.authorizer_allows A (s.invocation_tool I)
+      ∧ (∀ (C : CapKind), s.tool_cap (s.invocation_tool I) C → s.agent_cap A C)
+
+/-- **flow_confinement**: a tainted agent's in-flight egress is permitted by the flow policy
+(ALLOW, or INSPECT + content gate, or a scoped override). -/
+def flow_confinement
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
+    s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E →
+      s.flow_allows L E
+      ∨ (s.flow_inspects L E ∧ s.content_gate_passes A (s.invocation_tool I))
+      ∨ s.flow_override A (s.invocation_tool I) L
+
+/-- **flow_confinement_weak**: oracle-independent flow safety — DENY-mode pairs are
+structurally blocked regardless of oracle behavior. -/
+def flow_confinement_weak
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
+    s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E →
+      s.flow_allows L E
+      ∨ s.flow_inspects L E
+      ∨ s.flow_override A (s.invocation_tool I) L
+
+/-- **capability_subsumption**: for any active parent-child pair, the child's capabilities are a
+subset of the parent's. -/
+def capability_subsumption
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (C P : AgentId),
+    s.agent_parent C P ∧ s.agent_active C ∧ s.agent_active P →
+      ∀ (Cap : CapKind), s.agent_cap C Cap → s.agent_cap P Cap
+
+/-- **revocation_clean**: inactive agents leave no residue (no in-flight invocations, no taint). -/
+def revocation_clean
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I : InvocationId) (L : ConfLevel),
+    ¬ s.agent_active A → ¬ s.in_flight A I ∧ ¬ s.taint_levels A L
+
+/-- **taint_integrity**: taint doesn't appear from nowhere — an active tainted agent's taint is
+justified by a completed non-endorsed invocation or an unendorsed return from a tainted child. -/
+def taint_integrity
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : ConfLevel),
+    s.taint_levels A L ∧ s.agent_active A →
+      s.gh_taint_invoked A L ∨ s.gh_taint_received A L
+
+/-- **tool_attestation_intact**: every registered tool's labels come from a trusted issuer. -/
+def tool_attestation_intact
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (T : ToolId), s.tool_registered T → s.trusted_issuer (s.tool_issuer T)
+
+/-- **instruction_attestation_intact**: every instruction an agent operates under comes from a
+trusted issuer. -/
+def instruction_attestation_intact
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I : InstructionId),
+    s.agent_instruction A I → s.trusted_issuer (s.instruction_issuer I)
+
+/-- **override_consumed_when_sole_justification**: if a `flow_override` is the ONLY thing admitting
+a tainted in-flight egress flow (the pair is DENY and the content gate does not pass), that
+override has been consumed (`override_used`). -/
+def override_consumed_when_sole_justification
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
+    s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E
+    ∧ ¬ s.flow_allows L E
+    ∧ ¬ (s.flow_inspects L E ∧ s.content_gate_passes A (s.invocation_tool I))
+    ∧ s.flow_override A (s.invocation_tool I) L →
+      s.override_used A (s.invocation_tool I) L
+
+/-! ## Strengthening invariants (Veil lines 909-976) -/
+
+/-- **parent_implies_active**: the parent relation is consistent with active status. -/
+def parent_implies_active
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (C P : AgentId), s.agent_parent C P → s.agent_active C
+
+/-- **single_parent**: an active agent has at most one parent. -/
+def single_parent
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (C P1 P2 : AgentId),
+    s.agent_parent C P1 ∧ s.agent_parent C P2 ∧ s.agent_active C → P1 = P2
+
+/-- **no_self_parent**: no agent is its own parent. -/
+def no_self_parent
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId), ¬ s.agent_parent A A
+
+/-- **root_no_parent**: root has no parent. -/
+def root_no_parent
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (P : AgentId), ¬ s.agent_parent s.root_agent P
+
+/-- **in_flight_active**: in-flight invocations only exist for active agents. -/
+def in_flight_active
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I : InvocationId), s.in_flight A I → s.agent_active A
+
+/-- **in_flight_registered**: in-flight invocations only exist for registered tools. -/
+def in_flight_registered
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I : InvocationId), s.in_flight A I → s.tool_registered (s.invocation_tool I)
+
+/-- **in_flight_unique**: an invocation is held by at most one agent. -/
+def in_flight_unique
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A1 A2 : AgentId) (I : InvocationId), s.in_flight A1 I ∧ s.in_flight A2 I → A1 = A2
+
+/-- **root_all_caps**: root holds every capability. -/
+def root_all_caps
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (C : CapKind), s.agent_cap s.root_agent C
+
+/-- **root_no_in_flight**: root never invokes tools directly. -/
+def root_no_in_flight
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (I : InvocationId), ¬ s.in_flight s.root_agent I
+
+/-- **budget_unique**: every active agent has exactly one declassification budget level. -/
+def budget_unique
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L1 L2 : BudgetLevel),
+    s.agent_active A ∧ s.agent_budget A L1 ∧ s.agent_budget A L2 → L1 = L2
+
+/-- **active_has_budget**: every active agent has a declassification budget level. -/
+def active_has_budget
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId), s.agent_active A → ∃ (L : BudgetLevel), s.agent_budget A L
+
+/-- **ghost_invoked_sound**: the `gh_taint_invoked` ghost relation stays in sync with taint. -/
+def ghost_invoked_sound
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : ConfLevel),
+    s.gh_taint_invoked A L → s.taint_levels A L ∨ ¬ s.agent_active A
+
+/-- **ghost_received_sound**: the `gh_taint_received` ghost relation stays in sync with taint. -/
+def ghost_received_sound
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : ConfLevel),
+    s.gh_taint_received A L → s.taint_levels A L ∨ ¬ s.agent_active A
+
+/-- **in_flight_flow_compat**: any two concurrent in-flight invocations for the same agent are
+mutually compatible under the flow policy (I1's conf-floor taint vs I2's egress). -/
+def in_flight_flow_compat
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I1 I2 : InvocationId) (E : EgressKind),
+    s.in_flight A I1 ∧ s.in_flight A I2
+    ∧ s.tool_egress (s.invocation_tool I2) E →
+      s.flow_allows (s.tool_conf_floor (s.invocation_tool I1)) E
+      ∨ (s.flow_inspects (s.tool_conf_floor (s.invocation_tool I1)) E
+          ∧ s.content_gate_passes A (s.invocation_tool I2))
+      ∨ s.flow_override A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1))
+
+/-- **in_flight_override_consumed**: if two in-flight invocations are mutually flow-compatible ONLY
+via an override, that override is already consumed. -/
+def in_flight_override_consumed
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I1 I2 : InvocationId) (E : EgressKind),
+    s.in_flight A I1 ∧ s.in_flight A I2
+    ∧ s.tool_egress (s.invocation_tool I2) E
+    ∧ ¬ s.flow_allows (s.tool_conf_floor (s.invocation_tool I1)) E
+    ∧ ¬ (s.flow_inspects (s.tool_conf_floor (s.invocation_tool I1)) E
+          ∧ s.content_gate_passes A (s.invocation_tool I2))
+    ∧ s.flow_override A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1)) →
+      s.override_used A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1))
+
+/-! ## Invariant bundle
+
+All safety properties and strengthening invariants, assembled into the single bundle Kav's
+inductive check consumes (it treats safeties and invariants uniformly). -/
+
+def allInvariants :
+    List (Kav.Invariant
+      (St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)) :=
+  [ ("root_always_active", root_always_active)
+  , ("default_deny", default_deny)
+  , ("flow_confinement", flow_confinement)
+  , ("flow_confinement_weak", flow_confinement_weak)
+  , ("capability_subsumption", capability_subsumption)
+  , ("revocation_clean", revocation_clean)
+  , ("taint_integrity", taint_integrity)
+  , ("tool_attestation_intact", tool_attestation_intact)
+  , ("instruction_attestation_intact", instruction_attestation_intact)
+  , ("override_consumed_when_sole_justification", override_consumed_when_sole_justification)
+  , ("parent_implies_active", parent_implies_active)
+  , ("single_parent", single_parent)
+  , ("no_self_parent", no_self_parent)
+  , ("root_no_parent", root_no_parent)
+  , ("in_flight_active", in_flight_active)
+  , ("in_flight_registered", in_flight_registered)
+  , ("in_flight_unique", in_flight_unique)
+  , ("root_all_caps", root_all_caps)
+  , ("root_no_in_flight", root_no_in_flight)
+  , ("budget_unique", budget_unique)
+  , ("active_has_budget", active_has_budget)
+  , ("ghost_invoked_sound", ghost_invoked_sound)
+  , ("ghost_received_sound", ghost_received_sound)
+  , ("in_flight_flow_compat", in_flight_flow_compat)
+  , ("in_flight_override_consumed", in_flight_override_consumed) ]
+
+end Tzimtzum
