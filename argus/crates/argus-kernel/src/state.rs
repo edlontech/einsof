@@ -3,12 +3,13 @@ use std::collections::BTreeSet;
 
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
+use crate::collections::VecMap;
 use crate::types::{AgentId, BudgetLevel, ConfLevel, InstructionId, InvocationId, OverrideKey, ToolId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelState {
     pub agent_active: BTreeSet<AgentId>,
-    pub agent_parent: BTreeMap<AgentId, AgentId>,
+    pub agent_parent: VecMap<AgentId, AgentId>,
     pub agent_cap: BTreeMap<AgentId, BTreeSet<CapKind>>,
     pub taint_levels: BTreeMap<AgentId, BTreeSet<ConfLevel>>,
     pub in_flight: BTreeMap<AgentId, BTreeSet<InvocationId>>,
@@ -43,7 +44,7 @@ impl KernelState {
 
         Self {
             agent_active,
-            agent_parent: BTreeMap::new(),
+            agent_parent: VecMap::new(),
             agent_cap,
             taint_levels: BTreeMap::new(),
             in_flight: BTreeMap::new(),

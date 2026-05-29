@@ -1,5 +1,6 @@
 mod background;
 mod capability;
+mod collections;
 mod error;
 mod event;
 mod kernel;
@@ -10,6 +11,7 @@ mod types;
 
 pub use background::{BackgroundTheory, BackgroundTheoryBuilder, FlowMode, ToolMetadata};
 pub use capability::{CapKind, DomainPort, NetScope, Scope};
+pub use collections::{VecMap, VecSet};
 pub use error::KernelError;
 pub use event::{KernelAction, KernelEvent};
 pub use kernel::Kernel;

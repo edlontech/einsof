@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::background::{BackgroundTheory, FlowMode};
 use crate::capability::CapKind;
+use crate::collections::VecMap;
 use crate::error::KernelError;
 use crate::event::KernelAction;
 use crate::state::KernelState;
@@ -62,36 +63,40 @@ fn clear_agent_state(st: &mut KernelState, agent: &AgentId) {
 }
 
 /// Drop every `agent_parent` edge that touches `dropped` on either endpoint (the stale-edge
-/// cleanup `delegate` did via `BTreeMap::retain`). Factored out and kept OPAQUE to the extractor
-/// (see `[package.metadata.charon]` `opaque`): Aeneas has no model for `BTreeMap` iteration, so
-/// the transition body stays transparent by calling this helper while the iteration is hidden.
-/// The refinement supplies a hand-written Lean axiom for its semantics (the axiomatic
-/// BTree-iteration interface).
+/// cleanup `delegate` did via `BTreeMap::retain`). Transparent index loop over the `VecMap`
+/// (no early return, no iterator adapters) -- the Aeneas-extractable idiom.
 fn agent_parent_drop_endpoint(
-    map: &BTreeMap<AgentId, AgentId>,
+    map: &VecMap<AgentId, AgentId>,
     dropped: &AgentId,
-) -> BTreeMap<AgentId, AgentId> {
-    let mut kept = BTreeMap::new();
-    for (child, parent) in map {
+) -> VecMap<AgentId, AgentId> {
+    let mut kept = VecMap::new();
+    let mut i = 0;
+    while i < map.len() {
+        let child = map.key_at(i);
+        let parent = map.val_at(i);
         if child != dropped && parent != dropped {
             kept.insert(child.clone(), parent.clone());
         }
+        i += 1;
     }
     kept
 }
 
 /// Drop every `agent_parent` edge whose CHILD is `dropped` (the cleanup `revoke` /
-/// `cascade_revoke` did via `BTreeMap::retain`). Opaque iteration helper — see
+/// `cascade_revoke` did via `BTreeMap::retain`). Transparent index loop -- see
 /// `agent_parent_drop_endpoint`.
 fn agent_parent_drop_child(
-    map: &BTreeMap<AgentId, AgentId>,
+    map: &VecMap<AgentId, AgentId>,
     dropped: &AgentId,
-) -> BTreeMap<AgentId, AgentId> {
-    let mut kept = BTreeMap::new();
-    for (child, parent) in map {
+) -> VecMap<AgentId, AgentId> {
+    let mut kept = VecMap::new();
+    let mut i = 0;
+    while i < map.len() {
+        let child = map.key_at(i);
         if child != dropped {
-            kept.insert(child.clone(), parent.clone());
+            kept.insert(child.clone(), map.val_at(i).clone());
         }
+        i += 1;
     }
     kept
 }
