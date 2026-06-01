@@ -1,5 +1,6 @@
 import ArgusLean.Refinement.Actions.RegisterTool
 import ArgusLean.Refinement.Actions.LoadInstruction
+import ArgusLean.Refinement.Actions.Delegate
 
 /-! # Refinement — simulation bundle
 
@@ -13,7 +14,9 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
 
 * [x] `register_tool`        — Actions/RegisterTool.lean (exemplar / template)
 * [x] `load_instruction`     — Actions/LoadInstruction.lean (nested `agent_instruction` write)
-* [ ] `delegate`
+* [x] `delegate`             — Actions/Delegate.lean (9/10 fields; `agent_parent` deferred —
+                               needs key-uniqueness — plus the `VecMap.remove`/`insert`
+                               get-machinery + `clear_agent_state` spec)
 * [ ] `grant_capability`
 * [ ] `revoke`
 * [ ] `cascade_revoke`

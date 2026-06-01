@@ -81,6 +81,18 @@ instance : DecidableEq types.InstructionId := inferInstanceAs (DecidableEq Strin
     types.InstructionId.Insts.CoreCloneClone.clone a = .ok a := by
   simp only [types.InstructionId.Insts.CoreCloneClone.clone, string_clone_spec, bind_tc_ok]
 
+/-! ## `PartialEq::ne` extractor residual
+
+`PartialEq::ne` is a *default* trait method (`!self.eq(other)`), so Charon extracts the
+per-type `…ne` as a bare, unspecified axiom (just like the `String` primitives). We pin it
+to faithful decidable disequality — the same already-accepted "trust the extractor" status
+as `string_eq_spec` / `string_clone_spec`. Only `AgentId.ne` is needed for the cleared-map
+removes in `clear_agent_state`; other key types get their own residual when first used. -/
+
+/-- The opaque extracted `AgentId.ne` is faithful decidable disequality. -/
+axiom agentId_ne_spec (a b : types.AgentId) :
+    types.AgentId.Insts.CoreCmpPartialEqAgentId.ne a b = .ok (decide (a ≠ b))
+
 /-! ## VecSet membership abstraction -/
 
 /-- A `VecSet`'s abstract meaning: membership in its underlying list. -/
@@ -298,5 +310,306 @@ theorem vecMapKVecSetInsertInto_spec {K T : Type} [DecidableEq K] [DecidableEq T
     simp only [vmsMem, vsMem] at hs1Mem ⊢
     rw [v_post]
     grind
+
+/-! ## `VecMap.remove`
+
+`remove` rebuilds the entry list keeping every pair whose key differs from the target — a
+pure `List.filter`. The `BuiltinClone` on the kept pair is the identity (`.ok`), so no
+per-element clone hypothesis is needed. This single characterisation feeds every
+key-deletion: the nested-`vmsMem` corollary (the six maps `clear_agent_state` wipes) and the
+plain-key `agent_budget` reasoning. -/
+
+/-- Predicate kept by `VecMap.remove`: the entry's key is not the removed key. -/
+abbrev removeKept {K V : Type} [DecidableEq K] (key : K) : K × V → Bool :=
+  fun p => decide (p.1 ≠ key)
+
+/-- Loop spec for `remove_loop`: the accumulator is the key-filtered prefix scanned so far,
+    so at the end it is the whole filtered list. Mirrors the `VecSet.contains` loop shape,
+    but accumulates a `Vec` via `push` instead of folding a `Bool`. -/
+theorem vecMapRemoveLoop_spec {K V : Type} [DecidableEq K]
+    (eqK : core.cmp.PartialEq K K)
+    (hne : ∀ a b : K, eqK.ne a b = .ok (decide (a ≠ b)))
+    (self : collections.VecMap K V) (key : K)
+    (kept0 : alloc.vec.Vec (K × V)) (i0 : Usize)
+    (hi0 : i0.val ≤ self.entries.val.length)
+    (hkept0 : kept0.val = (self.entries.val.take i0.val).filter (removeKept key)) :
+    collections.VecMap.remove_loop eqK self key kept0 i0 ⦃ kept =>
+      kept.val = self.entries.val.filter (removeKept key) ⦄ := by
+  unfold collections.VecMap.remove_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => self.entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ self.entries.val.length ∧
+        p.1.val = (self.entries.val.take p.2.val).filter (removeKept key))
+  · rintro ⟨kept, i⟩ ⟨hile, hkept⟩
+    simp only [collections.VecMap.remove_loop.body]
+    split
+    case isTrue h =>
+      have hlt : i.val < self.entries.val.length := by scalar_tac
+      step as ⟨t, t1, he⟩
+      have hget : self.entries.val[i.val]? = some (t, t1) := by
+        rw [List.getElem?_eq_getElem hlt, ← he]
+      have hcapk : kept.val.length < Usize.max := by
+        have h1 : kept.val.length ≤ i.val := by
+          rw [hkept]
+          exact le_trans (List.length_filter_le _ _)
+            (by rw [List.length_take]; exact Nat.min_le_left _ _)
+        scalar_tac
+      rw [hne t key]
+      step*
+      split
+      · rename_i hb
+        simp only [BuiltinClone]
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [kept1_post, i2_post, List.take_add_one, hget, Option.toList_some]
+        simp [List.filter_append, removeKept, hb, ← hkept]
+      · rename_i hb
+        step*
+        have hbf : decide (t ≠ key) = false := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [i2_post, List.take_add_one, hget, Option.toList_some]
+        simp [List.filter_append, removeKept, hbf, ← hkept]
+    case isFalse h =>
+      have heq' : i.val = self.entries.val.length := by scalar_tac
+      simp only [spec_ok]
+      simpa [heq', List.take_length] using hkept
+  · exact ⟨hi0, hkept0⟩
+
+/-- `VecMap.remove self key` returns the key-filtered entry list. -/
+theorem vecMapRemove_spec {K V : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (hne : ∀ a b : K, eqK.ne a b = .ok (decide (a ≠ b)))
+    (cloneV : core.clone.Clone V)
+    (self : collections.VecMap K V) (key : K) :
+    collections.VecMap.remove cloneK eqK cloneV self key ⦃ vm' =>
+      vm'.entries.val = self.entries.val.filter (removeKept key) ⦄ := by
+  unfold collections.VecMap.remove
+  obtain ⟨kept, hkeptEq, hkeptMem⟩ :=
+    spec_imp_exists (vecMapRemoveLoop_spec eqK hne self key
+      ⟨[], by simp⟩ 0#usize (by simp) (by simp))
+  rw [hkeptEq]
+  simpa using hkeptMem
+
+/-- Nested-membership corollary of `remove`: deleting `key` drops exactly the entries keyed
+    `key`. Holds with no key-uniqueness side condition (`vmsMem` is `∃`-entry, and `filter`
+    commutes with it). This is what the six `clear_agent_state` wipes consume. -/
+theorem vecMapRemove_vmsMem {K T : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (hne : ∀ a b : K, eqK.ne a b = .ok (decide (a ≠ b)))
+    (cloneV : core.clone.Clone (collections.VecSet T))
+    (vm : collections.VecMap K (collections.VecSet T)) (key : K) :
+    collections.VecMap.remove cloneK eqK cloneV vm key ⦃ vm' =>
+      ∀ k v, vmsMem vm' k v ↔ vmsMem vm k v ∧ k ≠ key ⦄ := by
+  obtain ⟨vm', hEq, hMem⟩ := spec_imp_exists (vecMapRemove_spec cloneK eqK hne cloneV vm key)
+  rw [hEq]
+  intro k v
+  simp only [vmsMem, hMem, List.mem_filter, removeKept, decide_not, Bool.not_eq_eq_eq_not,
+    Bool.not_true, decide_eq_false_iff_not]
+  constructor
+  · rintro ⟨vs, ⟨hmem, hk⟩, hv⟩; exact ⟨⟨vs, hmem, hv⟩, hk⟩
+  · rintro ⟨⟨vs, hmem, hv⟩, hk⟩; exact ⟨vs, ⟨hmem, hk⟩, hv⟩
+
+/-- `(k, v) ∈ filter (removeKept key) l ↔ (k, v) ∈ l ∧ k ≠ key`. Plain-key membership through
+    the `clear_agent_state` filter (consumed by the `agent_budget` reasoning). -/
+theorem mem_filter_removeKept {K V : Type} [DecidableEq K] (l : List (K × V)) (key k : K) (v : V) :
+    (k, v) ∈ l.filter (removeKept key) ↔ (k, v) ∈ l ∧ k ≠ key := by
+  rw [List.mem_filter]
+  simp only [removeKept, decide_eq_true_eq]
+
+/-- Nested `vmsMem` through the `clear_agent_state` filter: a field whose entries became
+    `filter (removeKept key)` keeps every member except those keyed `key`. -/
+theorem vmsMem_filter_removeKept {K T : Type} [DecidableEq K]
+    (vm' vm : collections.VecMap K (collections.VecSet T)) (key : K)
+    (h : vm'.entries.val = vm.entries.val.filter (removeKept key)) (k : K) (v : T) :
+    vmsMem vm' k v ↔ vmsMem vm k v ∧ k ≠ key := by
+  simp only [vmsMem, h]
+  constructor
+  · rintro ⟨vs, hmem, hv⟩
+    rw [List.mem_filter] at hmem
+    obtain ⟨hmem', hk⟩ := hmem
+    simp only [removeKept, decide_eq_true_eq] at hk
+    exact ⟨⟨vs, hmem', hv⟩, hk⟩
+  · rintro ⟨⟨vs, hmem, hv⟩, hk⟩
+    exact ⟨vs, by rw [List.mem_filter]; exact ⟨hmem, by simp [removeKept, hk]⟩, hv⟩
+
+/-! ## `VecMap.insert` at the last-entry level
+
+`VecMap.insert` uses *last-match* semantics: it overwrites the last entry whose key matches
+(or appends if none). The functional reading that survives duplicate keys is therefore
+**get-style**: a key resolves to the value of its *last* matching entry. We capture that as
+`vmLastEntry` (the `getLast?` of the key-filtered sublist) and prove `insert` updates exactly
+the queried key. No separate `VecMap.get` loop spec is needed — the relation reads
+`vmLastEntry` directly. This is what `agent_cap` (cleared by `insert grantee ∅`) consumes. -/
+
+/-- The boolean key-matcher used by the `VecMap` find loops. -/
+abbrev vmKeyEq {K V : Type} [DecidableEq K] (key : K) : K × V → Bool := fun p => decide (p.1 = key)
+
+/-- A key's resolved entry: the *last* list entry whose key matches (last-match semantics). -/
+def vmLastEntry {K V : Type} [DecidableEq K] (l : List (K × V)) (key : K) : Option (K × V) :=
+  (l.filter (vmKeyEq key)).getLast?
+
+/-- Appending a fresh `(key, val)` to a list with no prior `key` entry makes `key` resolve to
+    `val` and leaves every other key untouched. -/
+theorem vmLastEntry_append_nomatch {K V : Type} [DecidableEq K]
+    (l : List (K × V)) (key : K) (val : V) (hno : ∀ p ∈ l, p.1 ≠ key) (j : K) :
+    vmLastEntry (l ++ [(key, val)]) j = if j = key then some (key, val) else vmLastEntry l j := by
+  simp only [vmLastEntry, List.filter_append]
+  by_cases hj : j = key
+  · subst hj
+    have hl : l.filter (fun p => decide (p.1 = j)) = [] :=
+      List.filter_eq_nil_iff.mpr (by intro p hp; simpa using hno p hp)
+    simp [hl]
+  · have hsingle : List.filter (fun p => decide (p.1 = j)) [(key, val)] = [] := by
+      simp [Ne.symm hj]
+    simp [hsingle, hj]
+
+/-- Overwriting the *last* `key` entry with `(key, val)` makes `key` resolve to `val` and
+    leaves every other key untouched. `hmatch`/`hlast` pin `idx` as that last matching entry. -/
+theorem vmLastEntry_set_lastmatch {K V : Type} [DecidableEq K]
+    (l : List (K × V)) (idx : Nat) (key : K) (val : V)
+    (hidx : idx < l.length) (hmatch : (l[idx]).1 = key)
+    (hlast : ∀ k, (hk : k < l.length) → idx < k → (l[k]).1 ≠ key) (j : K) :
+    vmLastEntry (l.set idx (key, val)) j = if j = key then some (key, val) else vmLastEntry l j := by
+  have hset : l.set idx (key, val) = l.take idx ++ (key, val) :: l.drop (idx + 1) := by
+    rw [List.set_eq_take_append_cons_drop]; simp [hidx]
+  have hl : l = l.take idx ++ l[idx] :: l.drop (idx + 1) := by
+    conv_lhs => rw [← List.take_append_drop idx l, List.drop_eq_getElem_cons hidx]
+  have hdropno : (l.drop (idx + 1)).filter (vmKeyEq key) = [] := by
+    apply List.filter_eq_nil_iff.mpr
+    intro p hp
+    obtain ⟨n, hn, hpn⟩ := List.getElem_of_mem hp
+    rw [List.length_drop] at hn
+    have hb : idx + 1 + n < l.length := by omega
+    have hpk : p.1 ≠ key := by
+      rw [← hpn, List.getElem_drop]; exact hlast _ hb (by omega)
+    simp [vmKeyEq, hpk]
+  simp only [vmLastEntry]
+  by_cases hj : j = key
+  · subst hj
+    rw [hset, List.filter_append]
+    simp [vmKeyEq, hdropno]
+  · rw [if_neg hj]
+    congr 1
+    rw [hset]
+    conv_rhs => rw [hl]
+    simp only [List.filter_append, List.filter_cons, vmKeyEq, hmatch]
+    simp [Ne.symm hj]
+
+/-- Last-match invariant for the `VecMap.insert`/`get` find loop: scanning `[0, iv)`, the
+    accumulator `idxv` is either the sentinel `l.length` (no key seen) or the index of the
+    last key-match so far (with nothing matching strictly after it within `[0, iv)`). -/
+def lastMatchInv {K V : Type} [DecidableEq K] (l : List (K × V)) (key : K) (idxv iv : Nat) : Prop :=
+  (idxv = l.length ∧ ∀ k, k < iv → ∀ p, l[k]? = some p → p.1 ≠ key) ∨
+  (idxv < l.length ∧ (∃ p, l[idxv]? = some p ∧ p.1 = key) ∧
+    ∀ k, idxv < k → k < iv → ∀ p, l[k]? = some p → p.1 ≠ key)
+
+theorem vecMapInsertLoop_spec {K V : Type} [DecidableEq K]
+    (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (entries : alloc.vec.Vec (K × V)) (key : K) (idx0 i0 : Usize)
+    (hi0 : i0.val ≤ entries.val.length)
+    (hInv : lastMatchInv entries.val key idx0.val i0.val) :
+    collections.VecMap.insert_loop eqK entries key idx0 i0 ⦃ idx1 =>
+      lastMatchInv entries.val key idx1.val entries.val.length ⦄ := by
+  unfold collections.VecMap.insert_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ entries.val.length ∧ lastMatchInv entries.val key p.1.val p.2.val)
+  · rintro ⟨idx, i⟩ ⟨hile, hinv⟩
+    simp only [collections.VecMap.insert_loop.body]
+    split
+    case isTrue h =>
+      have hlt : i.val < entries.val.length := by scalar_tac
+      step as ⟨t, t1, he⟩
+      have hget : entries.val[i.val]? = some (t, t1) := by
+        rw [List.getElem?_eq_getElem hlt, ← he]
+      rw [heq t key]
+      step*
+      split
+      · rename_i hb
+        step*
+        have ht : t = key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        right
+        refine ⟨hlt, ⟨(t, t1), hget, ht⟩, ?_⟩
+        intro k hk1 hk2 p hp
+        exfalso; omega
+      · rename_i hb
+        step*
+        have ht : t ≠ key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rcases hinv with ⟨hidxlen, hno⟩ | ⟨hidxlt, hex, hno⟩
+        · left
+          refine ⟨hidxlen, ?_⟩
+          intro k hk p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+        · right
+          refine ⟨hidxlt, hex, ?_⟩
+          intro k hk1 hk2 p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hk1 hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+    case isFalse h =>
+      have heq' : i.val = entries.val.length := by scalar_tac
+      simp only [spec_ok]
+      rwa [heq'] at hinv
+  · exact ⟨hi0, hInv⟩
+
+/-- `VecMap.insert vm key val` updates `key` to resolve to `val` (last-match overwrite or
+    append) and leaves every other key's resolution unchanged. The get-style spec that
+    survives duplicate keys; consumed by `agent_cap` (cleared via `insert grantee ∅`). -/
+theorem vecMapInsert_vmLast_spec {K V : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneV : core.clone.Clone V)
+    (vm : collections.VecMap K V) (key : K) (val : V)
+    (hcap : vm.entries.val.length < Usize.max) :
+    collections.VecMap.insert cloneK eqK cloneV vm key val ⦃ vm' =>
+      ∀ j, vmLastEntry vm'.entries.val j =
+        if j = key then some (key, val) else vmLastEntry vm.entries.val j ⦄ := by
+  unfold collections.VecMap.insert
+  have hinv0 : lastMatchInv vm.entries.val key (alloc.vec.Vec.len vm.entries).val (0#usize).val := by
+    left
+    refine ⟨by scalar_tac, ?_⟩
+    intro k hk
+    exact absurd hk (by scalar_tac)
+  obtain ⟨idx1, hloopEq, hlmi⟩ := spec_imp_exists
+    (vecMapInsertLoop_spec eqK heq vm.entries key (alloc.vec.Vec.len vm.entries) 0#usize
+      (by scalar_tac) hinv0)
+  simp only [hloopEq, bind_tc_ok]
+  split
+  case isTrue hcond =>
+    have hidxlt : idx1.val < vm.entries.val.length := by scalar_tac
+    rcases hlmi with ⟨hlen, _⟩ | ⟨_, hex, hno⟩
+    · omega
+    · obtain ⟨p, hp, hpk⟩ := hex
+      step*
+      have hm : (↑vm.entries : List (K × V))[idx1.val] = p := by
+        rw [List.getElem?_eq_getElem hidxlt] at hp; exact Option.some_inj.mp hp
+      have hmatch : ((↑vm.entries : List (K × V))[idx1.val]).1 = key := by rw [hm]; exact hpk
+      have hlast : ∀ k, (hk : k < (↑vm.entries : List (K × V)).length) → idx1.val < k →
+          ((↑vm.entries : List (K × V))[k]).1 ≠ key := by
+        intro k hk hik
+        exact hno k hik hk _ (List.getElem?_eq_getElem hk)
+      intro j
+      rw [__post2, alloc.vec.Vec.set_val_eq]
+      exact vmLastEntry_set_lastmatch _ idx1.val key val hidxlt hmatch hlast j
+  case isFalse hcond =>
+    have hidxlen : idx1.val = vm.entries.val.length := by
+      rcases hlmi with ⟨hlen, _⟩ | ⟨hlt, _, _⟩
+      · exact hlen
+      · scalar_tac
+    step*
+    have hno : ∀ p ∈ (↑vm.entries : List (K × V)), p.1 ≠ key := by
+      rcases hlmi with ⟨_, h⟩ | ⟨hlt, _, _⟩
+      · intro p hp
+        obtain ⟨k, hk, hkp⟩ := List.getElem_of_mem hp
+        exact h k hk p (by rw [List.getElem?_eq_getElem hk, hkp])
+      · omega
+    intro j
+    rw [v_post]
+    exact vmLastEntry_append_nomatch _ key val hno j
 
 end ArgusLean.Refinement
