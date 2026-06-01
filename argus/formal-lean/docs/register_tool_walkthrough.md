@@ -292,202 +292,200 @@ theorem register_tool_ok_inv
   function. After this, `hok` is no longer `register_tool ... = ...`; it's the function's
   actual *body* (a chain of `>>=` binds) `= .ok (.Ok (st', ev))`. Now we can dissect it.
 
-### Case 1: the metadata lookup
+### The flat shape
+
+The function has four runtime gates (metadata present? issuer trusted? already registered?
+plus the insert). Rather than nest a `cases` per gate — which builds an indentation staircase —
+the proof handles each gate at the **same indentation level**: derive the single fact that says
+"we're on the success path", rewrite `hok` forward past that gate, and move on. Two small idioms
+carry the whole proof:
+
+- `obtain ⟨x, hx⟩ : ∃ x, <fact> := by cases …` — extract the value and fact we need, dispatching
+  the *impossible* shapes inside the `by` (they contradict `hok`). The outer proof never indents.
+- `have hx : b = <val> := by cases b …` — for a boolean gate, pin the bool to its only possible
+  value, again killing the dead case against `hok` locally.
+
+### Gate 1: the metadata lookup succeeds
 
 ```lean
-  cases hMetaEq : bg.tool_metadata tool with
-  | fail e => rw [hMetaEq] at hok; simp at hok
-  | div => rw [hMetaEq] at hok; simp at hok
-  | ok metaOpt =>
+  obtain ⟨metaOpt, hMetaEq⟩ : ∃ o, bg.tool_metadata tool = .ok o := by
+    cases h : bg.tool_metadata tool with
+    | ok o => exact ⟨o, rfl⟩
+    | fail e => rw [h] at hok; simp at hok
+    | div => rw [h] at hok; simp at hok
+  rw [hMetaEq] at hok
+  simp only [bind_tc_ok] at hok
 ```
 
-- `cases EXPR with | ctor args => ...` — **case analysis**: split the proof into one branch
-  per possible shape (constructor) of `EXPR`. Here `bg.tool_metadata tool` is a layer-1
-  `Result`, so there are three branches: `fail`, `div`, `ok`.
-- `cases hMetaEq : EXPR` — the `hMetaEq :` part **names the equation** for each branch. In
-  the `ok` branch we get `hMetaEq : bg.tool_metadata tool = .ok metaOpt`, and so on.
-  (Important subtlety: `cases h : e` also *replaces* `e` by the branch's pattern inside the
-  **goal**. That bites us later; see the `rfl` note.)
-- `| fail e =>` and `| div =>` are the **impossible** branches: if the lookup panicked or
-  diverged, the function could not have returned `.ok (.Ok ...)`. We dispatch them with:
-  - `rw [hMetaEq] at hok` — **rewrite** in `hok` using the equation `hMetaEq`, turning the
-    `bg.tool_metadata tool` inside `hok` into `.fail e` (resp. `.div`).
-  - `;` — sequence two tactics on one line.
-  - `simp at hok` — now `hok` claims something like `.fail e >>= ... = .ok (.Ok ...)`, which
-    is **contradictory** (`fail` can never equal `ok`). When `simp` reduces a hypothesis to
-    `False`, it closes the goal automatically. Branch done.
-- `| ok metaOpt =>` — the only real branch: the lookup succeeded with some `Option` value
-  `metaOpt`.
+- We need just one thing from the lookup: that it returned `.ok` of *some* option `metaOpt`.
+  `obtain ⟨metaOpt, hMetaEq⟩ : ∃ o, bg.tool_metadata tool = .ok o := by …` states exactly that
+  as a tiny lemma and proves it on the spot:
+  - `cases h : bg.tool_metadata tool with` — split the layer-1 `Result` (`ok`/`fail`/`div`),
+    naming the equation `h`.
+  - `| ok o => exact ⟨o, rfl⟩` — success: hand back the value `o`. (`cases h :` rewrote the
+    sub-goal's `bg.tool_metadata tool` to `.ok o`, so the equation is just `rfl`.)
+  - `| fail e =>` / `| div =>` — the **impossible** shapes: `rw [h] at hok` turns `hok` into
+    `.fail e >>= … = .ok (.Ok …)` (resp. `.div`), and `simp at hok` derives the contradiction,
+    closing that sub-goal. **All of this lives inside the `by`** — the outer proof stays flat.
+- After the `obtain` we hold `metaOpt` and `hMetaEq : bg.tool_metadata tool = .ok metaOpt`.
+- `rw [hMetaEq] at hok` rewrites the call in `hok` to `.ok metaOpt`; `simp only [bind_tc_ok] at
+  hok` runs one bind step (`(.ok metaOpt) >>= f` ⇝ `f metaOpt`), advancing `hok` to the next gate.
+
+> Because we keep `hMetaEq` as a **real equation** (instead of casing on the goal), conjunct A of
+> the result is later discharged by `hMetaEq` directly — there's no surprising `rfl`. That's one
+> small readability win of the flat shape over the nested version.
+
+### Gate 2: the metadata is present (`some`)
 
 ```lean
-    rw [hMetaEq] at hok
-    simp only [bind_tc_ok] at hok
-```
-
-- `rw [hMetaEq] at hok` — replace `bg.tool_metadata tool` by `.ok metaOpt` in `hok`.
-- `simp only [bind_tc_ok] at hok` — apply the bind rule once: `(.ok metaOpt) >>= f` becomes
-  `f metaOpt`. We've now "consumed" the first step and `hok` talks about the next operation.
-
-### Case 2: was metadata actually present? (`Option`)
-
-```lean
+  obtain ⟨toolMeta, rfl⟩ : ∃ tm, metaOpt = some tm := by
     cases metaOpt with
     | none => simp at hok
-    | some toolMeta =>
+    | some tm => exact ⟨tm, rfl⟩
+  simp only [issuerId_clone_spec, bind_tc_ok] at hok
 ```
 
-- `metaOpt : Option ToolMetadata`. Split it: `none` (no metadata) vs `some toolMeta` (found).
-- `| none => simp at hok` — if there's no metadata, `register_tool` returns an *error*
-  (`.Err`), contradicting `hok`'s `.Ok`. `simp` finds the contradiction and closes it.
-- `| some toolMeta =>` — the metadata exists and we name it `toolMeta`. **This is the
-  existential witness** the conclusion promised (`∃ toolMeta`). The rest of the branch must
-  show the four conjuncts hold for *this* `toolMeta`.
+- `obtain ⟨toolMeta, rfl⟩ : ∃ tm, metaOpt = some tm := by …` — extract that the option is
+  `some toolMeta`. The `rfl` in the *pattern* is doing real work: the second component is the
+  equation `metaOpt = some toolMeta`, and matching it against `rfl` **substitutes** `metaOpt :=
+  some toolMeta` everywhere (including in `hok`). `toolMeta` is the existential witness the
+  conclusion promised; the rest of the proof works with *this* metadata.
+  - `| none => simp at hok` — no metadata ⇒ `register_tool` returns `.Err`, contradicting `hok`.
+  - `| some tm => exact ⟨tm, rfl⟩` — the real case.
+- `simp only [issuerId_clone_spec, bind_tc_ok] at hok` — `hok` now begins `match some toolMeta
+  …`; simp reduces that match to the `some` branch, then `issuerId_clone_spec` erases the
+  identity `.clone()` of the issuer and `bind_tc_ok` steps past it.
 
-### Case 3: is the issuer trusted?
+### Gate 3: the issuer is trusted
 
 ```lean
-      simp only [issuerId_clone_spec, bind_tc_ok] at hok
-      obtain ⟨issuerTrusted, hIssuerTrustedEq, hIssuerTrustedIff⟩ :=
-        spec_imp_exists (isTrustedIssuer_spec bg toolMeta.issuer)
-      rw [hIssuerTrustedEq] at hok
-      simp only [bind_tc_ok] at hok
-      cases issuerTrusted with
-      | false => simp at hok
-      | true =>
+  obtain ⟨issuerTrusted, hIssuerTrustedEq, hIssuerTrustedIff⟩ :=
+    spec_imp_exists (isTrustedIssuer_spec bg toolMeta.issuer)
+  rw [hIssuerTrustedEq] at hok
+  simp only [bind_tc_ok] at hok
+  have hTrusted : issuerTrusted = true := by
+    cases issuerTrusted with
+    | true => rfl
+    | false => simp at hok
+  simp only [hTrusted, reduceIte] at hok
 ```
 
-- `simp only [issuerId_clone_spec, bind_tc_ok] at hok` — the Rust code `.clone()`s the
-  issuer id before checking it. `issuerId_clone_spec` (proved in `Collections.lean`) says
-  that clone is the identity, so simp erases it; `bind_tc_ok` advances past the clone step.
-- `obtain ⟨issuerTrusted, hIssuerTrustedEq, hIssuerTrustedIff⟩ := spec_imp_exists (isTrustedIssuer_spec bg toolMeta.issuer)`:
-  - `isTrustedIssuer_spec bg toolMeta.issuer` is the proven triple "`is_trusted_issuer`
-    returns a bool `b` with `b = true ↔ issuer is in trusted_issuers`".
-  - `spec_imp_exists` turns it into `∃ b, is_trusted_issuer ... = .ok b ∧ (b = true ↔ ...)`.
-  - `obtain ⟨issuerTrusted, hIssuerTrustedEq, hIssuerTrustedIff⟩ := ...` — **destructure**
-    that existential by position: `issuerTrusted` (the bool returned), `hIssuerTrustedEq :
-    is_trusted_issuer ... = .ok issuerTrusted`, and `hIssuerTrustedIff : issuerTrusted = true
-    ↔ vsMem bg.trusted_issuers toolMeta.issuer`. (`⟨...⟩` is the **anonymous constructor**: it
-    builds *or* takes apart any structure/tuple by position.)
-- `rw [hIssuerTrustedEq] at hok` then `simp only [bind_tc_ok] at hok` — substitute the
-  concrete result `.ok issuerTrusted` into `hok` and step past that bind, as before.
-- `cases issuerTrusted with` — split on the boolean:
-  - `| false => simp at hok` — untrusted issuer ⇒ the function returns `.Err` ⇒ contradicts
-    `hok`. Closed.
-  - `| true =>` — the issuer **is** trusted; continue. Note `issuerTrusted` is now literally
-    `true` everywhere, so `hIssuerTrustedIff : (true = true) ↔ vsMem ...`.
+- `obtain ⟨issuerTrusted, hIssuerTrustedEq, hIssuerTrustedIff⟩ := spec_imp_exists (isTrustedIssuer_spec bg toolMeta.issuer)`
+  — the `is_trusted_issuer` spec, repackaged into an existential and destructured by position:
+  `issuerTrusted` (the bool returned), `hIssuerTrustedEq : is_trusted_issuer … = .ok
+  issuerTrusted`, and `hIssuerTrustedIff : issuerTrusted = true ↔ vsMem bg.trusted_issuers
+  toolMeta.issuer`. (`⟨…⟩` is the **anonymous constructor** — builds *or* takes apart a
+  structure/tuple by position.)
+- `rw [hIssuerTrustedEq] at hok; simp only [bind_tc_ok] at hok` — substitute the result into
+  `hok` and step past the bind. Now `hok` contains `if issuerTrusted = true then … else .Err`.
+- `have hTrusted : issuerTrusted = true := by cases issuerTrusted with | true => rfl | false =>
+  simp at hok` — pin the bool. In the `true` case the goal is `true = true` (`rfl`); in the
+  `false` case `hok` becomes `… else .Err = .Ok …`, which `simp` refutes. **The dead case is
+  handled inside the `have`**, so the main line stays flat. (Note: a separate `have`, rather
+  than `cases issuerTrusted` in the main flow, is exactly what avoids the staircase here.)
+- `simp only [hTrusted, reduceIte] at hok` — rewrite `issuerTrusted` to `true`, then `reduceIte`
+  (a simproc that evaluates decidable `if`s) takes the `then` branch, advancing past the gate.
 
-### Case 4: is the tool already registered?
+### Gate 4: the tool is not already registered
 
 ```lean
-        obtain ⟨alreadyRegistered, hContainsEq, hContainsIff⟩ :=
-          spec_imp_exists (vecSetContains_spec types.ToolId.Insts.CoreCloneClone
-            types.ToolId.Insts.CoreCmpPartialEqToolId toolId_eq_spec st.tool_registered tool)
-        rw [hContainsEq] at hok
-        simp only [bind_tc_ok] at hok
-        cases alreadyRegistered with
-        | true => simp at hok
-        | false =>
+  obtain ⟨alreadyRegistered, hContainsEq, hContainsIff⟩ :=
+    spec_imp_exists (vecSetContains_spec types.ToolId.Insts.CoreCloneClone
+      types.ToolId.Insts.CoreCmpPartialEqToolId toolId_eq_spec st.tool_registered tool)
+  rw [hContainsEq] at hok
+  simp only [bind_tc_ok] at hok
+  have hNotReg : alreadyRegistered = false := by
+    cases alreadyRegistered with
+    | false => rfl
+    | true => simp at hok
+  simp only [hNotReg, reduceIte, Bool.false_eq_true] at hok
 ```
 
-Same pattern as the issuer check, now for "is `tool` already in `tool_registered`?":
+The same shape as Gate 3, mirrored (here the *live* case is `false`):
 
-- `vecSetContains_spec ...` is the proven triple for the `VecSet.contains` operation. It
-  needs three "instance" arguments describing how to clone/compare tool ids
-  (`...CoreCloneClone`, `...CoreCmpPartialEqToolId`) and the fact `toolId_eq_spec` that
-  comparison really decides equality. These are bookkeeping the Rust→Lean translation
-  requires; you pass them through.
-- `obtain ⟨alreadyRegistered, hContainsEq, hContainsIff⟩ := spec_imp_exists (...)` — get the
-  bool `alreadyRegistered`, the equation `hContainsEq`, and `hContainsIff : alreadyRegistered
-  = true ↔ vsMem st.tool_registered tool`.
-- `rw [hContainsEq] at hok; simp only [bind_tc_ok] at hok` — substitute and advance.
-- `cases alreadyRegistered with`:
-  - `| true => simp at hok` — already registered ⇒ `.Err` ⇒ contradiction. Closed.
-  - `| false =>` — not yet registered; continue. `hContainsIff : (false = true) ↔ vsMem ...`.
+- `vecSetContains_spec …` is the proven triple for `VecSet.contains`. It takes three "instance"
+  arguments describing how to clone/compare tool ids (`…CoreCloneClone`,
+  `…CoreCmpPartialEqToolId`) plus `toolId_eq_spec` (comparison really decides equality) —
+  bookkeeping the Rust→Lean translation needs; you thread them through. `spec_imp_exists` then
+  gives `alreadyRegistered`, `hContainsEq`, and `hContainsIff : alreadyRegistered = true ↔ vsMem
+  st.tool_registered tool`.
+- `rw [hContainsEq] at hok; simp only [bind_tc_ok] at hok` — substitute and advance; now `hok`
+  has `if alreadyRegistered = true then .Err else <continue>`.
+- `have hNotReg : alreadyRegistered = false := by …` — pin the bool to `false` (the success
+  path): `false` case is `rfl`; `true` case makes `hok` say `.Err = .Ok …`, refuted by `simp`.
+- `simp only [hNotReg, reduceIte, Bool.false_eq_true] at hok` — rewrite to `false`, drop the
+  `if` via `reduceIte` (`Bool.false_eq_true` lets it see `false = true` is `False`), continue.
 
-### Case 5: do the insert and read off the result
+### The insert, and reading off the result
 
 ```lean
-          simp only [toolId_clone_spec, bind_tc_ok] at hok
-          obtain ⟨registeredAfter, hInsertEq, hInsertMem⟩ :=
-            spec_imp_exists (vecSetInsert_spec types.ToolId.Insts.CoreCloneClone
-              types.ToolId.Insts.CoreCmpPartialEqToolId toolId_eq_spec st.tool_registered tool hcap)
-          rw [hInsertEq] at hok
-          simp only [reduceIte, if_true, Bool.false_eq_true, bind_tc_ok, Result.ok.injEq,
-            core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
-          obtain ⟨hStateEq, _hEventEq⟩ := hok
+  simp only [toolId_clone_spec, bind_tc_ok] at hok
+  obtain ⟨registeredAfter, hInsertEq, hInsertMem⟩ :=
+    spec_imp_exists (vecSetInsert_spec types.ToolId.Insts.CoreCloneClone
+      types.ToolId.Insts.CoreCmpPartialEqToolId toolId_eq_spec st.tool_registered tool hcap)
+  rw [hInsertEq] at hok
+  simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
+  obtain ⟨hStateEq, _hEventEq⟩ := hok
 ```
 
-- `simp only [toolId_clone_spec, bind_tc_ok] at hok` — erase another identity `.clone()` and
-  step forward (same as the issuer clone earlier).
+We've passed every gate; `hok` is now on the straight-line success path.
+
+- `simp only [toolId_clone_spec, bind_tc_ok] at hok` — erase another identity `.clone()` (of
+  `tool` this time) and step forward.
 - `obtain ⟨registeredAfter, hInsertEq, hInsertMem⟩ := spec_imp_exists (vecSetInsert_spec ... hcap)`
-  — run the `insert` spec. Note it takes our side condition `hcap` (the capacity bound). We
-  get:
+  — run the `insert` spec. It takes our side condition `hcap` (the capacity bound). We get:
   - `registeredAfter` — the **new** set after inserting `tool`,
   - `hInsertEq : VecSet.insert ... = .ok registeredAfter`,
   - `hInsertMem : ∀ y, vsMem registeredAfter y ↔ vsMem st.tool_registered y ∨ y = tool` — the
     precise "old set plus `tool`" characterisation. **This is conjunct D, almost verbatim.**
 - `rw [hInsertEq] at hok` — substitute the insert's result into `hok`.
-- The big `simp only [...]` finishes peeling the wrapper. After the insert, the function
-  builds its final `.ok (.Ok (newState, event))`. These lemmas crack that open:
-  - `reduceIte`, `if_true`, `Bool.false_eq_true` — collapse the leftover `if`-expressions.
+- `simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok`
+  — peel the final wrapper. (No `reduceIte`/`if_true` needed any more: the gates already
+  collapsed both `if`s, so nothing remains but the success `.ok (.Ok (newState, event))`.)
   - `Result.ok.injEq` (layer 1), `core.result.Result.Ok.injEq` (layer 2) — **injectivity**:
-    `.ok a = .ok b` is the *same as* `a = b`, so the wrappers on both sides cancel, leaving
-    equations about the contents.
+    `.ok a = .ok b` reduces to `a = b`, cancelling the wrappers on both sides.
   - `Prod.mk.injEq` — a pair equality `(a, b) = (c, d)` splits into `a = c ∧ b = d`.
   - Net effect: `hok` becomes `st' = ⟨the updated state⟩ ∧ ev = ⟨the event⟩`.
 - `obtain ⟨hStateEq, _hEventEq⟩ := hok` — split that conjunction. `hStateEq : st' = {st with
-  tool_registered := registeredAfter}` (the new state is the old one with the set replaced).
-  `_hEventEq` is the event equation; the leading underscore marks it **deliberately unused**
-  (we don't care about the event here, and the `_` silences the "unused variable" warning).
+  tool_registered := registeredAfter}`. `_hEventEq` is the event equation; the leading
+  underscore marks it **deliberately unused** (the `_` silences the "unused variable" warning).
 
 ### Delivering the four facts
 
 ```lean
-          refine ⟨toolMeta, rfl, hIssuerTrustedIff.mp rfl,
-            fun h => Bool.false_ne_true (hContainsIff.mpr h), ?_⟩
-          subst hStateEq
-          exact hInsertMem
+  refine ⟨toolMeta, hMetaEq, hIssuerTrustedIff.mp hTrusted, ?_, ?_⟩
+  · intro hmem
+    have hc := hContainsIff.mpr hmem
+    rw [hNotReg] at hc
+    exact Bool.false_ne_true hc
+  · subst hStateEq
+    exact hInsertMem
 ```
 
-- `refine TERM` — supply the proof *term* for the goal, but leave **holes** written `?_`
-  for sub-proofs you'll provide afterwards. (`exact` is the same but with no holes; `refine`
-  is `exact` that lets you defer parts.)
-- The goal is `∃ toolMeta, A ∧ B ∧ C ∧ D`. The anonymous constructor `⟨...⟩` provides, in
-  order: the witness, then a proof of each conjunct.
+- `refine TERM` — supply the proof *term* for the goal, leaving **holes** written `?_` for
+  sub-proofs you'll provide afterwards. The goal is `∃ toolMeta, A ∧ B ∧ C ∧ D`; the anonymous
+  constructor `⟨…⟩` provides the witness then a proof of each conjunct. Here we provide A and B
+  inline and defer C and D to two `·` bullets.
   - `toolMeta` — the existential witness (the metadata we found).
-  - `rfl` — proof of conjunct **A**. `rfl` proves `x = x` ("reflexivity"). Why does it work
-    when A is `bg.tool_metadata tool = .ok (some toolMeta)`? Because back at "Case 1" the
-    `cases hMetaEq : bg.tool_metadata tool` *also rewrote the goal*, turning `bg.tool_metadata
-    tool` into `.ok (some toolMeta)`. So A has already become `.ok (some toolMeta) = .ok (some
-    toolMeta)`, which is true by `rfl`. (The theorem's *stated* type is still the readable
-    `bg.tool_metadata tool = ...`; Lean's `cases` machinery threads the real equation back in
-    behind the scenes. This is the one spot that surprised even the refactor: moving this fact
-    into the conclusion changed `hMetaEq` into `rfl` here.)
-  - `hIssuerTrustedIff.mp rfl` — proof of conjunct **B** (`vsMem bg.trusted_issuers
-    toolMeta.issuer`). `hIssuerTrustedIff` is the iff `(true = true) ↔ vsMem ...`. An iff has
-    two directions: `.mp` ("modus ponens", the forward `→`) and `.mpr` (the reverse `←`).
-    `.mp` needs a proof of `true = true`, which is `rfl`; it yields the right-hand side
-    `vsMem ...`.
-  - `fun h => Bool.false_ne_true (hContainsIff.mpr h)` — proof of conjunct **C** (`¬ vsMem
-    st.tool_registered tool`). Recall `¬ P` is *defined* as `P → False`. So we need a function
-    taking a proof `h : vsMem ...` and producing `False`:
-    - `hContainsIff.mpr h` — `hContainsIff : (false = true) ↔ vsMem ...`; `.mpr` is the reverse
-      direction, so from `h : vsMem ...` it produces `false = true`.
-    - `Bool.false_ne_true` — the library fact `false ≠ true`, i.e. `false = true → False`.
-      Feeding it `false = true` yields `False`. Done; that's our `¬`.
-    - `fun h => ...` — an **anonymous function** (lambda). This whole expression *is* the
-      proof term for the negation.
-  - `?_` — the deferred hole for conjunct **D**, handled next.
-- `subst hStateEq` — `hStateEq : st' = {st with tool_registered := registeredAfter}`.
-  **`subst`** eliminates the variable `st'` by replacing it everywhere with its definition.
-  Now the goal D mentions `{st with tool_registered := registeredAfter}.tool_registered`
-  instead of `st'.tool_registered`.
-- `exact hInsertMem` — `exact` closes the goal with a term whose type matches *exactly* (up to
-  Lean's automatic definitional unfolding). The goal is `∀ y, vsMem {st with tool_registered
-  := registeredAfter}.tool_registered y ↔ ...`. Reading the field `.tool_registered` off a
-  record that literally set it to `registeredAfter` just *gives back* `registeredAfter`, so
-  the goal is definitionally equal to `∀ y, vsMem registeredAfter y ↔ ...`, which is exactly
-  `hInsertMem`. Proof complete.
+  - `hMetaEq` — conjunct **A** (`bg.tool_metadata tool = .ok (some toolMeta)`), *exactly* the
+    equation Gate 1 kept (after Gate 2 substituted `metaOpt := some toolMeta`). No `rfl` trick —
+    the flat shape lets us hand the real equation straight back.
+  - `hIssuerTrustedIff.mp hTrusted` — conjunct **B** (`vsMem bg.trusted_issuers toolMeta.issuer`).
+    `hIssuerTrustedIff : issuerTrusted = true ↔ vsMem …`; its `.mp` ("modus ponens", forward `→`)
+    direction applied to `hTrusted : issuerTrusted = true` yields the membership fact.
+- First `·` bullet — conjunct **C** (`¬ vsMem st.tool_registered tool`). Recall `¬ P` is `P →
+  False`, so `intro hmem` assumes `hmem : vsMem st.tool_registered tool` and we derive `False`:
+  - `have hc := hContainsIff.mpr hmem` — `.mpr` (reverse `←`) gives `hc : alreadyRegistered = true`.
+  - `rw [hNotReg] at hc` — rewrite using `hNotReg : alreadyRegistered = false`, so `hc : false = true`.
+  - `exact Bool.false_ne_true hc` — `Bool.false_ne_true : false ≠ true` (i.e. `false = true →
+    False`) turns `hc` into the `False` we owe.
+- Second `·` bullet — conjunct **D**.
+  - `subst hStateEq` — `hStateEq : st' = {st with tool_registered := registeredAfter}`; `subst`
+    eliminates `st'`, replacing it everywhere by that record update.
+  - `exact hInsertMem` — the goal is now `∀ y, vsMem {st with tool_registered :=
+    registeredAfter}.tool_registered y ↔ …`. Reading `.tool_registered` off a record that set it
+    to `registeredAfter` *gives back* `registeredAfter`, so the goal is definitionally equal to
+    `∀ y, vsMem registeredAfter y ↔ …`, which is exactly `hInsertMem`. Proof complete.
 
 ---
 

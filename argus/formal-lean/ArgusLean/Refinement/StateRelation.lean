@@ -27,4 +27,16 @@ def Rtool (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsSt
   (∀ i, a.trusted_issuer i ↔ vsMem bg.trusted_issuers i) ∧
   (∀ t tm, bg.tool_metadata t = .ok (some tm) → a.tool_issuer t = tm.issuer)
 
+/-- State relation for the fields `load_instruction` touches:
+    * the mutable `agent_active` set ↔ the concrete `VecSet`;
+    * the background `trusted_issuer` predicate ↔ the `trusted_issuers` `VecSet`;
+    * the background `instruction_issuer` function ↔ the concrete lookup;
+    * the mutable nested `agent_instruction` relation ↔ the concrete `VecMap`-of-`VecSet`. -/
+def Rinstr (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState) : Prop :=
+  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
+  (∀ i, a.trusted_issuer i ↔ vsMem bg.trusted_issuers i) ∧
+  (∀ i issuer, background.BackgroundTheory.impl.instruction_issuer bg i = .ok (some issuer) →
+      a.instruction_issuer i = issuer) ∧
+  (∀ ag ins, a.agent_instruction ag ins ↔ vmsMem st.agent_instruction ag ins)
+
 end ArgusLean.Refinement
