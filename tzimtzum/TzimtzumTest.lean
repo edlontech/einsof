@@ -1,4 +1,5 @@
--- Aggregator: per-action VC checks + axiom audit for the TzimtzumV2 port.
+-- Aggregator: per-action VC checks + axiom audit + C0 soundness bundle for the
+-- TzimtzumV2 port.
 -- Build with: lake build TzimtzumTest
 --
 -- All Check modules share opaque types via Tzimtzum.OpaqueTypes, so they can all
@@ -17,3 +18,4 @@ import Tzimtzum.CheckReturnUnendorsed
 import Tzimtzum.CheckSentinelElevateTaint
 import Tzimtzum.CheckSentinelRefreshBudget
 import Tzimtzum.Audit
+import Tzimtzum.Soundness
