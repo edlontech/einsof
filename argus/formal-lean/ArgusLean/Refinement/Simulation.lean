@@ -4,6 +4,7 @@ import ArgusLean.Refinement.Actions.Delegate
 import ArgusLean.Refinement.Actions.CascadeRevoke
 import ArgusLean.Refinement.Actions.Revoke
 import ArgusLean.Refinement.Actions.GrantCapability
+import ArgusLean.Refinement.Actions.SentinelRefreshBudget
 
 /-! # Refinement — simulation bundle
 
@@ -32,10 +33,14 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                active-guarded-budget variant of `Rdel`; new bridging: `VecMap.get`
                                last-match read, `VecSet.remove`, `agent_parent_drop_child` key-filter,
                                `vmLastEntry_filter_removeKept`; +1 axiom `optionAgentId_ne_spec`)
+* [x] `sentinel_refresh_budget` — Actions/SentinelRefreshBudget.lean (capability-gated budget reset;
+                               two read gates then `VecMap.remove` on `agent_budget`. Refines against
+                               `Rrefresh`, the *unguarded* `Rdel`-style budget clause: `agent` stays
+                               active, so delete-then-read-as-`bl5` is the observable, faithful image.
+                               Reuses `set_contains` + `vecMapRemove_spec`; no new axioms, no root)
 * [ ] `invoke_start`
 * [ ] `invoke_complete`
 * [ ] `return_endorsed`
 * [ ] `return_unendorsed`
 * [ ] `sentinel_elevate_taint`
-* [ ] `sentinel_refresh_budget`
 -/

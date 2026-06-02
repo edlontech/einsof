@@ -170,6 +170,25 @@ def Rgrant (st : state.KernelState) (a : AbsState) : Prop :=
   (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
   (∀ N C, a.agent_cap N C ↔ vmsMem st.agent_cap N C)
 
+/-- State relation for the fields `sentinel_refresh_budget` touches: the two read gates
+    (`agent_active` via `vsMem`, the `cap_refresh_budget` capability via the nested `vmsMem`
+    view that `set_contains` operates in), the named-individual correspondence pinning the
+    abstract `cap_refresh_budget` constant to the concrete `CapKind.RefreshBudget`, and the
+    written `agent_budget` field under the kernel's "absent key ⇒ full budget (`bl5`)" convention.
+
+    Note the `agent_budget` clause here is the **unguarded** `Rdel`-style one — unlike the removal
+    actions, `sentinel_refresh_budget` leaves `agent` *active* and merely deletes its budget entry,
+    which the convention reads back as `bl5` (full). That is exactly the abstract post-image
+    (`agent`'s budget set to `bl5`), so the convention is observable and faithful on the very agent
+    that changed; no active-guard is needed. -/
+def Rrefresh (st : state.KernelState) (a : AbsState) : Prop :=
+  a.cap_refresh_budget = capability.CapKind.RefreshBudget ∧
+  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
+  (∀ N C, a.agent_cap N C ↔ vmsMem st.agent_cap N C) ∧
+  (∀ G L, a.agent_budget G L ↔
+    ((G, budgetC L) ∈ st.agent_budget.entries.val) ∨
+    ((∀ bl, (G, bl) ∉ st.agent_budget.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5))
+
 /-! ## Shared transition helper: `clear_agent_state`
 
 `clear_agent_state st agent` deletes `agent`'s key from the seven per-agent maps
