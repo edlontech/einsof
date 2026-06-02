@@ -167,6 +167,49 @@ theorem overrideConsumed_spec (st : state.KernelState) (agent : types.AgentId)
       rw [hLk, Option.some_inj, Prod.mk.injEq] at hvs
       obtain ⟨_, rfl⟩ := hvs; exact hv
 
+/-! ## Bool-valued agreement functions
+
+The egress-gated actions feed `gateEgress_spec` per-tool Bool oracle values. `ovC`/`ocC` are the
+`has_flow_override` / `override_consumed` results as total Bool functions (the only opaque oracle is
+the content gate, supplied separately). -/
+
+/-- `has_flow_override` as a total Bool function: membership of the override entry. -/
+def ovC (bg : background.BackgroundTheory) (agent : types.AgentId) (level : types.ConfLevel)
+    (t : types.ToolId) : Bool :=
+  decide ((⟨agent, t, level⟩ : types.OverrideEntry) ∈ bg.flow_overrides.items.val)
+
+theorem ovC_eq (bg : background.BackgroundTheory) (agent : types.AgentId) (level : types.ConfLevel)
+    (t : types.ToolId) :
+    background.BackgroundTheory.has_flow_override bg agent t level = .ok (ovC bg agent level t) := by
+  obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec bg agent t level)
+  rw [hb]; congr 1; unfold ovC; cases b <;> simp_all [vsMem]
+
+/-- `override_consumed` as a total Bool function: last-match nested membership of the override key. -/
+def ocC (st : state.KernelState) (agent : types.AgentId) (level : types.ConfLevel)
+    (t : types.ToolId) : Bool :=
+  match vmLastEntry st.override_used.entries.val agent with
+  | none => false
+  | some p => decide ((⟨t, level⟩ : types.OverrideKey) ∈ p.2.items.val)
+
+theorem ocC_eq (st : state.KernelState) (agent : types.AgentId) (level : types.ConfLevel)
+    (t : types.ToolId) :
+    state.KernelState.override_consumed st agent t level = .ok (ocC st agent level t) := by
+  obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (overrideConsumed_spec st agent t level)
+  rw [hb]; congr 1; unfold ocC
+  cases hL : vmLastEntry st.override_used.entries.val agent with
+  | none =>
+    have hnot : ¬ vmsMemLast st.override_used agent ⟨t, level⟩ := by
+      rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
+    cases b <;> simp_all
+  | some p =>
+    have hp1 : p.1 = agent := vmLastEntry_fst _ _ _ hL
+    have hiff : vmsMemLast st.override_used agent ⟨t, level⟩ ↔
+        (⟨t, level⟩ : types.OverrideKey) ∈ p.2.items.val := by
+      constructor
+      · rintro ⟨vs, hvs, hv⟩; rw [hL, Option.some_inj] at hvs; subst hvs; exact hv
+      · intro hv; exact ⟨p.2, by rw [hL, ← hp1], hv⟩
+    cases b <;> simp_all
+
 end ArgusLean.Refinement
 
 -- Trust-base audit. Beyond the three standard axioms: the `register_tool` `String`/id residuals (via

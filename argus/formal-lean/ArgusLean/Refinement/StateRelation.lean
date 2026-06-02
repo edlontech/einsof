@@ -66,6 +66,20 @@ def budgetC : Tzimtzum.BudgetLevel → types.BudgetLevel
   | .bl4          => .L4
   | .bl5          => .L5
 
+/-- Concrete → abstract confidentiality level (the inverse of `confC`). -/
+def confA : types.ConfLevel → Tzimtzum.ConfLevel
+  | .Public    => .«public»
+  | .Internal  => .«internal»
+  | .Sensitive => .sensitive
+  | .Restricted => .restricted
+
+@[simp] theorem confC_confA (l : types.ConfLevel) : confC (confA l) = l := by cases l <;> rfl
+
+@[simp] theorem confA_confC (l : Tzimtzum.ConfLevel) : confA (confC l) = l := by cases l <;> rfl
+
+theorem confC_injective : Function.Injective confC :=
+  fun a b h => by have := congrArg confA h; simpa using this
+
 /-- Get-style membership for the cap map: `C` is a cap of `N` iff the *last* `N`-keyed entry
     (the live one under `VecMap` last-match semantics) holds `C`. Survives duplicate keys, so
     the `insert grantee ∅` that `delegate` uses to clear a grantee's caps reads as empty. -/
