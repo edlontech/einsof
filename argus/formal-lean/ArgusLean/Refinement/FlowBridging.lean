@@ -27,16 +27,11 @@ open Aeneas.Std.WP
 set_option Aeneas.Deprecated.progressWarning false
 set_option maxHeartbeats 4000000
 
-/-! ## Decidable equality for `ConfLevel` / `OverrideKey` -/
+/-! ## Decidable equality for `OverrideKey`
 
-deriving instance DecidableEq for types.ConfLevel
+(`DecidableEq types.ConfLevel` + `confLevel_eq_spec` now live in `Collections`.) -/
+
 deriving instance DecidableEq for types.OverrideKey
-
-/-- `ConfLevel.eq` is faithful decidable equality (discriminant comparison on a nullary enum). -/
-@[simp] theorem confLevel_eq_spec (a b : types.ConfLevel) :
-    types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq a b = .ok (decide (a = b)) := by
-  cases a <;> cases b <;>
-    simp [types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq, types.ConfLevel.read_discriminant]
 
 /-- `OverrideKey.eq` is faithful decidable equality: tool (`String`-backed) then level (enum). -/
 @[simp] theorem overrideKey_eq_spec (a b : types.OverrideKey) :

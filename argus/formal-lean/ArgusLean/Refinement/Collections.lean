@@ -1422,6 +1422,47 @@ deriving instance DecidableEq for types.BudgetLevel
 @[simp] theorem budgetLevel_clone_spec (a : types.BudgetLevel) :
     types.BudgetLevel.Insts.CoreCloneClone.clone a = .ok a := rfl
 
+/-- `ConfLevel.clone` is the identity (nullary enum, body is `ok self`). -/
+@[simp] theorem confLevel_clone_spec (a : types.ConfLevel) :
+    types.ConfLevel.Insts.CoreCloneClone.clone a = .ok a := rfl
+
+/-! ## `OverrideEntry` equality / clone
+
+`OverrideEntry` is the `(agent, tool, level)` struct keying `flow_overrides`. Its `eq` is the
+field-wise conjunction (`AgentId` then `ToolId` then `ConfLevel`), its `clone` the field-wise
+identity. Both reduce to the already-pinned per-field specs — `eq` is *proved* faithful decidable
+equality. Consumed by `has_flow_override` (a `VecSet.contains` on `flow_overrides`). -/
+
+deriving instance DecidableEq for types.ConfLevel
+deriving instance DecidableEq for types.OverrideEntry
+
+/-- `ConfLevel.eq` faithful decidable equality (nullary enum; needed for `OverrideEntry.eq`). -/
+@[simp] theorem confLevel_eq_spec (a b : types.ConfLevel) :
+    types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq a b = .ok (decide (a = b)) := by
+  cases a <;> cases b <;>
+    simp [types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq, types.ConfLevel.read_discriminant]
+
+/-- `OverrideEntry.eq` is faithful decidable equality: agent (`String`) then tool (`String`) then
+    level (enum). -/
+@[simp] theorem overrideEntry_eq_spec (a b : types.OverrideEntry) :
+    types.OverrideEntry.Insts.CoreCmpPartialEqOverrideEntry.eq a b = .ok (decide (a = b)) := by
+  obtain ⟨a1, a2, a3⟩ := a; obtain ⟨b1, b2, b3⟩ := b
+  simp only [types.OverrideEntry.Insts.CoreCmpPartialEqOverrideEntry.eq, agentId_eq_spec, bind_tc_ok]
+  by_cases h1 : a1 = b1
+  · subst h1
+    simp only [decide_true, reduceIte, toolId_eq_spec]
+    by_cases h2 : a2 = b2
+    · subst h2; simp [confLevel_eq_spec]
+    · simp [h2]
+  · simp [h1]
+
+/-- `OverrideEntry.clone` is the identity (field-wise). -/
+@[simp] theorem overrideEntry_clone_spec (a : types.OverrideEntry) :
+    types.OverrideEntry.Insts.CoreCloneClone.clone a = .ok a := by
+  obtain ⟨a1, a2, a3⟩ := a
+  simp only [types.OverrideEntry.Insts.CoreCloneClone.clone, agentId_clone_spec, toolId_clone_spec,
+    confLevel_clone_spec, bind_tc_ok]
+
 /-! ## `VecSet.is_empty` and last-match nested membership
 
 `set_nonempty` / `get_set_or_empty` (the in-flight / taint reads the return actions perform) all
@@ -1483,5 +1524,301 @@ theorem vecMapKVecSetSetNonempty_spec {K T : Type} [DecidableEq K] [DecidableEq 
       rw [hLk, Option.some_inj, Prod.mk.injEq] at hvs
       obtain ⟨_, rfl⟩ := hvs
       exact List.ne_nil_of_mem hv
+
+/-- `get_set_or_empty key` returns the live (last) `key`-keyed set, or the empty set when `key` is
+    absent — its membership is exactly `vmsMemLast`. The taint/in-flight reads `return_unendorsed`
+    performs. -/
+theorem getSetOrEmpty_spec {K T : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heqK : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (hcloneT : ∀ x : T, cloneT.clone x = .ok x)
+    (self : collections.VecMap K (collections.VecSet T)) (key : K) :
+    collections.VecMapKVecSet.get_set_or_empty cloneK eqK cloneT eqT self key ⦃ vs =>
+      ∀ v, vsMem vs v ↔ vmsMemLast self key v ⦄ := by
+  unfold collections.VecMapKVecSet.get_set_or_empty
+  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+    (vecMapGetCloned_spec cloneK eqK heqK (collections.VecSet.Insts.CoreCloneClone cloneT)
+      (vecSetClone_spec cloneT hcloneT) self key)
+  rw [hoEq]; simp only [bind_tc_ok]
+  cases hL : vmLastEntry self.entries.val key with
+  | none =>
+    rw [hL] at ho; simp only [Option.map_none] at ho; subst ho
+    unfold collections.VecSet.new
+    simp only [spec_ok]
+    intro v
+    simp only [vsMem, alloc.vec.Vec.new, List.not_mem_nil, false_iff]
+    rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
+  | some p =>
+    rw [hL] at ho; simp only [Option.map_some] at ho; subst ho
+    have hp1 : p.1 = key := vmLastEntry_fst _ _ _ hL
+    have hLk : vmLastEntry self.entries.val key = some (key, p.2) := by rw [hL, ← hp1]
+    simp only [spec_ok]
+    intro v
+    constructor
+    · intro hv; exact ⟨p.2, hLk, hv⟩
+    · rintro ⟨vs, hvs, hv⟩
+      rw [hLk, Option.some_inj, Prod.mk.injEq] at hvs
+      obtain ⟨_, rfl⟩ := hvs; exact hv
+
+/-- `VecSet.insert` (membership-only) with a length bound: the result gains `x` and grows by at most
+    one element. The length bound lets `union_with` track its capacity through the insertion loop. -/
+theorem vecSetInsertLen_spec {T : Type} [DecidableEq T]
+    (inst_c : core.clone.Clone T) (inst_eq : core.cmp.PartialEq T T)
+    (heq : ∀ a b : T, inst_eq.eq a b = .ok (decide (a = b)))
+    (vs : collections.VecSet T) (x : T) (hcap : vs.items.val.length < Usize.max) :
+    collections.VecSet.insert inst_c inst_eq vs x ⦃ vs' =>
+      (∀ y, vsMem vs' y ↔ vsMem vs y ∨ y = x) ∧
+      vs'.items.val.length ≤ vs.items.val.length + 1 ⦄ := by
+  unfold collections.VecSet.insert
+  obtain ⟨b, hcontains, hb⟩ :=
+    spec_imp_exists (vecSetContains_spec inst_c inst_eq heq vs x)
+  rw [hcontains]
+  cases b with
+  | true =>
+    have hx : x ∈ vs.items.val := hb.mp rfl
+    simp only [bind_tc_ok, reduceIte, spec_ok]
+    refine ⟨fun y => ⟨Or.inl, ?_⟩, by omega⟩
+    rintro (hy | rfl)
+    · exact hy
+    · exact hx
+  | false =>
+    simp only [bind_tc_ok, Bool.false_eq_true, reduceIte]
+    step*
+    refine ⟨fun y => ?_, ?_⟩
+    · simp only [vsMem, v_post, List.mem_append, List.mem_singleton]
+    · simp [v_post]
+
+/-- Loop spec for `union_with`: after scanning the prefix `[0, i)` of `other`, the accumulator holds
+    `self`'s elements plus that prefix's, and its length is bounded by `self.length + i`. -/
+theorem vecSetUnionWithLoop_spec {T : Type} [DecidableEq T]
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (heqT : ∀ a b : T, eqT.eq a b = .ok (decide (a = b)))
+    (hcloneT : ∀ x : T, cloneT.clone x = .ok x)
+    (self0 other : collections.VecSet T)
+    (hcap : self0.items.val.length + other.items.val.length ≤ Usize.max)
+    (acc : collections.VecSet T) (i : Usize)
+    (hi : i.val ≤ other.items.val.length)
+    (hlen : acc.items.val.length ≤ self0.items.val.length + i.val)
+    (hmem : ∀ y, vsMem acc y ↔ vsMem self0 y ∨ y ∈ other.items.val.take i.val) :
+    collections.VecSet.union_with_loop cloneT eqT acc other i ⦃ vs' =>
+      ∀ y, vsMem vs' y ↔ vsMem self0 y ∨ vsMem other y ⦄ := by
+  unfold collections.VecSet.union_with_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => other.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ other.items.val.length ∧
+      p.1.items.val.length ≤ self0.items.val.length + p.2.val ∧
+      (∀ y, vsMem p.1 y ↔ vsMem self0 y ∨ y ∈ other.items.val.take p.2.val))
+  · rintro ⟨accL, iL⟩ ⟨hile, hlenL, hmemL⟩
+    dsimp only at hile hlenL hmemL
+    simp only [collections.VecSet.union_with_loop.body, alloc.vec.Vec.len, bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : iL.val < other.items.val.length := by scalar_tac
+      step as ⟨t, he⟩
+      have hcapL : accL.items.val.length < Usize.max := by scalar_tac
+      rw [hcloneT t]
+      obtain ⟨vs1, hvs1Eq, hvs1Mem, hvs1Len⟩ :=
+        spec_imp_exists (vecSetInsertLen_spec cloneT eqT heqT accL t hcapL)
+      rw [bind_tc_ok, hvs1Eq]
+      simp only [bind_tc_ok]
+      step*
+      refine ⟨by scalar_tac, by scalar_tac, fun y => ?_, by scalar_tac⟩
+      have hi2 : i2.val = iL.val + 1 := by scalar_tac
+      rw [hvs1Mem y, hmemL y, hi2]
+      have hte : t = other.items.val[iL.val] := he
+      simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        List.mem_append, List.mem_singleton, hte]
+      rw [or_assoc]
+    case isFalse h =>
+      have heq' : iL.val = other.items.val.length := by scalar_tac
+      simp only [spec_ok]
+      intro y; rw [hmemL y, heq', List.take_length]; rfl
+  · exact ⟨hi, hlen, hmem⟩
+
+/-- `VecSet.union_with self other` is set union (membership). The capacity bound `|self| + |other| ≤
+    Usize.max` feeds the insertion loop. -/
+theorem vecSetUnionWith_spec {T : Type} [DecidableEq T]
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (heqT : ∀ a b : T, eqT.eq a b = .ok (decide (a = b)))
+    (hcloneT : ∀ x : T, cloneT.clone x = .ok x)
+    (self other : collections.VecSet T)
+    (hcap : self.items.val.length + other.items.val.length ≤ Usize.max) :
+    collections.VecSet.union_with cloneT eqT self other ⦃ vs' =>
+      ∀ y, vsMem vs' y ↔ vsMem self y ∨ vsMem other y ⦄ := by
+  unfold collections.VecSet.union_with
+  exact vecSetUnionWithLoop_spec cloneT eqT heqT hcloneT self other hcap self 0#usize
+    (by simp) (by simp) (by simp [vsMem])
+
+/-! ## `VecMapKVecSet.extend_into`
+
+`extend_into self key other` unions `other` into the live (last) `key`-keyed set, creating that
+entry if absent. Its faithful image is the *last-match* nested membership `vmsMemLast`: `key`'s set
+gains `other`'s elements, every other key untouched. The find-index loop reuses the `lastMatchInv`
+machinery (same as `VecMap.insert`); the value update reuses `vecSetUnionWith_spec`. The shared write
+primitive for `return_unendorsed`'s `taint_levels` / `gh_taint_received` / `override_used`. -/
+
+/-- Find-last-index loop for `extend_into`: the returned index satisfies the same `lastMatchInv` as
+    the `insert`/`get` loops (last matching key, or off-the-end when absent). -/
+theorem extendIntoLoop_spec {K T : Type} [DecidableEq K]
+    (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (entries : alloc.vec.Vec (K × collections.VecSet T)) (key : K) (idx0 i0 : Usize)
+    (hi0 : i0.val ≤ entries.val.length)
+    (hInv : lastMatchInv entries.val key idx0.val i0.val) :
+    collections.VecMapKVecSet.extend_into_loop eqK entries key idx0 i0 ⦃ idx1 =>
+      lastMatchInv entries.val key idx1.val entries.val.length ⦄ := by
+  unfold collections.VecMapKVecSet.extend_into_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ entries.val.length ∧ lastMatchInv entries.val key p.1.val p.2.val)
+  · rintro ⟨idx, i⟩ ⟨hile, hinv⟩
+    simp only [collections.VecMapKVecSet.extend_into_loop.body, alloc.vec.Vec.len]
+    split
+    case isTrue h =>
+      have hlt : i.val < entries.val.length := by scalar_tac
+      step as ⟨t, vs0, he⟩
+      have hget : entries.val[i.val]? = some (t, vs0) := by
+        rw [List.getElem?_eq_getElem hlt, ← he]
+      rw [heq t key]
+      step*
+      split
+      · rename_i hb
+        step*
+        have ht : t = key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        right
+        refine ⟨hlt, ⟨(t, vs0), hget, ht⟩, ?_⟩
+        intro k hk1 hk2 p hp; exfalso; omega
+      · rename_i hb
+        step*
+        have ht : t ≠ key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rcases hinv with ⟨hidxlen, hno⟩ | ⟨hidxlt, hex, hno⟩
+        · left
+          refine ⟨hidxlen, ?_⟩
+          intro k hk p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+        · right
+          refine ⟨hidxlt, hex, ?_⟩
+          intro k hk1 hk2 p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hk1 hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+    case isFalse h =>
+      have heq' : i.val = entries.val.length := by scalar_tac
+      simp only [spec_ok]
+      rwa [heq'] at hinv
+  · exact ⟨hi0, hInv⟩
+
+/-- `extend_into self key other`: the live `key`-keyed set gains `other`'s elements; every other key
+    is untouched. Stated as last-match nested membership (`vmsMemLast`). The capacity side conditions
+    feed the `VecSet.union_with` / `Vec.push`. -/
+theorem extendInto_spec {K T : Type} [DecidableEq K] [DecidableEq T]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heqK : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (heqT : ∀ a b : T, eqT.eq a b = .ok (decide (a = b)))
+    (hcloneT : ∀ x : T, cloneT.clone x = .ok x)
+    (self : collections.VecMap K (collections.VecSet T)) (key : K)
+    (other : collections.VecSet T)
+    (hcapE : self.entries.val.length < Usize.max)
+    (hcapS : ∀ p ∈ self.entries.val, p.2.items.val.length + other.items.val.length ≤ Usize.max)
+    (hcapO : other.items.val.length ≤ Usize.max) :
+    collections.VecMapKVecSet.extend_into cloneK eqK cloneT eqT self key other ⦃ vm' =>
+      ∀ k v, vmsMemLast vm' k v ↔ vmsMemLast self k v ∨ (k = key ∧ vsMem other v) ⦄ := by
+  unfold collections.VecMapKVecSet.extend_into
+  have hinv0 : lastMatchInv self.entries.val key (alloc.vec.Vec.len self.entries).val (0#usize).val := by
+    left; exact ⟨by scalar_tac, fun k hk => absurd hk (by scalar_tac)⟩
+  obtain ⟨idx1, hloopEq, hlmi⟩ := spec_imp_exists
+    (extendIntoLoop_spec eqK heqK self.entries key (alloc.vec.Vec.len self.entries) 0#usize
+      (by scalar_tac) hinv0)
+  simp only [hloopEq, bind_tc_ok]
+  split
+  case isTrue hcond =>
+    have hidxlt : idx1.val < self.entries.val.length := by scalar_tac
+    rcases hlmi with ⟨hlen, _⟩ | ⟨_, hex, hno⟩
+    · omega
+    · obtain ⟨p, hp, hpk⟩ := hex
+      have hpe : self.entries.val[idx1.val]'hidxlt = p := by
+        rw [List.getElem?_eq_getElem hidxlt] at hp; exact Option.some_inj.mp hp
+      have hmatch : (self.entries.val[idx1.val]'hidxlt).1 = key := by rw [hpe]; exact hpk
+      have hlast : ∀ k, (hk : k < self.entries.val.length) → idx1.val < k →
+          (self.entries.val[k]'hk).1 ≠ key := fun k hk hik =>
+        hno k hik hk _ (List.getElem?_eq_getElem hk)
+      step as ⟨kk, vs0, hidx⟩
+      have hvs0 : vs0 = p.2 := by
+        have : (kk, vs0) = self.entries.val[idx1.val]'hidxlt := hidx
+        rw [hpe] at this; exact (Prod.mk.injEq .. ▸ this).2
+      rw [vecSetClone_spec cloneT hcloneT vs0]
+      have hcapU : vs0.items.val.length + other.items.val.length ≤ Usize.max := by
+        rw [hvs0]; exact hcapS p (by rw [← hpe]; exact List.getElem_mem hidxlt)
+      obtain ⟨s1, hs1Eq, hs1Mem⟩ :=
+        spec_imp_exists (vecSetUnionWith_spec cloneT eqT heqT hcloneT vs0 other hcapU)
+      rw [bind_tc_ok, hs1Eq]
+      simp only [bind_tc_ok]
+      step*
+      have hlastSelf : vmLastEntry self.entries.val key = some (key, p.2) := by
+        rw [vmLastEntry_eq_of_isLast self.entries.val idx1.val key hidxlt hmatch hlast, hpe, ← hpk]
+      intro k v
+      unfold vmsMemLast
+      rw [__post2, alloc.vec.Vec.set_val_eq,
+        vmLastEntry_set_lastmatch _ idx1.val key s1 hidxlt hmatch hlast k]
+      by_cases hk : k = key
+      · subst hk
+        rw [if_pos rfl, hlastSelf]
+        constructor
+        · rintro ⟨ss, hss, hv⟩
+          rw [Option.some_inj, Prod.mk.injEq] at hss
+          obtain ⟨_, rfl⟩ := hss
+          rcases (hs1Mem v).mp hv with h | h
+          · exact Or.inl ⟨p.2, rfl, by rw [← hvs0]; exact h⟩
+          · exact Or.inr ⟨rfl, h⟩
+        · rintro (⟨ss, hss, hv⟩ | ⟨_, hv⟩)
+          · rw [Option.some_inj, Prod.mk.injEq] at hss
+            obtain ⟨_, rfl⟩ := hss
+            exact ⟨s1, rfl, (hs1Mem v).mpr (Or.inl (by rw [hvs0]; exact hv))⟩
+          · exact ⟨s1, rfl, (hs1Mem v).mpr (Or.inr hv)⟩
+      · rw [if_neg hk]; simp only [hk, false_and, or_false]
+  case isFalse hcond =>
+    have hidxlen : idx1.val = self.entries.val.length := by
+      rcases hlmi with ⟨hlen, _⟩ | ⟨hlt, _, _⟩
+      · exact hlen
+      · scalar_tac
+    have hno : ∀ p ∈ self.entries.val, p.1 ≠ key := by
+      rcases hlmi with ⟨_, h⟩ | ⟨hlt, _, _⟩
+      · intro p hp
+        obtain ⟨k, hk, hkp⟩ := List.getElem_of_mem hp
+        exact h k (by omega) p (by rw [List.getElem?_eq_getElem hk, hkp])
+      · omega
+    obtain ⟨s0, hs0Eq, hs0Nil⟩ : ∃ s0, collections.VecSet.new cloneT eqT = Result.ok s0 ∧
+        s0.items.val = [] := ⟨_, rfl, rfl⟩
+    rw [hs0Eq]; simp only [bind_tc_ok]
+    obtain ⟨s1, hs1Eq, hs1Mem⟩ :=
+      spec_imp_exists (vecSetUnionWith_spec cloneT eqT heqT hcloneT s0 other (by
+        rw [hs0Nil]; simpa using hcapO))
+    rw [hs1Eq]; simp only [bind_tc_ok]
+    obtain ⟨vpush, hpushEq, hpushVal⟩ :=
+      spec_imp_exists (alloc.vec.Vec.push_spec self.entries (key, s1) hcapE)
+    rw [hpushEq]; simp only [bind_tc_ok, spec_ok]
+    intro k v
+    simp only [vmsMemLast, hpushVal, vmLastEntry_append_nomatch _ key s1 hno k]
+    by_cases hk : k = key
+    · subst hk
+      rw [if_pos rfl]
+      constructor
+      · rintro ⟨ss, hss, hv⟩
+        rw [Option.some_inj, Prod.mk.injEq] at hss
+        obtain ⟨_, rfl⟩ := hss
+        refine Or.inr ⟨rfl, ?_⟩
+        rcases (hs1Mem v).mp hv with h | h
+        · simp [vsMem, hs0Nil] at h
+        · exact h
+      · rintro (⟨ss, hss, _⟩ | ⟨_, hv⟩)
+        · exact absurd (vmLastEntry_mem _ _ _ hss) (fun hm => hno _ hm rfl)
+        · exact ⟨s1, rfl, (hs1Mem v).mpr (Or.inr hv)⟩
+    · rw [if_neg hk]; simp only [hk, false_and, or_false]
 
 end ArgusLean.Refinement
