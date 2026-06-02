@@ -2,6 +2,7 @@ import ArgusLean.Refinement.Actions.RegisterTool
 import ArgusLean.Refinement.Actions.LoadInstruction
 import ArgusLean.Refinement.Actions.Delegate
 import ArgusLean.Refinement.Actions.CascadeRevoke
+import ArgusLean.Refinement.Actions.Revoke
 
 /-! # Refinement — simulation bundle
 
@@ -20,7 +21,9 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `agent_parent_drop_endpoint` rebuild spec; plus the
                                `VecMap.remove`/`insert` get-machinery + `clear_agent_state` spec)
 * [ ] `grant_capability`
-* [ ] `revoke`
+* [x] `revoke`               — Actions/Revoke.lean (10/10 fields against `Rcasc`; the direct-removal
+                               sibling of `cascade_revoke` — same proof modulo the parent-active gate
+                               polarity and removing `target`; reuses all cascade bridging, no new axioms)
 * [x] `cascade_revoke`       — Actions/CascadeRevoke.lean (10/10 fields against `Rcasc`, the
                                active-guarded-budget variant of `Rdel`; new bridging: `VecMap.get`
                                last-match read, `VecSet.remove`, `agent_parent_drop_child` key-filter,
