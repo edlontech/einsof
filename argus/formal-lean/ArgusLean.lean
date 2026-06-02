@@ -4,3 +4,5 @@ import ArgusLean.Generated.ArgusKernel
 import ArgusLean.Smoke
 -- C1 refinement spike: collections bridging + state relation + register_tool simulation.
 import ArgusLean.Refinement.Simulation
+-- Flow-gate bridging foundation (flow_decision + gate_egress) for the egress-gated actions.
+import ArgusLean.Refinement.FlowBridging
