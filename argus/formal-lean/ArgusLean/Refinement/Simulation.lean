@@ -42,5 +42,11 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
 * [ ] `invoke_complete`
 * [ ] `return_endorsed`
 * [ ] `return_unendorsed`
-* [ ] `sentinel_elevate_taint`
+* [ ] `sentinel_elevate_taint` — the flow-gate bridging foundation it needs (and `invoke_start` /
+                               `return_*` reuse) is DONE in `Refinement/FlowBridging.lean`:
+                               `flowDecision_spec` (3-way decision) + `gateEgress_spec` (egress fold)
+                               + `vecSetInsertNodup_spec` / `overrideKey_eq_spec`. Remaining for the
+                               action: an oracle-agreement relation, `Relev` (get-style
+                               `override_used`), the outer in-flight loop, `get_set_or_empty` /
+                               `extend_into` specs.
 -/
