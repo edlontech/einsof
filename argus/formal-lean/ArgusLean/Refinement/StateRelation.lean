@@ -110,6 +110,55 @@ def Rdel (st : state.KernelState) (a : AbsState) : Prop :=
   (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
   vmNodupKeys st.agent_parent
 
+/-- State relation for the removal actions (`cascade_revoke`, `revoke`). Touches exactly the same
+    ten fields as `Rdel`, with **one** difference: the `agent_budget` clause is guarded by
+    `a.agent_active G`.
+
+    This guard is forced by the asymmetry between insert and remove. The kernel's budget convention
+    is "absent key = full budget (`bl5`)"; `delegate` adds an agent and sets its budget to `bl5`, so
+    the unguarded clause holds (absent ↔ `bl5`). A removal action *deletes* the agent's budget entry,
+    leaving it absent — which the convention reads as `bl5` — while the abstract action drops the
+    agent's budget relation to `False`. Those disagree at `bl5` for the just-removed (now inactive)
+    agent. They agree exactly where the convention is observable: on **active** agents. The abstract
+    invariants `budget_unique` / `active_has_budget` are themselves guarded by `agent_active`,
+    confirming budget is only semantically meaningful there. So the faithful refinement relation
+    relates budget on active agents only; an `Rdel` pre-state implies the corresponding `Rcasc` one.
+    (See [[c2-cascade-revoke]].) -/
+def Rcasc (st : state.KernelState) (a : AbsState) : Prop :=
+  (types.AgentId.root = .ok a.root_agent) ∧
+  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
+  (∀ N C, a.agent_cap N C ↔ capMem st.agent_cap N C) ∧
+  (∀ ag ins, a.agent_instruction ag ins ↔ vmsMem st.agent_instruction ag ins) ∧
+  (∀ ag inv, a.in_flight ag inv ↔ vmsMem st.in_flight ag inv) ∧
+  (∀ ag L, a.taint_levels ag L ↔ vmsMem st.taint_levels ag (confC L)) ∧
+  (∀ ag L, a.gh_taint_invoked ag L ↔ vmsMem st.gh_taint_invoked ag (confC L)) ∧
+  (∀ ag L, a.gh_taint_received ag L ↔ vmsMem st.gh_taint_received ag (confC L)) ∧
+  (∀ ag t L, a.override_used ag t L ↔
+    vmsMem st.override_used ag { tool := t, level := confC L }) ∧
+  (∀ G L, a.agent_active G → (a.agent_budget G L ↔
+    ((G, budgetC L) ∈ st.agent_budget.entries.val) ∨
+    ((∀ bl, (G, bl) ∉ st.agent_budget.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5))) ∧
+  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
+  vmNodupKeys st.agent_parent
+
+/-- `VecMap.remove key` read through `capMem`: the removed key resolves to no caps, every other
+    agent's caps are untouched. The `agent_cap` counterpart of `vmsMem_filter_removeKept`, built on
+    the pure `vmLastEntry_filter_removeKept`. -/
+theorem capMem_filter_removeKept
+    (vm' vm : collections.VecMap types.AgentId (collections.VecSet capability.CapKind))
+    (key : types.AgentId)
+    (h : vm'.entries.val = vm.entries.val.filter (removeKept key)) (N : types.AgentId)
+    (C : capability.CapKind) :
+    capMem vm' N C ↔ capMem vm N C ∧ N ≠ key := by
+  unfold capMem
+  rw [h, vmLastEntry_filter_removeKept]
+  by_cases hN : N = key
+  · simp [hN]
+  · rw [if_neg hN]
+    constructor
+    · rintro ⟨p, hp, hC⟩; exact ⟨⟨p, hp, hC⟩, hN⟩
+    · rintro ⟨⟨p, hp, hC⟩, _⟩; exact ⟨p, hp, hC⟩
+
 /-! ## Shared transition helper: `clear_agent_state`
 
 `clear_agent_state st agent` deletes `agent`'s key from the seven per-agent maps

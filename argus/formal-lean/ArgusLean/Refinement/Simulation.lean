@@ -1,6 +1,7 @@
 import ArgusLean.Refinement.Actions.RegisterTool
 import ArgusLean.Refinement.Actions.LoadInstruction
 import ArgusLean.Refinement.Actions.Delegate
+import ArgusLean.Refinement.Actions.CascadeRevoke
 
 /-! # Refinement — simulation bundle
 
@@ -20,7 +21,10 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `VecMap.remove`/`insert` get-machinery + `clear_agent_state` spec)
 * [ ] `grant_capability`
 * [ ] `revoke`
-* [ ] `cascade_revoke`
+* [x] `cascade_revoke`       — Actions/CascadeRevoke.lean (10/10 fields against `Rcasc`, the
+                               active-guarded-budget variant of `Rdel`; new bridging: `VecMap.get`
+                               last-match read, `VecSet.remove`, `agent_parent_drop_child` key-filter,
+                               `vmLastEntry_filter_removeKept`; +1 axiom `optionAgentId_ne_spec`)
 * [ ] `invoke_start`
 * [ ] `invoke_complete`
 * [ ] `return_endorsed`

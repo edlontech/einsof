@@ -874,4 +874,356 @@ theorem parentPost_nodupKeys {K : Type} [DecidableEq K] (l : List (K × K)) (gra
     simp only [parentKept, decide_eq_true_eq] at hp'
     rw [← hpe]; exact hp'.2.1
 
+/-! ## `cascade_revoke` / `revoke` bridging: parent-edge get, set-remove, drop-child
+
+`cascade_revoke child parent` and `revoke parent target` both (a) gate on the parent edge via
+`VecMap.get`, (b) remove the agent from the `agent_active` `VecSet`, (c) rebuild `agent_parent`
+via `agent_parent_drop_child` (a pure key-filter — no re-appended edge, unlike `drop_endpoint`),
+and (d) `VecMap.remove` the agent's caps. The lemmas below are the bridging those need; they are
+shared between the two removal actions. -/
+
+/-- The opaque extracted `Option AgentId` disequality is faithful decidable disequality. Same
+    extractor-residual status as `agentId_ne_spec`: `PartialEq::ne` is a default trait method,
+    so Charon emits the per-type `…ne` as a bare axiom. Consumed by the parent-edge gate of
+    `revoke` / `cascade_revoke` (and later `grant_capability`). -/
+axiom optionAgentId_ne_spec (o1 o2 : Option types.AgentId) :
+    core.option.Option.Insts.CoreCmpPartialEqOption.ne
+      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o1 o2
+      = .ok (decide (o1 ≠ o2))
+
+/-- A present last-match entry is keyed by the queried key (it came out of the key-filter). -/
+theorem vmLastEntry_fst {K V : Type} [DecidableEq K] (l : List (K × V)) (key : K) (p : K × V)
+    (h : vmLastEntry l key = some p) : p.1 = key := by
+  have hmem : p ∈ l.filter (vmKeyEq key) := List.mem_of_getLast? h
+  have h2 := (List.mem_filter.mp hmem).2
+  simpa [vmKeyEq] using h2
+
+/-- No `key`-entry anywhere ⇒ the last-match read is `none`. -/
+theorem vmLastEntry_eq_none {K V : Type} [DecidableEq K] (l : List (K × V)) (key : K)
+    (hno : ∀ p ∈ l, p.1 ≠ key) : vmLastEntry l key = none := by
+  unfold vmLastEntry
+  rw [List.filter_eq_nil_iff.mpr (by intro p hp; simp [vmKeyEq, hno p hp])]
+  rfl
+
+/-- If `idx` is the last `key`-matching index then the last-match read is its entry. Mirrors the
+    `hdropno` reasoning of `vmLastEntry_set_lastmatch`: the suffix past `idx` has no `key`-match,
+    so the key-filter ends in `l[idx]`. -/
+theorem vmLastEntry_eq_of_isLast {K V : Type} [DecidableEq K] (l : List (K × V)) (idx : Nat)
+    (key : K) (hidx : idx < l.length) (hmatch : (l[idx]'hidx).1 = key)
+    (hlast : ∀ k, (hk : k < l.length) → idx < k → (l[k]'hk).1 ≠ key) :
+    vmLastEntry l key = some (l[idx]'hidx) := by
+  have hl : l = l.take idx ++ l[idx] :: l.drop (idx + 1) := by
+    conv_lhs => rw [← List.take_append_drop idx l, List.drop_eq_getElem_cons hidx]
+  have hdropno : (l.drop (idx + 1)).filter (vmKeyEq key) = [] := by
+    apply List.filter_eq_nil_iff.mpr
+    intro p hp
+    obtain ⟨n, hn, hpn⟩ := List.getElem_of_mem hp
+    rw [List.length_drop] at hn
+    have hb : idx + 1 + n < l.length := by omega
+    have hpk : p.1 ≠ key := by
+      rw [← hpn, List.getElem_drop]; exact hlast _ hb (by omega)
+    simp [vmKeyEq, hpk]
+  have hmatchb : vmKeyEq key (l[idx]'hidx) = true := by simp [vmKeyEq, hmatch]
+  unfold vmLastEntry
+  conv_lhs => rw [hl]
+  rw [List.filter_append, List.filter_cons, hmatchb, if_pos rfl, hdropno]
+  rw [List.getLast?_append]
+  simp
+
+/-- The last-match read through the `VecMap.remove` / `agent_parent_drop_child` key-filter: the
+    removed key resolves to `none`, every other key is untouched (filtering a *different* key
+    preserves the last matching entry, with or without duplicate keys). -/
+theorem vmLastEntry_filter_removeKept {K V : Type} [DecidableEq K] (l : List (K × V)) (key N : K) :
+    vmLastEntry (l.filter (removeKept key)) N =
+      if N = key then none else vmLastEntry l N := by
+  by_cases hN : N = key
+  · subst hN
+    rw [if_pos rfl]
+    apply vmLastEntry_eq_none
+    intro p hp hpN
+    have h2 := (List.mem_filter.mp hp).2
+    simp [removeKept, hpN] at h2
+  · rw [if_neg hN]
+    unfold vmLastEntry
+    congr 1
+    rw [List.filter_filter]
+    apply List.filter_congr
+    intro p _
+    by_cases hp : p.1 = N
+    · simp [vmKeyEq, removeKept, hp, hN]
+    · simp [vmKeyEq, hp]
+
+/-! ### `VecMap.get` (last-match read) -/
+
+/-- Find-index loop for `VecMap.get`: identical body to `insert_loop`, so it carries the same
+    `lastMatchInv` (the accumulator is the last key-match seen, sentinel `len` if none). -/
+theorem vecMapGetLoop_spec {K V : Type} [DecidableEq K]
+    (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (entries : alloc.vec.Vec (K × V)) (key : K) (idx0 i0 : Usize)
+    (hi0 : i0.val ≤ entries.val.length)
+    (hInv : lastMatchInv entries.val key idx0.val i0.val) :
+    collections.VecMap.get_loop eqK entries key idx0 i0 ⦃ idx1 =>
+      lastMatchInv entries.val key idx1.val entries.val.length ⦄ := by
+  unfold collections.VecMap.get_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ entries.val.length ∧ lastMatchInv entries.val key p.1.val p.2.val)
+  · rintro ⟨idx, i⟩ ⟨hile, hinv⟩
+    simp only [collections.VecMap.get_loop.body]
+    split
+    case isTrue h =>
+      have hlt : i.val < entries.val.length := by scalar_tac
+      step as ⟨t, t1, he⟩
+      have hget : entries.val[i.val]? = some (t, t1) := by
+        rw [List.getElem?_eq_getElem hlt, ← he]
+      rw [heq t key]
+      step*
+      split
+      · rename_i hb
+        step*
+        have ht : t = key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        right
+        refine ⟨hlt, ⟨(t, t1), hget, ht⟩, ?_⟩
+        intro k hk1 hk2 p hp
+        exfalso; omega
+      · rename_i hb
+        step*
+        have ht : t ≠ key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rcases hinv with ⟨hidxlen, hno⟩ | ⟨hidxlt, hex, hno⟩
+        · left
+          refine ⟨hidxlen, ?_⟩
+          intro k hk p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+        · right
+          refine ⟨hidxlt, hex, ?_⟩
+          intro k hk1 hk2 p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hk1 hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+    case isFalse h =>
+      have heq' : i.val = entries.val.length := by scalar_tac
+      simp only [spec_ok]
+      rwa [heq'] at hinv
+  · exact ⟨hi0, hInv⟩
+
+/-- `VecMap.get vm key` returns the value of the last `key`-keyed entry (last-match semantics),
+    expressed as `(vmLastEntry …).map Prod.snd`. The get-style bridge for the parent-edge gate. -/
+theorem vecMapGet_spec {K V : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneV : core.clone.Clone V)
+    (vm : collections.VecMap K V) (key : K) :
+    collections.VecMap.get cloneK eqK cloneV vm key ⦃ o =>
+      o = (vmLastEntry vm.entries.val key).map Prod.snd ⦄ := by
+  unfold collections.VecMap.get
+  have hinv0 : lastMatchInv vm.entries.val key (alloc.vec.Vec.len vm.entries).val (0#usize).val := by
+    left; exact ⟨by scalar_tac, fun k hk => absurd hk (by scalar_tac)⟩
+  obtain ⟨idx1, hloopEq, hlmi⟩ := spec_imp_exists
+    (vecMapGetLoop_spec eqK heq vm.entries key (alloc.vec.Vec.len vm.entries) 0#usize
+      (by scalar_tac) hinv0)
+  simp only [hloopEq, bind_tc_ok]
+  split
+  case isTrue hcond =>
+    have hidxlt : idx1.val < vm.entries.val.length := by scalar_tac
+    rcases hlmi with ⟨hlen, _⟩ | ⟨_, ⟨p, hp, hpk⟩, hno⟩
+    · omega
+    · have hpe : vm.entries.val[idx1.val]'hidxlt = p := by
+        rw [List.getElem?_eq_getElem hidxlt] at hp; exact Option.some_inj.mp hp
+      have hmatch : (vm.entries.val[idx1.val]'hidxlt).1 = key := by rw [hpe]; exact hpk
+      have hlast : ∀ k, (hk : k < vm.entries.val.length) → idx1.val < k →
+          (vm.entries.val[k]'hk).1 ≠ key := fun k hk hik =>
+        hno k hik hk _ (List.getElem?_eq_getElem hk)
+      step as ⟨k0, v0, he⟩
+      rw [vmLastEntry_eq_of_isLast vm.entries.val idx1.val key hidxlt hmatch hlast]
+      simp only [Option.map_some, ← he]
+  case isFalse hcond =>
+    have hidxlen : idx1.val = vm.entries.val.length := by
+      rcases hlmi with ⟨hlen, _⟩ | ⟨hlt, _, _⟩
+      · exact hlen
+      · scalar_tac
+    have hno : ∀ p ∈ vm.entries.val, p.1 ≠ key := by
+      rcases hlmi with ⟨_, h⟩ | ⟨hlt, _, _⟩
+      · intro p hp
+        obtain ⟨k, hk, hkp⟩ := List.getElem_of_mem hp
+        exact h k (by omega) p (by rw [List.getElem?_eq_getElem hk, hkp])
+      · omega
+    rw [vmLastEntry_eq_none vm.entries.val key hno]
+    rfl
+
+/-! ### `VecSet.remove` -/
+
+/-- Predicate kept by `VecSet.remove`: the element is not the removed one. A folded abbrev
+    (like `removeKept`) so the running-filter accumulator survives `simp` rewrites intact. -/
+abbrev setRemoveKept {T : Type} [DecidableEq T] (x : T) : T → Bool := fun t => decide (t ≠ x)
+
+/-- Loop spec for `VecSet.remove_loop`: the accumulator is the running filter (keep `≠ x`).
+    Mirrors `vecMapRemoveLoop_spec`; the element clone (`hclone`) is the identity. -/
+theorem vecSetRemoveLoop_spec {T : Type} [DecidableEq T]
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (hne : ∀ a b : T, eqT.ne a b = .ok (decide (a ≠ b)))
+    (hclone : ∀ t : T, cloneT.clone t = .ok t)
+    (self : collections.VecSet T) (x : T)
+    (kept0 : alloc.vec.Vec T) (i0 : Usize)
+    (hi0 : i0.val ≤ self.items.val.length)
+    (hkept0 : kept0.val = (self.items.val.take i0.val).filter (setRemoveKept x)) :
+    collections.VecSet.remove_loop cloneT eqT self x kept0 i0 ⦃ kept =>
+      kept.val = self.items.val.filter (setRemoveKept x) ⦄ := by
+  unfold collections.VecSet.remove_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => self.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ self.items.val.length ∧
+        p.1.val = (self.items.val.take p.2.val).filter (setRemoveKept x))
+  · rintro ⟨kept, i⟩ ⟨hile, hkept⟩
+    simp only [collections.VecSet.remove_loop.body]
+    split
+    case isTrue h =>
+      have hlt : i.val < self.items.val.length := by scalar_tac
+      step as ⟨t, he⟩
+      have hget : self.items.val[i.val]? = some t := by
+        rw [List.getElem?_eq_getElem hlt, ← he]
+      have hcapk : kept.val.length < Usize.max := by
+        have h1 : kept.val.length ≤ i.val := by
+          rw [hkept]
+          exact le_trans (List.length_filter_le _ _)
+            (by rw [List.length_take]; exact Nat.min_le_left _ _)
+        scalar_tac
+      rw [hne t x]
+      step*
+      split
+      · rename_i hb
+        rw [hclone t]
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [kept1_post, i2_post, List.take_add_one, hget, Option.toList_some]
+        simp [List.filter_append, setRemoveKept, hb, ← hkept]
+      · rename_i hb
+        step*
+        have hbf : decide (t ≠ x) = false := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [i2_post, List.take_add_one, hget, Option.toList_some]
+        simp [List.filter_append, setRemoveKept, hbf, ← hkept]
+    case isFalse h =>
+      have heq' : i.val = self.items.val.length := by scalar_tac
+      simp only [spec_ok]
+      simpa [heq', List.take_length] using hkept
+  · exact ⟨hi0, hkept0⟩
+
+/-- `VecSet.remove self x` returns the `≠ x`-filtered items; hence membership drops exactly `x`. -/
+theorem vecSetRemove_spec {T : Type} [DecidableEq T]
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (hne : ∀ a b : T, eqT.ne a b = .ok (decide (a ≠ b)))
+    (hclone : ∀ t : T, cloneT.clone t = .ok t)
+    (self : collections.VecSet T) (x : T) :
+    collections.VecSet.remove cloneT eqT self x ⦃ vs' =>
+      ∀ y, vsMem vs' y ↔ vsMem self y ∧ y ≠ x ⦄ := by
+  unfold collections.VecSet.remove
+  obtain ⟨kept, hkeptEq, hkeptMem⟩ :=
+    spec_imp_exists (vecSetRemoveLoop_spec cloneT eqT hne hclone self x
+      ⟨[], by simp⟩ 0#usize (by simp) (by simp))
+  rw [hkeptEq]
+  intro y
+  simp only [vsMem, hkeptMem, List.mem_filter, setRemoveKept, decide_eq_true_eq]
+
+/-! ### `agent_parent_drop_child` (pure key-filter rebuild)
+
+Unlike `agent_parent_drop_endpoint`, `drop_child` only inspects each entry's *key*: it keeps the
+edge iff the child differs from the dropped agent. So under unique input keys the rebuild is the
+plain `removeKept`-filter (no re-appended edge). -/
+
+set_option maxRecDepth 8000 in
+theorem agentParentDropChildLoop_spec
+    (map : collections.VecMap types.AgentId types.AgentId) (dropped : types.AgentId)
+    (hnd : (map.entries.val.map Prod.fst).Nodup)
+    (kept : collections.VecMap types.AgentId types.AgentId) (i0 : Usize)
+    (hi0 : i0.val ≤ map.entries.val.length)
+    (hkept0 : kept.entries.val = (map.entries.val.take i0.val).filter (removeKept dropped)) :
+    transitions.agent_parent_drop_child_loop map dropped kept i0 ⦃ out =>
+      out.entries.val = map.entries.val.filter (removeKept dropped) ⦄ := by
+  unfold transitions.agent_parent_drop_child_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => map.entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ map.entries.val.length ∧
+        p.1.entries.val = (map.entries.val.take p.2.val).filter (removeKept dropped))
+  · rintro ⟨kept, i⟩ ⟨hile, hkept⟩
+    simp only [transitions.agent_parent_drop_child_loop.body, collections.VecMap.len,
+      bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : i.val < map.entries.val.length := by scalar_tac
+      obtain ⟨child, hchildEq, hchild⟩ := spec_imp_exists
+        (vecMapKeyAt_spec types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId types.AgentId.Insts.CoreCloneClone
+          map i hlt)
+      rw [hchildEq]; simp only [bind_tc_ok]
+      have hcapk : kept.entries.val.length < Usize.max := by
+        have hle : kept.entries.val.length ≤ i.val := by
+          rw [hkept]
+          refine le_trans (List.length_filter_le _ _) ?_
+          rw [List.length_take]; exact Nat.min_le_left _ _
+        scalar_tac
+      have hfresh : ∀ p ∈ kept.entries.val, p.1 ≠ child := by
+        have hfm := fst_getElem_not_mem_map_take map.entries.val i.val hlt hnd
+        rw [hkept]; intro p hp hpc
+        exact hfm (by rw [← hchild, ← hpc]; exact List.mem_map.mpr ⟨p, List.mem_of_mem_filter hp, rfl⟩)
+      simp only [core.cmp.impls.PartialEqShared.ne]
+      rw [agentId_ne_spec child dropped]
+      step*
+      split
+      · rename_i hbo
+        simp only [agentId_clone_spec, bind_tc_ok]
+        obtain ⟨parent, hparentEq, hparent⟩ := spec_imp_exists
+          (vecMapValAt_spec types.AgentId.Insts.CoreCloneClone
+            types.AgentId.Insts.CoreCmpPartialEqAgentId types.AgentId.Insts.CoreCloneClone
+            map i hlt)
+        rw [hparentEq]; simp only [bind_tc_ok]
+        obtain ⟨kept1, hkept1Eq, hkept1⟩ := spec_imp_exists
+          (vecMapInsert_append_spec types.AgentId.Insts.CoreCloneClone
+            types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+            types.AgentId.Insts.CoreCloneClone kept child parent hcapk hfresh)
+        rw [hkept1Eq]
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        have hpair : map.entries.val[i.val]'hlt = (child, parent) := by
+          cases hpx : map.entries.val[i.val]'hlt with
+          | mk a b => simp_all
+        have hget : map.entries.val[i.val]? = some (child, parent) := by
+          rw [List.getElem?_eq_getElem hlt, hpair]
+        rw [hkept1, i2_post, List.take_add_one, hget, Option.toList_some]
+        have hcd : child ≠ dropped := decide_eq_true_eq.mp hbo
+        have hpk : removeKept dropped (child, parent) = true := by simp [removeKept, hcd]
+        simp [List.filter_append, hpk, ← hkept]
+      · rename_i hbo
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        have hget : map.entries.val[i.val]? = some (map.entries.val[i.val]'hlt) :=
+          List.getElem?_eq_getElem hlt
+        have hcd : child = dropped := not_not.mp (fun hc => hbo (decide_eq_true_eq.mpr hc))
+        have hpk : removeKept dropped (map.entries.val[i.val]'hlt) = false := by
+          simp only [removeKept, ← hchild, hcd, ne_eq, not_true_eq_false, decide_false]
+        have hfilt : List.filter (removeKept dropped) [map.entries.val[i.val]'hlt] = [] := by
+          simp [hpk]
+        rw [i2_post, List.take_add_one, hget, Option.toList_some, List.filter_append, ← hkept,
+          hfilt, List.append_nil]
+    case isFalse h =>
+      have heq' : i.val = map.entries.val.length := by scalar_tac
+      simp only [spec_ok]
+      simpa [heq', List.take_length] using hkept
+  · exact ⟨hi0, hkept0⟩
+
+/-- `agent_parent_drop_child map dropped` returns the entries of `map` whose *key* differs from
+    `dropped`, in order — provided `map` has unique keys. -/
+theorem agentParentDropChild_spec
+    (map : collections.VecMap types.AgentId types.AgentId) (dropped : types.AgentId)
+    (hnd : (map.entries.val.map Prod.fst).Nodup) :
+    transitions.agent_parent_drop_child map dropped ⦃ out =>
+      out.entries.val = map.entries.val.filter (removeKept dropped) ⦄ := by
+  unfold transitions.agent_parent_drop_child
+  simp only [collections.VecMap.new, bind_tc_ok]
+  exact agentParentDropChildLoop_spec map dropped hnd _ 0#usize (by scalar_tac) (by simp)
+
 end ArgusLean.Refinement
