@@ -51,7 +51,24 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `optionAgentId_ne_spec`; no root ⇒ no `sorryAx`/`AgentId.root`)
 * [ ] `invoke_start`
 * [ ] `invoke_complete`
-* [ ] `return_unendorsed`
+* [~] `return_unendorsed`   — FOUNDATION DONE, assembly TODO. Reusable building blocks proven +
+                               committed: in `Collections.lean` the leaf specs `vecSetUnionWith_spec`,
+                               `extendInto_spec` (last-match `vmsMemLast` write), `getSetOrEmpty_spec`,
+                               `vecMapKVecSetSetNonempty_spec` + `vecSetIsEmpty_spec`, plus
+                               `OverrideEntry`/`ConfLevel`/`BudgetLevel` eq/clone; in
+                               `ReturnUnendorsedFlow.lean` the oracle reads `flowMode_spec` (+`flowModeC`),
+                               `hasFlowOverride_spec`, `overrideConsumed_spec` (+`FlowKey`/`EgressKind`/
+                               `OverrideKey`/`FlowMode` eq/clone). REMAINING: the inner loop
+                               (`return_unendorsed_loop0_loop0`, per-level fold over `parent_flights`
+                               calling `gate_egress`) + outer loop (over `child_taint` levels) specs,
+                               an oracle-agreement relation `Rretu` (content-gate totality is the only
+                               opaque oracle to assume), and the inversion+refines assembly relating
+                               the loop accumulator's `denied`/`to_consume` to the abstract flow-gate
+                               guard + `override_used` write. The refinement direction is sound:
+                               kernel success (denied=false) is strictly stronger than the abstract
+                               guard (kernel ignores override at Inspect mode; abstract allows it), and
+                               `to_consume` matches the abstract `override_used` add-condition *under
+                               the guard*.
 * [ ] `sentinel_elevate_taint` — the flow-gate bridging foundation it needs (and `invoke_start` /
                                `return_*` reuse) is DONE in `Refinement/FlowBridging.lean`:
                                `flowDecision_spec` (3-way decision) + `gateEgress_spec` (egress fold)
