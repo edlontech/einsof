@@ -110,6 +110,12 @@ theorem flowMode_spec (bg : background.BackgroundTheory) (level : types.ConfLeve
   | none => rw [hL] at ho; subst ho; simp
   | some p => rw [hL] at ho; subst ho; simp
 
+/-- Equational form of `flowMode_spec`, for feeding `gateEgress_spec`'s `hfmOf`. -/
+theorem flowMode_eq (bg : background.BackgroundTheory) (level : types.ConfLevel)
+    (E : types.EgressKind) :
+    background.BackgroundTheory.flow_mode bg level E = .ok (flowModeC bg level E) := by
+  obtain ⟨fm, h1, h2⟩ := spec_imp_exists (flowMode_spec bg level E); rw [← h2]; exact h1
+
 /-! ## `has_flow_override` -/
 
 /-- `has_flow_override agent tool level` is membership of the `(agent, tool, level)` `OverrideEntry`
