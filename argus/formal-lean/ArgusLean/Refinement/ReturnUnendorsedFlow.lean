@@ -57,6 +57,35 @@ deriving instance DecidableEq for types.FlowKey
   simp only [types.OverrideKey.Insts.CoreCloneClone.clone, toolId_clone_spec, confLevel_clone_spec,
     bind_tc_ok]
 
+/-! ## `tool_metadata` -/
+
+/-- `EgressKind.clone` is the identity (nullary enum). -/
+@[simp] theorem egressKind_clone_spec (a : types.EgressKind) :
+    types.EgressKind.Insts.CoreCloneClone.clone a = .ok a := rfl
+
+/-- `ToolMetadata.clone` is the identity (every field's clone is). -/
+@[simp] theorem toolMetadata_clone_spec (m : background.ToolMetadata) :
+    background.ToolMetadata.Insts.CoreCloneClone.clone m = .ok m := by
+  obtain ⟨caps, eg, cf, ob, iss⟩ := m
+  simp only [background.ToolMetadata.Insts.CoreCloneClone.clone,
+    vecSetClone_spec capability.CapKind.Insts.CoreCloneClone capKind_clone_spec,
+    vecSetClone_spec types.EgressKind.Insts.CoreCloneClone egressKind_clone_spec,
+    confLevel_clone_spec, issuerId_clone_spec, bind_tc_ok]
+  rfl
+
+/-- The pure value of `tool_metadata`: the live (last) `tool`-keyed metadata, or `none`. -/
+def toolMetaC (bg : background.BackgroundTheory) (tool : types.ToolId) :
+    Option background.ToolMetadata :=
+  (vmLastEntry bg.tools.entries.val tool).map Prod.snd
+
+/-- `tool_metadata` computes `toolMetaC` (a last-match `VecMap.get_cloned`, clone is identity). -/
+theorem toolMetadata_spec (bg : background.BackgroundTheory) (tool : types.ToolId) :
+    background.BackgroundTheory.tool_metadata bg tool ⦃ o => o = toolMetaC bg tool ⦄ := by
+  unfold background.BackgroundTheory.tool_metadata
+  exact vecMapGetCloned_spec types.ToolId.Insts.CoreCloneClone
+    types.ToolId.Insts.CoreCmpPartialEqToolId toolId_eq_spec
+    background.ToolMetadata.Insts.CoreCloneClone toolMetadata_clone_spec bg.tools tool
+
 /-! ## `flow_mode` -/
 
 /-- The pure value of `flow_mode`: the live `(level, egress)` policy entry, defaulting to `Deny`. -/
