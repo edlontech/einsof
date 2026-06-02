@@ -81,6 +81,17 @@ instance : DecidableEq types.InstructionId := inferInstanceAs (DecidableEq Strin
     types.InstructionId.Insts.CoreCloneClone.clone a = .ok a := by
   simp only [types.InstructionId.Insts.CoreCloneClone.clone, string_clone_spec, bind_tc_ok]
 
+/-- `InvocationId.eq` inherits faithful decidable equality from `String.eq`. -/
+@[simp] theorem invocationId_eq_spec (a b : types.InvocationId) :
+    types.InvocationId.Insts.CoreCmpPartialEqInvocationId.eq a b = .ok (decide (a = b)) := by
+  unfold types.InvocationId.Insts.CoreCmpPartialEqInvocationId.eq
+  exact string_eq_spec a b
+
+/-- `InvocationId.clone` is the identity. -/
+@[simp] theorem invocationId_clone_spec (a : types.InvocationId) :
+    types.InvocationId.Insts.CoreCloneClone.clone a = .ok a := by
+  simp only [types.InvocationId.Insts.CoreCloneClone.clone, string_clone_spec, bind_tc_ok]
+
 /-! ## `CapKind` equality / clone
 
 Unlike the `String`-backed ids, `CapKind` is a concrete nullary enum: its extracted `eq` is a
@@ -1392,5 +1403,85 @@ theorem vecMapKVecSetSetContains_spec {K T : Type} [DecidableEq K] [DecidableEq 
     have hpeq : (key, p.2) = p := by rw [← hp1]
     rw [hpeq]
     exact vmLastEntry_mem vm.entries.val key p hL
+
+/-! ## `BudgetLevel` equality / clone
+
+Like `CapKind`, `BudgetLevel` is a concrete nullary enum: extracted `eq` is a discriminant
+comparison and `clone` is the identity, so both specs are *proved* (no extractor trust). Consumed
+by the budget reads/writes (`budget`, `budget_exhausted`, `debit_budget`) the return actions use. -/
+
+deriving instance DecidableEq for types.BudgetLevel
+
+/-- `BudgetLevel.eq` is faithful decidable equality (discriminant comparison on a nullary enum). -/
+@[simp] theorem budgetLevel_eq_spec (a b : types.BudgetLevel) :
+    types.BudgetLevel.Insts.CoreCmpPartialEqBudgetLevel.eq a b = .ok (decide (a = b)) := by
+  cases a <;> cases b <;>
+    simp [types.BudgetLevel.Insts.CoreCmpPartialEqBudgetLevel.eq, types.BudgetLevel.read_discriminant]
+
+/-- `BudgetLevel.clone` is the identity. -/
+@[simp] theorem budgetLevel_clone_spec (a : types.BudgetLevel) :
+    types.BudgetLevel.Insts.CoreCloneClone.clone a = .ok a := rfl
+
+/-! ## `VecSet.is_empty` and last-match nested membership
+
+`set_nonempty` / `get_set_or_empty` (the in-flight / taint reads the return actions perform) all
+resolve a key through `VecMap.get_cloned` — i.e. the **last** matching entry — so their faithful
+abstract image is the *last-match* nested membership `vmsMemLast`, the get-style counterpart of the
+raw-union `vmsMem`. (They coincide when keys are unique; the get-style view needs no key-uniqueness
+side condition and is exactly what the kernel's reads compute.) -/
+
+/-- Last-match nested membership: the live (last) `k`-keyed entry's set holds `v`. The get-style
+    counterpart of `vmsMem` — what `set_nonempty` / `get_set_or_empty` actually observe. -/
+def vmsMemLast {K T : Type} [DecidableEq K]
+    (vm : collections.VecMap K (collections.VecSet T)) (k : K) (v : T) : Prop :=
+  ∃ vs, vmLastEntry vm.entries.val k = some (k, vs) ∧ v ∈ vs.items.val
+
+/-- `VecSet.is_empty` is faithful emptiness of the underlying list. -/
+theorem vecSetIsEmpty_spec {T : Type} (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (vs : collections.VecSet T) :
+    collections.VecSet.is_empty cloneT eqT vs ⦃ b => b = true ↔ vs.items.val = [] ⦄ := by
+  unfold collections.VecSet.is_empty
+  simp only [spec_ok, decide_eq_true_eq]
+  rw [← List.length_eq_zero_iff]
+  constructor
+  · intro h; scalar_tac
+  · intro h; scalar_tac
+
+/-- `set_nonempty key`, characterised exactly: it returns `true` iff the live `key`-keyed set holds
+    some element (last-match nested membership). The `∀`-negation of the `false` branch is the
+    `child`-has-no-in-flight guard the return actions discharge. -/
+theorem vecMapKVecSetSetNonempty_spec {K T : Type} [DecidableEq K] [DecidableEq T]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heqK : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (hcloneT : ∀ x : T, cloneT.clone x = .ok x)
+    (vm : collections.VecMap K (collections.VecSet T)) (key : K) :
+    collections.VecMapKVecSet.set_nonempty cloneK eqK cloneT eqT vm key ⦃ b =>
+      b = true ↔ ∃ v, vmsMemLast vm key v ⦄ := by
+  unfold collections.VecMapKVecSet.set_nonempty
+  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+    (vecMapGetCloned_spec cloneK eqK heqK (collections.VecSet.Insts.CoreCloneClone cloneT)
+      (vecSetClone_spec cloneT hcloneT) vm key)
+  rw [hoEq]; simp only [bind_tc_ok]
+  cases hL : vmLastEntry vm.entries.val key with
+  | none =>
+    rw [hL] at ho; simp only [Option.map_none] at ho; subst ho
+    simp only [spec_ok, Bool.false_eq_true, false_iff, not_exists]
+    rintro v ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
+  | some p =>
+    rw [hL] at ho; simp only [Option.map_some] at ho; subst ho
+    have hp1 : p.1 = key := vmLastEntry_fst _ _ _ hL
+    have hLk : vmLastEntry vm.entries.val key = some (key, p.2) := by rw [hL, ← hp1]
+    obtain ⟨b, hbEq, hbIff⟩ := spec_imp_exists (vecSetIsEmpty_spec cloneT eqT p.2)
+    simp only [hbEq, bind_tc_ok, spec_ok, decide_eq_true_eq]
+    rw [hbIff]
+    constructor
+    · intro hne
+      obtain ⟨v, hv⟩ := List.exists_mem_of_ne_nil _ hne
+      exact ⟨v, p.2, hLk, hv⟩
+    · rintro ⟨v, vs, hvs, hv⟩
+      rw [hLk, Option.some_inj, Prod.mk.injEq] at hvs
+      obtain ⟨_, rfl⟩ := hvs
+      exact List.ne_nil_of_mem hv
 
 end ArgusLean.Refinement

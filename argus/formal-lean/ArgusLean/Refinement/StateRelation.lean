@@ -241,4 +241,107 @@ theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
   rw [h6Eq]; simp only [bind_tc_ok]
   exact ⟨rfl, rfl, rfl, rfl, rfl, h0, h1, h2, h3, h4, h5, h6⟩
 
+/-! ## Budget reads/writes: `budget`, `budget_exhausted`, `debit_budget`
+
+`return_endorsed` debits the recipient's budget. The kernel reads the budget through `VecMap.get`
+(last-match, absent ⇒ full = `L5`) and writes it back via `VecMap.insert` (last-match overwrite or
+append). The faithful state-relation view of `agent_budget` is therefore the *get-style* read
+`budgetReadC` (none ⇒ `L5`), tied to the abstract level through the bijection `budgetC`. This is the
+read the kernel literally computes — it needs no key-uniqueness side condition (the removal actions'
+raw-membership budget clause happens to work only because *filter* drops every duplicate key; an
+insert/overwrite does not, so the get-style view is the right one here, and reconciling the two is
+part of the future unified-`R` task). -/
+
+/-- The pure debit map on `BudgetLevel`: one saturating step down (`L5→L4→…→L1→Exhausted`). -/
+def debitC : types.BudgetLevel → types.BudgetLevel
+  | .Exhausted => .Exhausted
+  | .L1 => .Exhausted
+  | .L2 => .L1
+  | .L3 => .L2
+  | .L4 => .L3
+  | .L5 => .L4
+
+/-- The extracted `BudgetLevel.debit` is total and equals `debitC`. -/
+@[simp] theorem budgetLevel_debit_spec (b : types.BudgetLevel) :
+    types.BudgetLevel.debit b = .ok (debitC b) := by cases b <;> rfl
+
+/-- Get-style budget read: the live (last) `G`-keyed budget level, defaulting to full (`L5`) when
+    `G` is absent — exactly what the kernel's `KernelState.budget` computes. -/
+def budgetReadC (vm : collections.VecMap types.AgentId types.BudgetLevel) (G : types.AgentId) :
+    types.BudgetLevel :=
+  match vmLastEntry vm.entries.val G with
+  | none => types.BudgetLevel.L5
+  | some p => p.2
+
+/-- `budgetC` is injective (a constructor-for-constructor map between the two six-element lattices),
+    so `budgetReadC vm G = budgetC L` pins `L` uniquely. -/
+theorem budgetC_injective : Function.Injective budgetC := by
+  intro a b h; cases a <;> cases b <;> simp_all [budgetC]
+
+/-- `KernelState.budget` computes the get-style read `budgetReadC`. -/
+theorem budget_spec (st : state.KernelState) (agent : types.AgentId) :
+    state.KernelState.budget st agent ⦃ b => b = budgetReadC st.agent_budget agent ⦄ := by
+  unfold state.KernelState.budget
+  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+    (vecMapGet_spec types.AgentId.Insts.CoreCloneClone types.AgentId.Insts.CoreCmpPartialEqAgentId
+      agentId_eq_spec types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent)
+  rw [hoEq]; simp only [bind_tc_ok]
+  unfold budgetReadC
+  cases hL : vmLastEntry st.agent_budget.entries.val agent with
+  | none => rw [hL] at ho; subst ho; simp [types.BudgetLevel.full]
+  | some p => rw [hL] at ho; subst ho; simp
+
+/-- `budget_exhausted` is `budgetReadC = Exhausted`. -/
+theorem budgetExhausted_spec (st : state.KernelState) (agent : types.AgentId) :
+    state.KernelState.budget_exhausted st agent ⦃ b =>
+      b = true ↔ budgetReadC st.agent_budget agent = types.BudgetLevel.Exhausted ⦄ := by
+  unfold state.KernelState.budget_exhausted
+  obtain ⟨bl, hblEq, hbl⟩ := spec_imp_exists (budget_spec st agent)
+  rw [hblEq]; simp only [bind_tc_ok, budgetLevel_eq_spec, spec_ok, decide_eq_true_eq, hbl]
+
+/-- `debit_budget agent` debits `agent`'s budget by one level and frames everything else: the
+    post-state's get-style read maps `agent` to `debitC` of its old level, all other agents
+    unchanged. The capacity bound feeds the underlying `VecMap.insert`. -/
+theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
+    (hcap : st.agent_budget.entries.val.length < Usize.max) :
+    state.KernelState.debit_budget st agent ⦃ st1 =>
+      st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
+      st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
+      st1.taint_levels = st.taint_levels ∧ st1.gh_taint_received = st.gh_taint_received ∧
+      st1.override_used = st.override_used ∧
+      (∀ G, budgetReadC st1.agent_budget G =
+        if G = agent then debitC (budgetReadC st.agent_budget agent)
+        else budgetReadC st.agent_budget G) ⦄ := by
+  unfold state.KernelState.debit_budget
+  obtain ⟨bl, hblEq, hbl⟩ := spec_imp_exists (budget_spec st agent)
+  rw [hblEq]; simp only [bind_tc_ok, budgetLevel_debit_spec, agentId_clone_spec]
+  obtain ⟨vm, hvmEq, hvm⟩ := spec_imp_exists
+    (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
+  rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
+  refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, fun G => ?_⟩
+  show budgetReadC vm G = _
+  by_cases hG : G = agent
+  · have hread : budgetReadC vm G = debitC bl := by unfold budgetReadC; rw [hvm G, if_pos hG]
+    rw [hread, hbl, hG]; simp
+  · have hread : budgetReadC vm G = budgetReadC st.agent_budget G := by
+      unfold budgetReadC; rw [hvm G, if_neg hG]
+    rw [hread, if_neg hG]
+
+/-- State relation for the fields `return_endorsed` touches: the named-individual correspondence
+    pinning the abstract `cap_declassify` to the concrete `CapKind.Declassify`; the two active gates
+    (`vsMem`); the parent edge read get-style (`vmLastEntry`, like the other tree actions); the
+    `child`-has-no-in-flight gate read through the **last-match** nested membership `vmsMemLast` (what
+    `set_nonempty` observes); the `Declassify` capability via the raw nested `vmsMem` (the forward
+    `set_contains` view, like `grant_capability`); and `agent_budget` under the get-style `budgetReadC`
+    convention tied to the abstract lattice through `budgetC`. -/
+def Rret (st : state.KernelState) (a : AbsState) : Prop :=
+  a.cap_declassify = capability.CapKind.Declassify ∧
+  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
+  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
+  (∀ ag inv, a.in_flight ag inv ↔ vmsMemLast st.in_flight ag inv) ∧
+  (∀ N C, a.agent_cap N C ↔ vmsMem st.agent_cap N C) ∧
+  (∀ G L, a.agent_budget G L ↔ budgetReadC st.agent_budget G = budgetC L)
+
 end ArgusLean.Refinement

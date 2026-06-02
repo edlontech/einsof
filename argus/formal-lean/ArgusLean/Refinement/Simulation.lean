@@ -5,6 +5,7 @@ import ArgusLean.Refinement.Actions.CascadeRevoke
 import ArgusLean.Refinement.Actions.Revoke
 import ArgusLean.Refinement.Actions.GrantCapability
 import ArgusLean.Refinement.Actions.SentinelRefreshBudget
+import ArgusLean.Refinement.Actions.ReturnEndorsed
 
 /-! # Refinement — simulation bundle
 
@@ -38,9 +39,18 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `Rrefresh`, the *unguarded* `Rdel`-style budget clause: `agent` stays
                                active, so delete-then-read-as-`bl5` is the observable, faithful image.
                                Reuses `set_contains` + `vecMapRemove_spec`; no new axioms, no root)
+* [x] `return_endorsed`      — Actions/ReturnEndorsed.lean (capability-gated, recipient-budget-charged
+                               declassification; budget-only write. Refines against `Rret`, whose
+                               budget clause is the get-style `budgetReadC` convention — the read the
+                               kernel's `budget`/`debit_budget` literally compute — tied to the
+                               abstract lattice through the injective `budgetC`. New shared bridging:
+                               `budget_spec` / `budgetExhausted_spec` / `debitBudget_spec` (budget
+                               reads/writes), `vecMapKVecSetSetNonempty_spec` + `vmsMemLast` +
+                               `vecSetIsEmpty_spec` (the `set_nonempty` in-flight gate), proved
+                               `BudgetLevel` eq/clone/debit (`debitC`). No new axioms beyond
+                               `optionAgentId_ne_spec`; no root ⇒ no `sorryAx`/`AgentId.root`)
 * [ ] `invoke_start`
 * [ ] `invoke_complete`
-* [ ] `return_endorsed`
 * [ ] `return_unendorsed`
 * [ ] `sentinel_elevate_taint` — the flow-gate bridging foundation it needs (and `invoke_start` /
                                `return_*` reuse) is DONE in `Refinement/FlowBridging.lean`:
