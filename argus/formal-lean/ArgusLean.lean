@@ -6,3 +6,5 @@ import ArgusLean.Smoke
 import ArgusLean.Refinement.Simulation
 -- Flow-gate bridging foundation (flow_decision + gate_egress) for the egress-gated actions.
 import ArgusLean.Refinement.FlowBridging
+-- Flow-oracle reads (flow_mode / has_flow_override / override_consumed) for the egress-gated actions.
+import ArgusLean.Refinement.ReturnUnendorsedFlow
