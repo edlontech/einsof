@@ -1,19 +1,23 @@
 import ArgusLean.Refinement.StateRelation
 
-/-! # Refinement — `delegate` (9/10 fields)
+/-! # Refinement — `delegate` (10/10 fields)
 
 `delegate grantor grantee` is the largest structural action: three gates (grantor active,
 grantee inactive, grantee ≠ root) followed by an `agent_active` insert, an `agent_parent`
 rewrite (`agent_parent_drop_endpoint` + insert), an empty-cap insert, and a
 `clear_agent_state` wipe of the grantee from seven per-agent maps.
 
-This proves the simulation against `Rdel`, the slice over the **nine** fields whose abstract
-post-image is recoverable without a key-uniqueness invariant. The tenth, `agent_parent`, is
-genuinely *not* provable here: `agent_parent_drop_endpoint` re-inserts entries under
-`VecMap` last-match semantics, which disagrees with the abstract `agent_parent` clause unless
-`st.agent_parent` has unique keys. That field is deferred to the unified `R` (where the
-well-formedness invariant lives); here the witness simply sets it to the abstract clause to
-satisfy `next`, and `Rdel` does not constrain it. -/
+This proves the simulation against `Rdel`, the slice over **all ten** mutable fields. The tenth,
+`agent_parent`, is a *functional* (parent) edge map, so its get-style reading is faithful only
+when keys are unique; `Rdel` therefore carries that key-uniqueness as the `vmNodupKeys`
+invariant. `delegate` both consumes it (to match the abstract post-image — without it the
+last-match rebuild disagrees, the counterexample the Plausible harness pins) and re-establishes
+it: `agent_parent_drop_endpoint` rebuilds from an *empty* map, so under unique input keys every
+insert is an append, the result is the plain `parentKept` filter, and the fresh
+`(grantee, grantor)` edge appends a key that was filtered out — keeping keys unique. The bridging
+machinery (`agentParentDropEndpoint_spec`, `vecMapInsert_append_spec`, `parentPost_vmLast`,
+`parentPost_nodupKeys`) lives in `Collections.lean`; no new axioms beyond the `register_tool`
+exemplar's `String`/`AgentId` extractor residuals (+ the pre-existing `AgentId.root` baseline). -/
 
 namespace ArgusLean.Refinement
 
@@ -23,15 +27,20 @@ open Aeneas.Std.WP
 set_option maxHeartbeats 2000000
 
 /-- Inversion lemma for a successful `delegate` step. Peels the three gates and decodes the
-    post-state's nine `Rdel` fields: the `agent_active` insert (`hActive`), the empty-cap
-    insert under last-match get-semantics (`hCap` + the inserted set is empty), and the seven
-    `clear_agent_state` removes as key-filtered entry lists. The `agent_parent` rewrite is only
-    stepped over (success forces `.ok`), never characterised. -/
+    post-state's ten `Rdel` fields: the `agent_active` insert (`hActive`), the empty-cap
+    insert under last-match get-semantics (`hCap` + the inserted set is empty), the seven
+    `clear_agent_state` removes as key-filtered entry lists, and (`hParent`) the `agent_parent`
+    rewrite as the kept (filtered) edges followed by the fresh `(grantee, grantor)` edge. The
+    last needs key-uniqueness of the pre-state (`hNodupP`): `agent_parent_drop_endpoint` rebuilds
+    from an empty map, so under unique keys every insert is an append and the result is the plain
+    filter; the final `insert grantee grantor` then appends (grantee was filtered out). -/
 theorem delegate_ok_inv
     (st : state.KernelState) (bg : background.BackgroundTheory)
     (grantor grantee : types.AgentId)
     (hcapA : st.agent_active.items.val.length < Usize.max)
     (hcapC : st.agent_cap.entries.val.length < Usize.max)
+    (hcapP : st.agent_parent.entries.val.length < Usize.max)
+    (hNodupP : vmNodupKeys st.agent_parent)
     (st' : state.KernelState) (ev : event.KernelAction)
     (hok : transitions.delegate st bg grantor grantee = .ok (.Ok (st', ev))) :
     ∃ (vs1 : collections.VecSet capability.CapKind) (rootVal : types.AgentId),
@@ -51,7 +60,9 @@ theorem delegate_ok_inv
       st'.agent_instruction.entries.val =
         st.agent_instruction.entries.val.filter (removeKept grantee) ∧
       st'.override_used.entries.val = st.override_used.entries.val.filter (removeKept grantee) ∧
-      st'.agent_budget.entries.val = st.agent_budget.entries.val.filter (removeKept grantee) := by
+      st'.agent_budget.entries.val = st.agent_budget.entries.val.filter (removeKept grantee) ∧
+      st'.agent_parent.entries.val =
+        st.agent_parent.entries.val.filter (parentKept grantee) ++ [(grantee, grantor)] := by
   simp only [transitions.delegate] at hok
   -- Gate 1: grantor active.
   obtain ⟨b, hbEq, hbIff⟩ :=
@@ -90,24 +101,23 @@ theorem delegate_ok_inv
     spec_imp_exists (vecSetInsert_spec types.AgentId.Insts.CoreCloneClone types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active grantee hcapA)
   rw [hvsEq] at hok
   simp only [bind_tc_ok] at hok
-  -- agent_parent rewrite (deferred): just force `.ok`.
-  obtain ⟨vm, hvmEq⟩ : ∃ m, transitions.agent_parent_drop_endpoint st.agent_parent grantee = .ok m := by
-    cases h : transitions.agent_parent_drop_endpoint st.agent_parent grantee with
-    | ok m => exact ⟨m, rfl⟩
-    | fail e => rw [h] at hok; simp at hok
-    | div => rw [h] at hok; simp at hok
+  -- agent_parent rewrite: drop-endpoint rebuilds the filtered edges (unique keys ⇒ each insert
+  -- appends), then the fresh `(grantee, grantor)` edge appends (grantee was filtered out).
+  obtain ⟨vm, hvmEq, hvmChar⟩ := spec_imp_exists
+    (agentParentDropEndpoint_spec st.agent_parent grantee hNodupP)
   rw [hvmEq] at hok
   simp only [bind_tc_ok] at hok
-  obtain ⟨vm1, hvm1Eq⟩ : ∃ m,
-      collections.VecMap.insert types.AgentId.Insts.CoreCloneClone
-        types.AgentId.Insts.CoreCmpPartialEqAgentId types.AgentId.Insts.CoreCloneClone
-        vm grantee grantor = .ok m := by
-    cases h : collections.VecMap.insert types.AgentId.Insts.CoreCloneClone
-        types.AgentId.Insts.CoreCmpPartialEqAgentId types.AgentId.Insts.CoreCloneClone
-        vm grantee grantor with
-    | ok m => exact ⟨m, rfl⟩
-    | fail e => rw [h] at hok; simp at hok
-    | div => rw [h] at hok; simp at hok
+  have hvmAbsent : ∀ p ∈ vm.entries.val, p.1 ≠ grantee := by
+    rw [hvmChar]; intro p hp
+    have hp' := List.mem_filter.mp hp
+    simp only [parentKept, decide_eq_true_eq] at hp'
+    exact hp'.2.1
+  have hvmCap : vm.entries.val.length < Usize.max := by
+    rw [hvmChar]; exact lt_of_le_of_lt (List.length_filter_le _ _) hcapP
+  obtain ⟨vm1, hvm1Eq, hvm1Char⟩ := spec_imp_exists
+    (vecMapInsert_append_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      types.AgentId.Insts.CoreCloneClone vm grantee grantor hvmCap hvmAbsent)
   rw [hvm1Eq] at hok
   simp only [collections.VecSet.new, bind_tc_ok] at hok
   -- empty-cap insert
@@ -128,7 +138,8 @@ theorem delegate_ok_inv
   refine ⟨{ items := alloc.vec.Vec.new capability.CapKind }, rootVal, hbIff.mp hb,
     (by rw [← hb1Iff, hb1]; simp), hrootEq, (fun h => by simp [hb2Iff.mpr h] at hb2), rfl,
     (fun y => by rw [hActiveF]; exact hvsMem y), (fun j => by rw [hCapF]; exact hvm2Mem j),
-    hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hBudget⟩
+    hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hBudget,
+    (by rw [hParentF]; exact hvm1Char.trans (by rw [hvmChar]))⟩
 
 /-- Forward simulation: a successful `delegate` step is matched by the abstract action,
     preserving `Rdel` (the nine non-`agent_parent` fields). The witness sets `agent_parent` to
@@ -139,15 +150,16 @@ theorem delegate_refines
     (hR : Rdel st a)
     (hcapA : st.agent_active.items.val.length < Usize.max)
     (hcapC : st.agent_cap.entries.val.length < Usize.max)
+    (hcapP : st.agent_parent.entries.val.length < Usize.max)
     (st' : state.KernelState) (ev : event.KernelAction)
     (hok : transitions.delegate st bg grantor grantee = .ok (.Ok (st', ev))) :
     ∃ a', (Tzimtzum.delegate grantor grantee).guard a ∧
           (Tzimtzum.delegate grantor grantee).next a a' ∧ Rdel st' a' := by
   obtain ⟨hRroot, hRactive, hRcap, hRinstr, hRinflight, hRtaint, hRghinv, hRghrec,
-    hRoverride, hRbudget⟩ := hR
+    hRoverride, hRbudget, hRparent, hRnodup⟩ := hR
   obtain ⟨vs1, rootVal, hgrantor, hgrantee, hrootEq, hgrne, hvs1empty, hActive, hCap,
-    hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hBudget⟩ :=
-    delegate_ok_inv st bg grantor grantee hcapA hcapC st' ev hok
+    hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hBudget, hParent⟩ :=
+    delegate_ok_inv st bg grantor grantee hcapA hcapC hcapP hRnodup st' ev hok
   have hrootId : a.root_agent = rootVal := by rw [hRroot] at hrootEq; exact Result.ok.inj hrootEq
   refine ⟨{ a with
       agent_active := fun A => a.agent_active A ∨ A = grantee
@@ -171,7 +183,7 @@ theorem delegate_refines
   · -- next
     simp [Tzimtzum.delegate]
   · -- Rdel st' a'
-    refine ⟨hRroot, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨hRroot, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · -- agent_active
       intro x
       show (a.agent_active x ∨ x = grantee) ↔ vsMem st'.agent_active x
@@ -247,6 +259,18 @@ theorem delegate_refines
             · exact Or.inl ((mem_filter_removeKept _ _ _ _).mpr ⟨hmem, hG⟩)
             · exact Or.inr ⟨fun bl hc => hab bl ((mem_filter_removeKept _ _ _ _).mp hc).1, h5⟩
         rw [hL, hR]
+    · -- agent_parent (get-based, faithful under the carried key-uniqueness invariant)
+      have hndP : (st.agent_parent.entries.val.map Prod.fst).Nodup := hRnodup
+      intro C P
+      show ((C = grantee ∧ P = grantor) ∨ (a.agent_parent C P ∧ C ≠ grantee ∧ P ≠ grantee)) ↔
+        vmLastEntry st'.agent_parent.entries.val C = some (C, P)
+      rw [hParent, parentPost_vmLast _ grantee grantor C P hndP, ← hRparent C P]
+    · -- agent_parent keys stay unique (delegate rebuilds from an empty map)
+      have hndP : (st.agent_parent.entries.val.map Prod.fst).Nodup := hRnodup
+      show vmNodupKeys st'.agent_parent
+      unfold vmNodupKeys
+      rw [hParent]
+      exact parentPost_nodupKeys _ grantee grantor hndP
 
 end ArgusLean.Refinement
 

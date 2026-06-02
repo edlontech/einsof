@@ -12,10 +12,11 @@ Scope: this tests the **abstraction layer** only — the list-level meaning of t
 collections. The Aeneas `Result`-monad / loop layer is separately discharged by the `…_spec`
 lemmas, so every open "is this clause even true" question lives here, at the list level.
 
-The headline result reproduces, mechanically, the documented reason `delegate`'s
-`agent_parent` field is deferred to the unified `R`: the get-style (last-match) bridging clause
-disagrees with the abstract post-image under duplicate keys, and agrees once a key-uniqueness
-invariant is assumed.
+The headline result is the falsification that drove the `delegate` `agent_parent` proof
+strategy: the get-style (last-match) bridging clause disagrees with the abstract post-image
+under duplicate keys (Check 2), and agrees once a key-uniqueness invariant is assumed (Check 3).
+Check 3 is now discharged for real — `Rdel` carries that invariant as `vmNodupKeys` and
+`parentPost_vmLast` proves the agreement (`delegate` is 10/10).
 
 Not part of the default build. Run explicitly:
   lake env lean ArgusLean/Refinement/PlausibleChecks.lean

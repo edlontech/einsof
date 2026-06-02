@@ -14,9 +14,10 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
 
 * [x] `register_tool`        — Actions/RegisterTool.lean (exemplar / template)
 * [x] `load_instruction`     — Actions/LoadInstruction.lean (nested `agent_instruction` write)
-* [x] `delegate`             — Actions/Delegate.lean (9/10 fields; `agent_parent` deferred —
-                               needs key-uniqueness — plus the `VecMap.remove`/`insert`
-                               get-machinery + `clear_agent_state` spec)
+* [x] `delegate`             — Actions/Delegate.lean (10/10 fields; `agent_parent` closed via the
+                               `vmNodupKeys` key-uniqueness invariant carried by `Rdel` +
+                               `agent_parent_drop_endpoint` rebuild spec; plus the
+                               `VecMap.remove`/`insert` get-machinery + `clear_agent_state` spec)
 * [ ] `grant_capability`
 * [ ] `revoke`
 * [ ] `cascade_revoke`

@@ -612,4 +612,266 @@ theorem vecMapInsert_vmLast_spec {K V : Type} [DecidableEq K]
     rw [v_post]
     exact vmLastEntry_append_nomatch _ key val hno j
 
+/-! ## `agent_parent_drop_endpoint` bridging
+
+`agent_parent` is a `VecMap AgentId AgentId` carrying a *functional* parent edge, so its
+get-style reading needs the keys to be unique. The extracted `agent_parent_drop_endpoint`
+rebuilds the map from an empty `VecMap` via `VecMap.insert`, so (a) its output keys are unique
+by construction and (b) under a unique-key *input* every insert lands on a fresh key, i.e. is an
+append — making the output exactly the input filtered to entries whose child and parent both
+differ from the dropped agent. These two pure lemmas are the only place key-uniqueness is used;
+they discharge, in a real proof, the deferral the Plausible harness pinned to `Nodup`. -/
+
+/-- In a `Nodup` list the element at index `i` cannot occur earlier: it is the head of the
+    suffix `drop i`, which is disjoint from the prefix `take i`. The freshness fact that turns
+    each rebuild insert into an append. -/
+theorem getElem_not_mem_take {α : Type} {xs : List α} (h : xs.Nodup)
+    {i : Nat} (hi : i < xs.length) : xs[i] ∉ xs.take i := by
+  have hND : (xs.take i ++ xs.drop i).Nodup := by rw [List.take_append_drop]; exact h
+  have hdisj := (List.nodup_append.mp hND).2.2
+  have hmem : xs[i] ∈ xs.drop i := by
+    rw [List.drop_eq_getElem_cons hi]; exact List.mem_cons_self
+  exact fun hmt => hdisj _ hmt _ hmem rfl
+
+/-- Under unique keys the get-style `vmLastEntry` read coincides with plain membership: the last
+    (hence only) `C`-keyed entry is `some (C, P)` exactly when `(C, P)` is in the list. The bridge
+    that turns the get-style `agent_parent` clause into the membership facts the rewrite produces. -/
+theorem vmLastEntry_nodup {K V : Type} [DecidableEq K] (l : List (K × V)) (C : K) (P : V)
+    (hnd : (l.map Prod.fst).Nodup) :
+    vmLastEntry l C = some (C, P) ↔ (C, P) ∈ l := by
+  induction l with
+  | nil => simp [vmLastEntry]
+  | cons hd tl ih =>
+    obtain ⟨k, v⟩ := hd
+    rw [List.map_cons, List.nodup_cons] at hnd
+    obtain ⟨hknotin, hndtl⟩ := hnd
+    have hfilcons : ((k, v) :: tl).filter (vmKeyEq C) =
+        if k = C then (k, v) :: tl.filter (vmKeyEq C) else tl.filter (vmKeyEq C) := by
+      by_cases hk : k = C <;> simp [vmKeyEq, hk]
+    simp only [vmLastEntry] at ih ⊢
+    rw [hfilcons]
+    by_cases hk : k = C
+    · subst hk
+      have htlfil : tl.filter (vmKeyEq k) = [] := by
+        apply List.filter_eq_nil_iff.mpr
+        intro p hp
+        simp only [vmKeyEq, decide_eq_true_eq]
+        exact fun hpk => hknotin (hpk ▸ List.mem_map.mpr ⟨p, hp, rfl⟩)
+      have hnotin' : (k, P) ∉ tl := fun hw => hknotin (List.mem_map.mpr ⟨(k, P), hw, rfl⟩)
+      rw [if_pos rfl, htlfil, List.getLast?_singleton, List.mem_cons]
+      grind
+    · rw [if_neg hk, ih hndtl, List.mem_cons]
+      have hne : (C, P) ≠ (k, v) := fun h => hk (congrArg Prod.fst h).symm
+      grind
+
+/-- `VecMap.insert` on a key absent from the map appends `(key, val)`. The list-level form the
+    rebuild needs: starting from an empty map (and under unique input keys), every insert lands
+    on a fresh key, so the rebuilt list is exactly the kept entries in order. -/
+theorem vecMapInsert_append_spec {K V : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneV : core.clone.Clone V)
+    (vm : collections.VecMap K V) (key : K) (val : V)
+    (hcap : vm.entries.val.length < Usize.max)
+    (habsent : ∀ p ∈ vm.entries.val, p.1 ≠ key) :
+    collections.VecMap.insert cloneK eqK cloneV vm key val ⦃ vm' =>
+      vm'.entries.val = vm.entries.val ++ [(key, val)] ⦄ := by
+  unfold collections.VecMap.insert
+  have hinv0 : lastMatchInv vm.entries.val key (alloc.vec.Vec.len vm.entries).val (0#usize).val := by
+    left; exact ⟨by scalar_tac, fun k hk => absurd hk (by scalar_tac)⟩
+  obtain ⟨idx1, hloopEq, hlmi⟩ := spec_imp_exists
+    (vecMapInsertLoop_spec eqK heq vm.entries key (alloc.vec.Vec.len vm.entries) 0#usize
+      (by scalar_tac) hinv0)
+  simp only [hloopEq, bind_tc_ok]
+  have hidxlen : idx1.val = vm.entries.val.length := by
+    rcases hlmi with ⟨hlen, _⟩ | ⟨_, ⟨p, hp, hpk⟩, _⟩
+    · exact hlen
+    · obtain ⟨h1, h2⟩ := List.getElem?_eq_some_iff.mp hp
+      exact absurd hpk (habsent p (h2 ▸ List.getElem_mem h1))
+  split
+  case isTrue hcond =>
+    exfalso
+    have hlt : idx1.val < vm.entries.val.length := by scalar_tac
+    omega
+  case isFalse hcond =>
+    step*
+
+/-- The boolean "keep this edge" matcher of `agent_parent_drop_endpoint`: neither the child
+    (key) nor the parent (value) is the dropped agent. -/
+abbrev parentKept {K : Type} [DecidableEq K] (dropped : K) : K × K → Bool :=
+  fun p => decide (p.1 ≠ dropped ∧ p.2 ≠ dropped)
+
+/-- `VecMap.key_at self i` reads the `i`-th entry's key. -/
+theorem vecMapKeyAt_spec {K V : Type}
+    (cK : core.clone.Clone K) (eK : core.cmp.PartialEq K K) (cV : core.clone.Clone V)
+    (self : collections.VecMap K V) (i : Usize) (hi : i.val < self.entries.val.length) :
+    collections.VecMap.key_at cK eK cV self i ⦃ k => k = (self.entries.val[i.val]'hi).1 ⦄ := by
+  unfold collections.VecMap.key_at
+  step as ⟨t, t1, he⟩
+  simp [← he]
+
+/-- `VecMap.val_at self i` reads the `i`-th entry's value. -/
+theorem vecMapValAt_spec {K V : Type}
+    (cK : core.clone.Clone K) (eK : core.cmp.PartialEq K K) (cV : core.clone.Clone V)
+    (self : collections.VecMap K V) (i : Usize) (hi : i.val < self.entries.val.length) :
+    collections.VecMap.val_at cK eK cV self i ⦃ v => v = (self.entries.val[i.val]'hi).2 ⦄ := by
+  unfold collections.VecMap.val_at
+  step as ⟨t, t1, he⟩
+  simp [← he]
+
+/-- The key at index `i` of a unique-keyed pair list does not occur among the keys of the prefix
+    `take i`. Specialises `getElem_not_mem_take` to the projected key list. -/
+theorem fst_getElem_not_mem_map_take {α β : Type} (l : List (α × β)) (i : Nat) (hi : i < l.length)
+    (hnd : (l.map Prod.fst).Nodup) : (l[i]'hi).1 ∉ (l.take i).map Prod.fst := by
+  have h1 : (l.map Prod.fst)[i]'(by simpa using hi) ∉ (l.map Prod.fst).take i :=
+    getElem_not_mem_take hnd (by simpa using hi)
+  rw [List.getElem_map] at h1
+  rwa [← List.map_take] at h1
+
+set_option maxRecDepth 8000 in
+/-- Loop spec for `agent_parent_drop_endpoint`. With the accumulator already holding the kept
+    entries of the scanned prefix, the loop returns the kept entries of the whole list. Unique
+    input keys make every rebuild insert land on a fresh key (an append), so the accumulator
+    stays exactly the filtered prefix. -/
+theorem agentParentDropEndpointLoop_spec
+    (map : collections.VecMap types.AgentId types.AgentId) (dropped : types.AgentId)
+    (hnd : (map.entries.val.map Prod.fst).Nodup)
+    (kept : collections.VecMap types.AgentId types.AgentId) (i0 : Usize)
+    (hi0 : i0.val ≤ map.entries.val.length)
+    (hkept0 : kept.entries.val = (map.entries.val.take i0.val).filter (parentKept dropped)) :
+    transitions.agent_parent_drop_endpoint_loop map dropped kept i0 ⦃ out =>
+      out.entries.val = map.entries.val.filter (parentKept dropped) ⦄ := by
+  unfold transitions.agent_parent_drop_endpoint_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => map.entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ map.entries.val.length ∧
+        p.1.entries.val = (map.entries.val.take p.2.val).filter (parentKept dropped))
+  · rintro ⟨kept, i⟩ ⟨hile, hkept⟩
+    simp only [transitions.agent_parent_drop_endpoint_loop.body, collections.VecMap.len,
+      bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : i.val < map.entries.val.length := by scalar_tac
+      obtain ⟨child, hchildEq, hchild⟩ := spec_imp_exists
+        (vecMapKeyAt_spec types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId types.AgentId.Insts.CoreCloneClone
+          map i hlt)
+      rw [hchildEq]; simp only [bind_tc_ok]
+      obtain ⟨parent, hparentEq, hparent⟩ := spec_imp_exists
+        (vecMapValAt_spec types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId types.AgentId.Insts.CoreCloneClone
+          map i hlt)
+      rw [hparentEq]; simp only [bind_tc_ok]
+      have hcapk : kept.entries.val.length < Usize.max := by
+        have hle : kept.entries.val.length ≤ i.val := by
+          rw [hkept]
+          refine le_trans (List.length_filter_le _ _) ?_
+          rw [List.length_take]; exact Nat.min_le_left _ _
+        scalar_tac
+      have hfresh : ∀ p ∈ kept.entries.val, p.1 ≠ child := by
+        have hfm := fst_getElem_not_mem_map_take map.entries.val i.val hlt hnd
+        rw [hkept]; intro p hp hpc
+        exact hfm (by rw [← hchild, ← hpc]; exact List.mem_map.mpr ⟨p, List.mem_of_mem_filter hp, rfl⟩)
+      have hpair : map.entries.val[i.val]'hlt = (child, parent) := by
+        cases hpx : map.entries.val[i.val]'hlt with
+        | mk a b => simp_all
+      have hget : map.entries.val[i.val]? = some (child, parent) := by
+        rw [List.getElem?_eq_getElem hlt, hpair]
+      clear hpair hchild hparent
+      simp only [core.cmp.impls.PartialEqShared.ne]
+      rw [agentId_ne_spec child dropped]
+      step*
+      split
+      · rename_i hbo
+        rw [agentId_ne_spec parent dropped]
+        step*
+        split
+        · rename_i hbi
+          simp only [agentId_clone_spec, bind_tc_ok]
+          obtain ⟨kept1, hkept1Eq, hkept1⟩ := spec_imp_exists
+            (vecMapInsert_append_spec types.AgentId.Insts.CoreCloneClone
+              types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+              types.AgentId.Insts.CoreCloneClone kept child parent hcapk hfresh)
+          rw [hkept1Eq]
+          step*
+          refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+          rw [hkept1, i2_post, List.take_add_one, hget, Option.toList_some]
+          have hcd : child ≠ dropped := decide_eq_true_eq.mp hbo
+          have hpd : parent ≠ dropped := decide_eq_true_eq.mp hbi
+          have hpk : parentKept dropped (child, parent) = true := by simp [parentKept, hcd, hpd]
+          simp [List.filter_append, hpk, ← hkept]
+        · rename_i hbi
+          step*
+          refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+          rw [i2_post, List.take_add_one, hget, Option.toList_some]
+          have hpd : parent = dropped := not_not.mp (fun hc => hbi (decide_eq_true_eq.mpr hc))
+          have hpk : parentKept dropped (child, parent) = false := by simp [parentKept, hpd]
+          simp [List.filter_append, hpk, ← hkept]
+      · rename_i hbo
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [i2_post, List.take_add_one, hget, Option.toList_some]
+        have hcd : child = dropped := not_not.mp (fun hc => hbo (decide_eq_true_eq.mpr hc))
+        have hpk : parentKept dropped (child, parent) = false := by simp [parentKept, hcd]
+        simp [List.filter_append, hpk, ← hkept]
+    case isFalse h =>
+      have heq' : i.val = map.entries.val.length := by scalar_tac
+      simp only [spec_ok]
+      simpa [heq', List.take_length] using hkept
+  · exact ⟨hi0, hkept0⟩
+
+/-- `agent_parent_drop_endpoint map dropped` returns the entries of `map` whose child and parent
+    both differ from `dropped`, in order — provided `map` has unique keys. -/
+theorem agentParentDropEndpoint_spec
+    (map : collections.VecMap types.AgentId types.AgentId) (dropped : types.AgentId)
+    (hnd : (map.entries.val.map Prod.fst).Nodup) :
+    transitions.agent_parent_drop_endpoint map dropped ⦃ out =>
+      out.entries.val = map.entries.val.filter (parentKept dropped) ⦄ := by
+  unfold transitions.agent_parent_drop_endpoint
+  simp only [collections.VecMap.new, bind_tc_ok]
+  exact agentParentDropEndpointLoop_spec map dropped hnd _ 0#usize (by scalar_tac) (by simp)
+
+/-- The get-style read of the `delegate` `agent_parent` post-state — the kept (filtered) edges
+    followed by the fresh `(grantee, grantor)` edge — matches the abstract post-image exactly,
+    provided the pre-state keys are unique. This is the proven form of the clause the Plausible
+    harness pinned to `Nodup`. -/
+theorem parentPost_vmLast {K : Type} [DecidableEq K] (l : List (K × K)) (grantee grantor C P : K)
+    (hnd : (l.map Prod.fst).Nodup) :
+    vmLastEntry (l.filter (parentKept grantee) ++ [(grantee, grantor)]) C = some (C, P) ↔
+      (C = grantee ∧ P = grantor) ∨
+        (vmLastEntry l C = some (C, P) ∧ C ≠ grantee ∧ P ≠ grantee) := by
+  have hno : ∀ p ∈ l.filter (parentKept grantee), p.1 ≠ grantee := by
+    intro p hp
+    have hp' := List.mem_filter.mp hp
+    simp only [parentKept, decide_eq_true_eq] at hp'
+    exact hp'.2.1
+  have hfnd : ((l.filter (parentKept grantee)).map Prod.fst).Nodup := by
+    have hs : List.Sublist (l.filter (parentKept grantee)) l := List.filter_sublist
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst hs) hnd
+  rw [vmLastEntry_append_nomatch _ grantee grantor hno C]
+  by_cases hC : C = grantee
+  · subst hC
+    grind
+  · rw [if_neg hC, vmLastEntry_nodup _ C P hfnd, vmLastEntry_nodup _ C P hnd, List.mem_filter]
+    simp only [parentKept, decide_eq_true_eq]
+    grind
+
+/-- The `delegate` `agent_parent` post-state keeps unique keys: the kept (filtered) edges inherit
+    uniqueness from the pre-state, and the fresh key `grantee` was filtered out. Re-establishes the
+    `vmNodupKeys` invariant after the rewrite. -/
+theorem parentPost_nodupKeys {K : Type} [DecidableEq K] (l : List (K × K)) (grantee grantor : K)
+    (hnd : (l.map Prod.fst).Nodup) :
+    ((l.filter (parentKept grantee) ++ [(grantee, grantor)]).map Prod.fst).Nodup := by
+  rw [List.map_append, List.nodup_append]
+  refine ⟨?_, by simp, ?_⟩
+  · have hs : List.Sublist (l.filter (parentKept grantee)) l := List.filter_sublist
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst hs) hnd
+  · intro a ha b hb
+    simp only [List.map_cons, List.map_nil, List.mem_singleton] at hb
+    subst hb
+    obtain ⟨p, hp, hpe⟩ := List.mem_map.mp ha
+    have hp' := List.mem_filter.mp hp
+    simp only [parentKept, decide_eq_true_eq] at hp'
+    rw [← hpe]; exact hp'.2.1
+
 end ArgusLean.Refinement

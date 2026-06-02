@@ -73,11 +73,20 @@ def capMem (vm : collections.VecMap types.AgentId (collections.VecSet capability
     (N : types.AgentId) (C : capability.CapKind) : Prop :=
   ∃ p, vmLastEntry vm.entries.val N = some p ∧ C ∈ p.2.items.val
 
-/-- State relation for the nine fields `delegate` provably touches (everything except
-    `agent_parent`, which needs a key-uniqueness invariant and is deferred to the unified `R`):
+/-- Key-uniqueness well-formedness for a `VecMap`: the entry keys are `Nodup`. The invariant that
+    makes the get-style reading of a *functional* map (`agent_parent`) faithful — without it the
+    last-match rebuild in `agent_parent_drop_endpoint` disagrees with the abstract post-image
+    (the counterexample the Plausible harness pins). `delegate` preserves it (it rebuilds
+    `agent_parent` from an empty map). -/
+def vmNodupKeys {K V : Type} (vm : collections.VecMap K V) : Prop :=
+  (vm.entries.val.map Prod.fst).Nodup
+
+/-- State relation for the ten fields `delegate` touches:
 
     * `agent_active` ↔ the `VecSet` (`vsMem`);
     * `agent_cap` ↔ the cap map under get-semantics (`capMem`);
+    * `agent_parent` ↔ the parent map under get-semantics (`vmLastEntry`), guarded by the
+      `vmNodupKeys` key-uniqueness invariant (the last conjunct);
     * `agent_instruction` / `in_flight` ↔ their nested sets (`vmsMem`, id sorts);
     * `taint_levels` / `gh_taint_invoked` / `gh_taint_received` ↔ nested `ConfLevel` sets
       (`vmsMem` through `confC`);
@@ -97,7 +106,9 @@ def Rdel (st : state.KernelState) (a : AbsState) : Prop :=
     vmsMem st.override_used ag { tool := t, level := confC L }) ∧
   (∀ G L, a.agent_budget G L ↔
     ((G, budgetC L) ∈ st.agent_budget.entries.val) ∨
-    ((∀ bl, (G, bl) ∉ st.agent_budget.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5))
+    ((∀ bl, (G, bl) ∉ st.agent_budget.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5)) ∧
+  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
+  vmNodupKeys st.agent_parent
 
 /-! ## Shared transition helper: `clear_agent_state`
 
