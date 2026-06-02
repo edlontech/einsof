@@ -159,6 +159,17 @@ theorem capMem_filter_removeKept
     · rintro ⟨p, hp, hC⟩; exact ⟨⟨p, hp, hC⟩, hN⟩
     · rintro ⟨⟨p, hp, hC⟩, _⟩; exact ⟨p, hp, hC⟩
 
+/-- State relation for the fields `grant_capability` touches: the two active gates (`vsMem`), the
+    parent-edge gate read get-style (`vmLastEntry`, like the removal actions), and `agent_cap` as the
+    **nested** set membership `vmsMem` — the view `set_contains` / `insert_into` operate in (the same
+    one `load_instruction`'s `agent_instruction` uses), which needs no key-uniqueness side condition.
+    (Distinct from `Rdel`/`Rcasc`'s get-style `capMem` view of `agent_cap`; reconciling the two is the
+    future unified-`R` task, and only matters once an action mixes both.) -/
+def Rgrant (st : state.KernelState) (a : AbsState) : Prop :=
+  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
+  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
+  (∀ N C, a.agent_cap N C ↔ vmsMem st.agent_cap N C)
+
 /-! ## Shared transition helper: `clear_agent_state`
 
 `clear_agent_state st agent` deletes `agent`'s key from the seven per-agent maps

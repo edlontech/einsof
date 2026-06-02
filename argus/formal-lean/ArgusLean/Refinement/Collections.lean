@@ -81,6 +81,24 @@ instance : DecidableEq types.InstructionId := inferInstanceAs (DecidableEq Strin
     types.InstructionId.Insts.CoreCloneClone.clone a = .ok a := by
   simp only [types.InstructionId.Insts.CoreCloneClone.clone, string_clone_spec, bind_tc_ok]
 
+/-! ## `CapKind` equality / clone
+
+Unlike the `String`-backed ids, `CapKind` is a concrete nullary enum: its extracted `eq` is a
+discriminant comparison and its `clone` is the identity, so both specs are *proved* (no extractor
+trust). Consumed by the `agent_cap` set operations (`set_contains` / `insert_into`). -/
+
+deriving instance DecidableEq for capability.CapKind
+
+/-- `CapKind.eq` is faithful decidable equality (discriminant comparison on a nullary enum). -/
+@[simp] theorem capKind_eq_spec (a b : capability.CapKind) :
+    capability.CapKind.Insts.CoreCmpPartialEqCapKind.eq a b = .ok (decide (a = b)) := by
+  cases a <;> cases b <;>
+    simp [capability.CapKind.Insts.CoreCmpPartialEqCapKind.eq, capability.CapKind.read_discriminant]
+
+/-- `CapKind.clone` is the identity. -/
+@[simp] theorem capKind_clone_spec (a : capability.CapKind) :
+    capability.CapKind.Insts.CoreCloneClone.clone a = .ok a := rfl
+
 /-! ## `PartialEq::ne` extractor residual
 
 `PartialEq::ne` is a *default* trait method (`!self.eq(other)`), so Charon extracts the
@@ -1225,5 +1243,154 @@ theorem agentParentDropChild_spec
   unfold transitions.agent_parent_drop_child
   simp only [collections.VecMap.new, bind_tc_ok]
   exact agentParentDropChildLoop_spec map dropped hnd _ 0#usize (by scalar_tac) (by simp)
+
+/-! ### `VecMap.get_cloned` + `VecMapKVecSet.set_contains`
+
+`set_contains key elem` reads the (cloned) last-match set under `key` and tests membership. The
+`get_cloned` find-loop is again the same body as `insert_loop`, so it reuses `lastMatchInv`; the
+value clone is the identity. We only need the *forward* direction for the `grant_capability` cap
+gate: a `true` result witnesses a `key`-entry whose set holds `elem`, i.e. nested membership. -/
+
+/-- A present last-match entry is a member of the underlying list. -/
+theorem vmLastEntry_mem {K V : Type} [DecidableEq K] (l : List (K × V)) (key : K) (p : K × V)
+    (h : vmLastEntry l key = some p) : p ∈ l :=
+  List.mem_of_mem_filter (List.mem_of_getLast? h)
+
+/-- Find-index loop for `VecMap.get_cloned`: same `lastMatchInv` as `get_loop`/`insert_loop`. -/
+theorem vecMapGetClonedLoop_spec {K V : Type} [DecidableEq K]
+    (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (entries : alloc.vec.Vec (K × V)) (key : K) (idx0 i0 : Usize)
+    (hi0 : i0.val ≤ entries.val.length)
+    (hInv : lastMatchInv entries.val key idx0.val i0.val) :
+    collections.VecMap.get_cloned_loop eqK entries key idx0 i0 ⦃ idx1 =>
+      lastMatchInv entries.val key idx1.val entries.val.length ⦄ := by
+  unfold collections.VecMap.get_cloned_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ entries.val.length ∧ lastMatchInv entries.val key p.1.val p.2.val)
+  · rintro ⟨idx, i⟩ ⟨hile, hinv⟩
+    simp only [collections.VecMap.get_cloned_loop.body]
+    split
+    case isTrue h =>
+      have hlt : i.val < entries.val.length := by scalar_tac
+      step as ⟨t, t1, he⟩
+      have hget : entries.val[i.val]? = some (t, t1) := by
+        rw [List.getElem?_eq_getElem hlt, ← he]
+      rw [heq t key]
+      step*
+      split
+      · rename_i hb
+        step*
+        have ht : t = key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        right
+        refine ⟨hlt, ⟨(t, t1), hget, ht⟩, ?_⟩
+        intro k hk1 hk2 p hp
+        exfalso; omega
+      · rename_i hb
+        step*
+        have ht : t ≠ key := by simpa using hb
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rcases hinv with ⟨hidxlen, hno⟩ | ⟨hidxlt, hex, hno⟩
+        · left
+          refine ⟨hidxlen, ?_⟩
+          intro k hk p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+        · right
+          refine ⟨hidxlt, hex, ?_⟩
+          intro k hk1 hk2 p hp
+          rcases (by omega : k < i.val ∨ k = i.val) with hlt' | heqk
+          · exact hno k hk1 hlt' p hp
+          · subst heqk; rw [hget, Option.some_inj] at hp; subst hp; exact ht
+    case isFalse h =>
+      have heq' : i.val = entries.val.length := by scalar_tac
+      simp only [spec_ok]
+      rwa [heq'] at hinv
+  · exact ⟨hi0, hInv⟩
+
+/-- `VecMap.get_cloned vm key` returns the (identity-cloned) value of the last `key`-keyed entry. -/
+theorem vecMapGetCloned_spec {K V : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneV : core.clone.Clone V) (hcloneV : ∀ v : V, cloneV.clone v = .ok v)
+    (vm : collections.VecMap K V) (key : K) :
+    collections.VecMap.get_cloned cloneK eqK cloneV vm key ⦃ o =>
+      o = (vmLastEntry vm.entries.val key).map Prod.snd ⦄ := by
+  unfold collections.VecMap.get_cloned
+  have hinv0 : lastMatchInv vm.entries.val key (alloc.vec.Vec.len vm.entries).val (0#usize).val := by
+    left; exact ⟨by scalar_tac, fun k hk => absurd hk (by scalar_tac)⟩
+  obtain ⟨idx1, hloopEq, hlmi⟩ := spec_imp_exists
+    (vecMapGetClonedLoop_spec eqK heq vm.entries key (alloc.vec.Vec.len vm.entries) 0#usize
+      (by scalar_tac) hinv0)
+  simp only [hloopEq, bind_tc_ok]
+  split
+  case isTrue hcond =>
+    have hidxlt : idx1.val < vm.entries.val.length := by scalar_tac
+    rcases hlmi with ⟨hlen, _⟩ | ⟨_, ⟨p, hp, hpk⟩, hno⟩
+    · omega
+    · have hpe : vm.entries.val[idx1.val]'hidxlt = p := by
+        rw [List.getElem?_eq_getElem hidxlt] at hp; exact Option.some_inj.mp hp
+      have hmatch : (vm.entries.val[idx1.val]'hidxlt).1 = key := by rw [hpe]; exact hpk
+      have hlast : ∀ k, (hk : k < vm.entries.val.length) → idx1.val < k →
+          (vm.entries.val[k]'hk).1 ≠ key := fun k hk hik =>
+        hno k hik hk _ (List.getElem?_eq_getElem hk)
+      step as ⟨k0, v0, he⟩
+      rw [hcloneV v0]
+      step*
+      rw [vmLastEntry_eq_of_isLast vm.entries.val idx1.val key hidxlt hmatch hlast]
+      simp only [Option.map_some, ← he]
+  case isFalse hcond =>
+    have hidxlen : idx1.val = vm.entries.val.length := by
+      rcases hlmi with ⟨hlen, _⟩ | ⟨hlt, _, _⟩
+      · exact hlen
+      · scalar_tac
+    have hno : ∀ p ∈ vm.entries.val, p.1 ≠ key := by
+      rcases hlmi with ⟨_, h⟩ | ⟨hlt, _, _⟩
+      · intro p hp
+        obtain ⟨k, hk, hkp⟩ := List.getElem_of_mem hp
+        exact h k (by omega) p (by rw [List.getElem?_eq_getElem hk, hkp])
+      · omega
+    rw [vmLastEntry_eq_none vm.entries.val key hno]
+    rfl
+
+/-- `set_contains key elem`, when `true`, witnesses nested membership of `elem` under `key`. The
+    forward direction is all the `grant_capability` capability gate needs (no key-uniqueness). -/
+theorem vecMapKVecSetSetContains_spec {K T : Type} [DecidableEq K] [DecidableEq T]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heqK : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
+    (heqT : ∀ a b : T, eqT.eq a b = .ok (decide (a = b)))
+    (hcloneT : ∀ x : T, cloneT.clone x = .ok x)
+    (vm : collections.VecMap K (collections.VecSet T)) (key : K) (elem : T) :
+    collections.VecMapKVecSet.set_contains cloneK eqK cloneT eqT vm key elem ⦃ b =>
+      b = true → vmsMem vm key elem ⦄ := by
+  unfold collections.VecMapKVecSet.set_contains
+  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+    (vecMapGetCloned_spec cloneK eqK heqK (collections.VecSet.Insts.CoreCloneClone cloneT)
+      (vecSetClone_spec cloneT hcloneT) vm key)
+  rw [hoEq]
+  simp only [bind_tc_ok]
+  cases hL : vmLastEntry vm.entries.val key with
+  | none =>
+    rw [hL] at ho
+    simp only [Option.map_none] at ho
+    subst ho
+    simp
+  | some p =>
+    rw [hL] at ho
+    simp only [Option.map_some] at ho
+    subst ho
+    show collections.VecSet.contains cloneT eqT p.2 elem ⦃ b => b = true → vmsMem vm key elem ⦄
+    obtain ⟨b, hbEq, hbIff⟩ := spec_imp_exists (vecSetContains_spec cloneT eqT heqT p.2 elem)
+    rw [hbEq]
+    intro hb
+    have hp1 : p.1 = key := vmLastEntry_fst _ _ _ hL
+    refine ⟨p.2, ?_, hbIff.mp hb⟩
+    have hpeq : (key, p.2) = p := by rw [← hp1]
+    rw [hpeq]
+    exact vmLastEntry_mem vm.entries.val key p hL
 
 end ArgusLean.Refinement
