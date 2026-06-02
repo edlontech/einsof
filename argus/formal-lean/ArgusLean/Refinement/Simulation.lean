@@ -69,24 +69,26 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                guard (kernel ignores override at Inspect mode; abstract allows it), and
                                `to_consume` matches the abstract `override_used` add-condition *under
                                the guard*.
-* [~] `sentinel_elevate_taint` — KEYSTONE LOOP SPEC DONE, refines assembly TODO. The in-flight loop
-                               (`sentinelLoop_spec`, Actions/SentinelElevateTaint.lean) is PROVEN +
-                               verified in the build: it folds `gate_egress` over `agent`'s in-flight
-                               invocations (per-tool oracle values `cgOf`/`ovOf`/`ocOf`, the
-                               `missing_binding` flag, Nodup+capacity tracking), characterising the
-                               final `denied`/`to_consume`/`missing_binding` via `invDenied` /
-                               `invConsumed` / `invMissing`. Built on `gateEgress_spec` + the leaf/
-                               oracle foundation (`get_set_or_empty`, `extend_into`, `flow_mode`,
-                               `has_flow_override`, `override_consumed`, `tool_metadata`, `ovC`/`ocC`,
-                               `confA`). This is the same inner-loop machinery `return_unendorsed`
-                               reuses (its double loop = this loop nested under a `child_taint` loop).
-                               REMAINING: the `Rsent` oracle-agreement relation + the inversion/refines
-                               assembly — peel the active gate, apply `sentinelLoop_spec`, discharge
-                               the `missing_binding`/`denied` gates, and match the three writes
-                               (`extend_into override_used`, `insert_into taint_levels`/
-                               `gh_taint_invoked`) to the abstract updates. The soundness is verified by
-                               hand, incl. the subtle **single-use `override_used`** correspondence:
-                               `to_consume` ↔ the abstract `override_used` add holds *under the gate*
-                               via "∃ Deny-egress ⇒ override present ∧ not-yet-consumed" (the guard
-                               forces `ov∧¬oc` at every `Deny` egress).
+* [x] `sentinel_elevate_taint` — DONE 9/12 (Actions/SentinelElevateTaint.lean). Refines against `Rsent`
+                               (the oracle-agreement relation: `agent_active`/`taint_levels`/
+                               `gh_taint_invoked` via the insert `vmsMem` view, `in_flight`/
+                               `override_used` via the last-match `vmsMemLast` view that `get_set_or_empty`
+                               / `override_consumed` / `extend_into` observe, plus the immutable flow
+                               oracles `tool_egress`→`egItems`, `flow_allows`/`flow_inspects`→`flowModeC`
+                               branches, `flow_override`→override-entry membership, `invocation_tool`
+                               one-directional). `sentinel_elevate_taint_ok_inv` peels the active gate,
+                               applies `sentinelLoop_spec`, discharges the `missing_binding`/`denied`
+                               gates (full `simp` reduces the tuple-bind pattern-`let`), and reads off the
+                               three writes (`extend_into override_used`, `insert_into taint_levels`/
+                               `gh_taint_invoked`). `sentinel_elevate_taint_refines` establishes the
+                               abstract flow guard from the concrete `denied = false` via the pure
+                               `not_egressDenied_disj`, and the single-use `override_used` correspondence
+                               via `egressConsumed_iff_abstractDenied` — the keystone collapse: under the
+                               guard, "∃ Deny-egress ⇒ override present ∧ not-yet-consumed", so the
+                               abstract "denied-modulo-override" add coincides with the concrete
+                               `to_consume`. Content gate is the one opaque oracle (`hcg` totality + `hcgA`
+                               agreement, supplied separately). Axiom-clean: no `sorryAx`, only the
+                               standard `String`/decidable-eq extractor residuals. The same inner-loop
+                               machinery `return_unendorsed` reuses (its double loop = this loop nested
+                               under a `child_taint` loop).
 -/
