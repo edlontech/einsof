@@ -8,3 +8,5 @@ import ArgusLean.Refinement.Simulation
 import ArgusLean.Refinement.FlowBridging
 -- Flow-oracle reads (flow_mode / has_flow_override / override_consumed) for the egress-gated actions.
 import ArgusLean.Refinement.ReturnUnendorsedFlow
+-- sentinel_elevate_taint in-flight loop spec (the egress-gated single-loop keystone).
+import ArgusLean.Refinement.Actions.SentinelElevateTaint
