@@ -322,7 +322,9 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
       st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
       st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
       st1.taint_levels = st.taint_levels ∧ st1.gh_taint_received = st.gh_taint_received ∧
-      st1.override_used = st.override_used ∧
+      st1.override_used = st.override_used ∧ st1.gh_taint_invoked = st.gh_taint_invoked ∧
+      st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
+      st1.tool_registered = st.tool_registered ∧
       (∀ G, budgetReadC st1.agent_budget G =
         if G = agent then debitC (budgetReadC st.agent_budget agent)
         else budgetReadC st.agent_budget G) ⦄ := by
@@ -334,7 +336,8 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
       types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
   rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
-  refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, fun G => ?_⟩
+  refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
+    trivial, fun G => ?_⟩
   show budgetReadC vm G = _
   by_cases hG : G = agent
   · have hread : budgetReadC vm G = debitC bl := by unfold budgetReadC; rw [hvm G, if_pos hG]

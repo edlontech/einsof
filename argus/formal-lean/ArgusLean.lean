@@ -10,3 +10,5 @@ import ArgusLean.Refinement.FlowBridging
 import ArgusLean.Refinement.ReturnUnendorsedFlow
 -- sentinel_elevate_taint in-flight loop spec (the egress-gated single-loop keystone).
 import ArgusLean.Refinement.Actions.SentinelElevateTaint
+-- invoke_complete refinement foundation (remove_from / set_contains_last specs + Rcomplete).
+import ArgusLean.Refinement.Actions.InvokeComplete

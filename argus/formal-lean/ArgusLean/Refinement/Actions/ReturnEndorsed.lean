@@ -128,7 +128,7 @@ theorem return_endorsed_ok_inv
   have hNotExh : budgetReadC st.agent_budget parent ≠ types.BudgetLevel.Exhausted := by
     intro hc; have : b5 = true := hb5Iff.mpr hc; rw [hb5] at this; simp at this
   -- Body: debit `parent`'s budget.
-  obtain ⟨st1, hst1Eq, hAct, hPar, hCap, hFl, hTaint, hGh, hOv, hBud⟩ :=
+  obtain ⟨st1, hst1Eq, hAct, hPar, hCap, hFl, hTaint, hGh, hOv, _, _, _, _, hBud⟩ :=
     spec_imp_exists (debitBudget_spec st parent hcap)
   rw [hst1Eq] at hok
   simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
