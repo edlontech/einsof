@@ -3,6 +3,9 @@ import ArgusLean.Refinement.Unified.Preservation.LoadInstruction
 import ArgusLean.Refinement.Unified.Preservation.GrantCapability
 import ArgusLean.Refinement.Unified.Preservation.SentinelRefreshBudget
 import ArgusLean.Refinement.Unified.Preservation.ReturnEndorsed
+import ArgusLean.Refinement.Unified.Preservation.Revoke
+import ArgusLean.Refinement.Unified.Preservation.CascadeRevoke
+import ArgusLean.Refinement.Unified.Preservation.Delegate
 
 /-! # Layer 1 — top-level dispatch + the `step_refines` bundle (in progress)
 
@@ -18,10 +21,10 @@ so `kernelStep` is parameterised by them; their `step_refines` cases consume the
 
 ## Status (2026-06-03)
 
-`step_refines` is **not yet assembled**: 5 of the 12 `_preservesR` lemmas are proven
+`step_refines` is **not yet assembled**: 8 of the 12 `_preservesR` lemmas are proven
 (`register_tool`, `load_instruction`, `grant_capability`, `sentinel_refresh_budget`,
-`return_endorsed`), the other 7 (the three `clear_agent_state` removals `delegate` / `revoke` /
-`cascade_revoke` and the four oracle actions `invoke_start` / `invoke_complete` /
+`return_endorsed`, and the three `clear_agent_state` removals `delegate` / `revoke` /
+`cascade_revoke`), the four oracle actions (`invoke_start` / `invoke_complete` /
 `return_unendorsed` / `sentinel_elevate_taint`) remain. This file provides the dispatcher + the
 `CapacityOK` capacity-honesty hypothesis + the oracle-extraction helpers, so the assembly is a
 mechanical case-split once those land. -/

@@ -208,4 +208,11 @@ theorem vmNodupKeys_filter {K V : Type} [DecidableEq K] (l : List (K × V)) (key
     ((l.filter (removeKept key)).map Prod.fst).Nodup :=
   hnd.sublist (List.filter_sublist.map Prod.fst)
 
+/-- `vmNodupKeys` carried through a `clear_agent_state` / `remove` key-filter, stated on the entry-list
+    equation the inversion lemmas expose. -/
+theorem vmNodupKeysFilter {K V : Type} [DecidableEq K] {vm' vm : collections.VecMap K V} {key : K}
+    (heq : vm'.entries.val = vm.entries.val.filter (removeKept key)) (hnd : vmNodupKeys vm) :
+    vmNodupKeys vm' := by
+  unfold vmNodupKeys; rw [heq]; exact vmNodupKeys_filter vm.entries.val key hnd
+
 end ArgusLean.Refinement
