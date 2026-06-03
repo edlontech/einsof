@@ -7,6 +7,7 @@ import ArgusLean.Refinement.Actions.GrantCapability
 import ArgusLean.Refinement.Actions.SentinelRefreshBudget
 import ArgusLean.Refinement.Actions.ReturnEndorsed
 import ArgusLean.Refinement.Actions.ReturnUnendorsed
+import ArgusLean.Refinement.Actions.InvokeComplete
 
 /-! # Refinement — simulation bundle
 
@@ -51,7 +52,23 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `BudgetLevel` eq/clone/debit (`debitC`). No new axioms beyond
                                `optionAgentId_ne_spec`; no root ⇒ no `sorryAx`/`AgentId.root`)
 * [ ] `invoke_start`
-* [ ] `invoke_complete`
+* [x] `invoke_complete`     — DONE 11/12 (Actions/InvokeComplete.lean). Loop-free; branches on the single
+                               `zero_taint` conformance gate. Refines against `Rcomplete` (last-match
+                               `vmsMemLast` `in_flight`, insert-view `vmsMem` taint/gh, get-style
+                               `budgetReadC` budget, metadata `tool_conf_floor`/`tool_output_bounded`
+                               correspondences, + the well-formedness invariant ruling out the kernel's
+                               defensive no-binding/no-metadata exits). `invoke_complete_ok_inv` peels the
+                               `set_contains` + active gates, the `remove_from` point-clear, and reads the
+                               metadata; the nested `if output_bounded/conforms/¬exhausted` reduces to
+                               `completeEndorsed` and the kernel branches endorsed (`debitBudget_spec`) vs
+                               unendorsed (two `insert_into` of `conf_floor`). `invoke_complete_refines`
+                               matches the abstract endorsed condition via the metadata correspondences +
+                               `hcfA`; the budget debit reuses the `return_endorsed` lattice technique.
+                               `output_conforms` is the one opaque oracle (state-independent `hcf`/`hcfA`).
+                               Gotcha: the do-notation tuple-`let (conf_floor, output_bounded)` needs full
+                               `simp at hok` (collapses it + reduces `decide ¬b3 → !bexh`); `subst` on
+                               `G = agent` wrongly eliminates `agent` (use `rw`). Axiom-clean: standard
+                               three + `String`/id residuals + `invocationId_ne_spec`.
 * [x] `return_unendorsed`   — DONE 10/12 (Actions/ReturnUnendorsed.lean). Refines against `Rretu` (the
                                last-match `vmsMemLast` oracle-agreement relation: `in_flight` via the
                                `set_nonempty`/`get_set_or_empty` reads, `taint_levels`/`gh_taint_received`
