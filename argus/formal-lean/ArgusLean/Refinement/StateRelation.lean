@@ -30,18 +30,6 @@ def Rtool (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsSt
   (∀ i, a.trusted_issuer i ↔ vsMem bg.trusted_issuers i) ∧
   (∀ t tm, bg.tool_metadata t = .ok (some tm) → a.tool_issuer t = tm.issuer)
 
-/-- State relation for the fields `load_instruction` touches:
-    * the mutable `agent_active` set ↔ the concrete `VecSet`;
-    * the background `trusted_issuer` predicate ↔ the `trusted_issuers` `VecSet`;
-    * the background `instruction_issuer` function ↔ the concrete lookup;
-    * the mutable nested `agent_instruction` relation ↔ the concrete `VecMap`-of-`VecSet`. -/
-def Rinstr (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState) : Prop :=
-  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
-  (∀ i, a.trusted_issuer i ↔ vsMem bg.trusted_issuers i) ∧
-  (∀ i issuer, background.BackgroundTheory.impl.instruction_issuer bg i = .ok (some issuer) →
-      a.instruction_issuer i = issuer) ∧
-  (∀ ag ins, a.agent_instruction ag ins ↔ vmsMem st.agent_instruction ag ins)
-
 /-! ## Confidentiality / budget correspondence
 
 `ConfLevel` and `BudgetLevel` are baked-in inductives of the abstract `St` (not type
@@ -95,66 +83,6 @@ def capMem (vm : collections.VecMap types.AgentId (collections.VecSet capability
 def vmNodupKeys {K V : Type} (vm : collections.VecMap K V) : Prop :=
   (vm.entries.val.map Prod.fst).Nodup
 
-/-- State relation for the ten fields `delegate` touches:
-
-    * `agent_active` ↔ the `VecSet` (`vsMem`);
-    * `agent_cap` ↔ the cap map under get-semantics (`capMem`);
-    * `agent_parent` ↔ the parent map under get-semantics (`vmLastEntry`), guarded by the
-      `vmNodupKeys` key-uniqueness invariant (the last conjunct);
-    * `agent_instruction` / `in_flight` ↔ their nested sets (`vmsMem`, id sorts);
-    * `taint_levels` / `gh_taint_invoked` / `gh_taint_received` ↔ nested `ConfLevel` sets
-      (`vmsMem` through `confC`);
-    * `override_used` ↔ the nested `OverrideKey` set (tool × `confC` level);
-    * `agent_budget` ↔ a plain `BudgetLevel` map with the "absent key = full budget (`bl5`)"
-      default that the kernel uses. -/
-def Rdel (st : state.KernelState) (a : AbsState) : Prop :=
-  (types.AgentId.root = .ok a.root_agent) ∧
-  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
-  (∀ N C, a.agent_cap N C ↔ capMem st.agent_cap N C) ∧
-  (∀ ag ins, a.agent_instruction ag ins ↔ vmsMem st.agent_instruction ag ins) ∧
-  (∀ ag inv, a.in_flight ag inv ↔ vmsMem st.in_flight ag inv) ∧
-  (∀ ag L, a.taint_levels ag L ↔ vmsMem st.taint_levels ag (confC L)) ∧
-  (∀ ag L, a.gh_taint_invoked ag L ↔ vmsMem st.gh_taint_invoked ag (confC L)) ∧
-  (∀ ag L, a.gh_taint_received ag L ↔ vmsMem st.gh_taint_received ag (confC L)) ∧
-  (∀ ag t L, a.override_used ag t L ↔
-    vmsMem st.override_used ag { tool := t, level := confC L }) ∧
-  (∀ G L, a.agent_budget G L ↔
-    ((G, budgetC L) ∈ st.agent_budget.entries.val) ∨
-    ((∀ bl, (G, bl) ∉ st.agent_budget.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5)) ∧
-  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
-  vmNodupKeys st.agent_parent
-
-/-- State relation for the removal actions (`cascade_revoke`, `revoke`). Touches exactly the same
-    ten fields as `Rdel`, with **one** difference: the `agent_budget` clause is guarded by
-    `a.agent_active G`.
-
-    This guard is forced by the asymmetry between insert and remove. The kernel's budget convention
-    is "absent key = full budget (`bl5`)"; `delegate` adds an agent and sets its budget to `bl5`, so
-    the unguarded clause holds (absent ↔ `bl5`). A removal action *deletes* the agent's budget entry,
-    leaving it absent — which the convention reads as `bl5` — while the abstract action drops the
-    agent's budget relation to `False`. Those disagree at `bl5` for the just-removed (now inactive)
-    agent. They agree exactly where the convention is observable: on **active** agents. The abstract
-    invariants `budget_unique` / `active_has_budget` are themselves guarded by `agent_active`,
-    confirming budget is only semantically meaningful there. So the faithful refinement relation
-    relates budget on active agents only; an `Rdel` pre-state implies the corresponding `Rcasc` one.
-    (See [[c2-cascade-revoke]].) -/
-def Rcasc (st : state.KernelState) (a : AbsState) : Prop :=
-  (types.AgentId.root = .ok a.root_agent) ∧
-  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
-  (∀ N C, a.agent_cap N C ↔ capMem st.agent_cap N C) ∧
-  (∀ ag ins, a.agent_instruction ag ins ↔ vmsMem st.agent_instruction ag ins) ∧
-  (∀ ag inv, a.in_flight ag inv ↔ vmsMem st.in_flight ag inv) ∧
-  (∀ ag L, a.taint_levels ag L ↔ vmsMem st.taint_levels ag (confC L)) ∧
-  (∀ ag L, a.gh_taint_invoked ag L ↔ vmsMem st.gh_taint_invoked ag (confC L)) ∧
-  (∀ ag L, a.gh_taint_received ag L ↔ vmsMem st.gh_taint_received ag (confC L)) ∧
-  (∀ ag t L, a.override_used ag t L ↔
-    vmsMem st.override_used ag { tool := t, level := confC L }) ∧
-  (∀ G L, a.agent_active G → (a.agent_budget G L ↔
-    ((G, budgetC L) ∈ st.agent_budget.entries.val) ∨
-    ((∀ bl, (G, bl) ∉ st.agent_budget.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5))) ∧
-  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
-  vmNodupKeys st.agent_parent
-
 /-- `VecMap.remove key` read through `capMem`: the removed key resolves to no caps, every other
     agent's caps are untouched. The `agent_cap` counterpart of `vmsMem_filter_removeKept`, built on
     the pure `vmLastEntry_filter_removeKept`. -/
@@ -172,17 +100,6 @@ theorem capMem_filter_removeKept
     constructor
     · rintro ⟨p, hp, hC⟩; exact ⟨⟨p, hp, hC⟩, hN⟩
     · rintro ⟨⟨p, hp, hC⟩, _⟩; exact ⟨p, hp, hC⟩
-
-/-- State relation for the fields `grant_capability` touches: the two active gates (`vsMem`), the
-    parent-edge gate read get-style (`vmLastEntry`, like the removal actions), and `agent_cap` as the
-    **nested** set membership `vmsMem` — the view `set_contains` / `insert_into` operate in (the same
-    one `load_instruction`'s `agent_instruction` uses), which needs no key-uniqueness side condition.
-    (Distinct from `Rdel`/`Rcasc`'s get-style `capMem` view of `agent_cap`; reconciling the two is the
-    future unified-`R` task, and only matters once an action mixes both.) -/
-def Rgrant (st : state.KernelState) (a : AbsState) : Prop :=
-  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
-  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
-  (∀ N C, a.agent_cap N C ↔ vmsMem st.agent_cap N C)
 
 /-- State relation for the fields `sentinel_refresh_budget` touches: the two read gates
     (`agent_active` via `vsMem`, the `cap_refresh_budget` capability via the nested `vmsMem`
@@ -345,20 +262,5 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
   · have hread : budgetReadC vm G = budgetReadC st.agent_budget G := by
       unfold budgetReadC; rw [hvm G, if_neg hG]
     rw [hread, if_neg hG]
-
-/-- State relation for the fields `return_endorsed` touches: the named-individual correspondence
-    pinning the abstract `cap_declassify` to the concrete `CapKind.Declassify`; the two active gates
-    (`vsMem`); the parent edge read get-style (`vmLastEntry`, like the other tree actions); the
-    `child`-has-no-in-flight gate read through the **last-match** nested membership `vmsMemLast` (what
-    `set_nonempty` observes); the `Declassify` capability via the raw nested `vmsMem` (the forward
-    `set_contains` view, like `grant_capability`); and `agent_budget` under the get-style `budgetReadC`
-    convention tied to the abstract lattice through `budgetC`. -/
-def Rret (st : state.KernelState) (a : AbsState) : Prop :=
-  a.cap_declassify = capability.CapKind.Declassify ∧
-  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
-  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
-  (∀ ag inv, a.in_flight ag inv ↔ vmsMemLast st.in_flight ag inv) ∧
-  (∀ N C, a.agent_cap N C ↔ vmsMem st.agent_cap N C) ∧
-  (∀ G L, a.agent_budget G L ↔ budgetReadC st.agent_budget G = budgetC L)
 
 end ArgusLean.Refinement
