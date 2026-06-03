@@ -15,26 +15,24 @@ agent cannot reach egress channels when it carries taint from private data.
 ### [Tzimtzum](tzimtzum/) -- Formal Specification
 
 The TzimtzumV2 protocol, written in Lean 4 on the [Kav](kav/) transition-system
-framework. All 10 safety properties and 15 strengthening invariants are verified
-inductive (325 VCs) by kernel-checked mathlib automation -- no SMT solver in the
-trust base.
+framework. All 10 safety properties and 15 strengthening invariants
 
 ### [Kav](kav/) -- Verification Framework
 
 The pure-Lean transition-system verifier Tzimtzum is built on (`#kav_check_action`,
-`#kav_check_init`, finite-model checker). Reusable independent of the protocol.
+`#kav_check_init`, finite-model checker).
 
 ### [Argus](argus/) -- Rust Implementation
 
-A tool authorization gateway implementing the TzimtzumV2 protocol. Rust workspace with
-10 crates covering the core state machine, policy engine, MCP server management, LLM proxy,
-gRPC API, sandboxing, and more. 512+ tests across the workspace.
+`argus-kernel`: the pure-functional state machine implementing the TzimtzumV2 transitions.
 
-### [Lean Refinement](argus/formal-lean/) -- Rust-to-Spec (in progress)
+### [Lean Refinement](argus/formal-lean/) -- Rust-to-Spec
 
-The Rust kernel is mechanically extracted to Lean via Aeneas/Charon and refined against the
-Kav specification. This refinement is **work in progress** -- it does not yet constitute a
-completed end-to-end proof that the kernel implements the protocol.
+The Rust kernel is mechanically extracted to Lean via Aeneas/Charon and refined against the Kav
+specification. `implementation_sound` is **complete**: every reachable state of the extracted
+kernel refines an abstract TzimtzumV2 state satisfying all safety invariants -- modulo the trusted
+extractor and two explicit assumptions (`Vec`-capacity bounds and runtime-oracle agreement). It
+does not prove the hand-written Rust source or the external mesh.
 
 ## Toolchain
 
@@ -44,6 +42,11 @@ Managed via [mise](https://mise.jdx.dev/):
 |-------|---------|
 | Rust  | 1.93.0  |
 | Lean  | 4.30.0  |
+
+## AI Usage Disclosure
+
+Parts of this project were developed with AI assistance, most heavily in Documentation, Lean work, 
+the Tzimtzum/Kav formalization and the Aeneas/Charon refinement.
 
 ## License
 

@@ -9,14 +9,12 @@ Trifecta).
 
 ## argus-kernel
 
-Pure functional state machine implementing the TzimtzumV2 transitions. Zero dependencies
-(`serde`/`serde_json` are dev-only), compatible with Aeneas/Charon (Lean) extraction. State is
-held in `Vec`-backed `VecMap`/`VecSet` wrappers (`collections.rs`)
+Pure functional state machine implementing the TzimtzumV2 transitions. Zero dependencies, compatible with Aeneas/Charon (Lean) extraction.
 
 Each transition takes an immutable state and a fixed background theory, and returns a new state
 plus an event:
 
-```
+```rust
 fn(KernelState, &BackgroundTheory, ...) -> Result<(KernelState, KernelEvent), KernelError>
 ```
 
@@ -43,10 +41,10 @@ the oracles, or the external SPIFFE/STS mesh + adapter are correct. See
 ## Building
 
 ```bash
-cargo build              # debug
-cargo build --release    # release (thin LTO, stripped)
-cargo test               # kernel tests (91 unit + 19 safety-property)
-cargo clippy --workspace # lint
+cargo build              
+cargo build --release
+cargo test               
+cargo clippy --workspace
 ```
 
 To re-extract the kernel to Lean (Aeneas/Charon pipeline):
