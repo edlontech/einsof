@@ -343,46 +343,6 @@ and its length the closed form `vmSetLen` (`0` when the key is absent). The leng
 `getSetOrEmpty_spec`, used to phrase the loop / `extend_into` capacity bounds over `st`. (Generalises
 `getSetOrEmptyInFlight_spec` to any `K`/`T`; used for both `child_taint` and `parent_flights`.) -/
 
-/-- The length of the live (last-match) `key`-keyed set, `0` when `key` is absent. -/
-def vmSetLen {K T : Type} [DecidableEq K]
-    (vm : collections.VecMap K (collections.VecSet T)) (key : K) : Nat :=
-  match vmLastEntry vm.entries.val key with
-  | none => 0
-  | some p => p.2.items.val.length
-
-theorem getSetOrEmptyLen_spec {K T : Type} [DecidableEq K]
-    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
-    (heqK : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
-    (cloneT : core.clone.Clone T) (eqT : core.cmp.PartialEq T T)
-    (hcloneT : ∀ x : T, cloneT.clone x = .ok x)
-    (self : collections.VecMap K (collections.VecSet T)) (key : K) :
-    collections.VecMapKVecSet.get_set_or_empty cloneK eqK cloneT eqT self key ⦃ vs =>
-      (∀ v, vsMem vs v ↔ vmsMemLast self key v) ∧ vs.items.val.length = vmSetLen self key ⦄ := by
-  unfold collections.VecMapKVecSet.get_set_or_empty vmSetLen
-  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
-    (vecMapGetCloned_spec cloneK eqK heqK (collections.VecSet.Insts.CoreCloneClone cloneT)
-      (vecSetClone_spec cloneT hcloneT) self key)
-  rw [hoEq]; simp only [bind_tc_ok]
-  cases hL : vmLastEntry self.entries.val key with
-  | none =>
-    rw [hL] at ho; simp only [Option.map_none] at ho; subst ho
-    unfold collections.VecSet.new
-    simp only [spec_ok]
-    refine ⟨fun v => ?_, by trivial⟩
-    simp only [vsMem, alloc.vec.Vec.new, List.not_mem_nil, false_iff]
-    rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
-  | some p =>
-    rw [hL] at ho; simp only [Option.map_some] at ho; subst ho
-    have hp1 : p.1 = key := vmLastEntry_fst _ _ _ hL
-    have hLk : vmLastEntry self.entries.val key = some (key, p.2) := by rw [hL, ← hp1]
-    simp only [spec_ok]
-    refine ⟨fun v => ?_, by trivial⟩
-    constructor
-    · intro hv; exact ⟨p.2, hLk, hv⟩
-    · rintro ⟨vs, hvs, hv⟩
-      rw [hLk, Option.some_inj, Prod.mk.injEq] at hvs
-      obtain ⟨_, rfl⟩ := hvs; exact hv
-
 /-! ## State relation `Rretu`
 
 The oracle-agreement relation for `return_unendorsed`. All four mutable fields it touches live in the

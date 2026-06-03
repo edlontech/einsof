@@ -42,43 +42,6 @@ deriving instance DecidableEq for types.OverrideKey
   · subst ht; simp [confLevel_eq_spec]
   · simp [ht]
 
-/-! ## `VecSet.insert` with `Nodup` preservation -/
-
-/-- `VecSet.insert` adds `x` (idempotently) and preserves `Nodup`. The capacity bound is required only
-    on the push path (`x` absent) — `insert` is a no-op when `x` is already present, so a caller that
-    only re-inserts existing elements needs no bound. -/
-theorem vecSetInsertNodup_spec {T : Type} [DecidableEq T]
-    (inst_c : core.clone.Clone T) (inst_eq : core.cmp.PartialEq T T)
-    (heq : ∀ a b : T, inst_eq.eq a b = .ok (decide (a = b)))
-    (vs : collections.VecSet T) (x : T)
-    (hcap : x ∉ vs.items.val → vs.items.val.length < Usize.max) :
-    collections.VecSet.insert inst_c inst_eq vs x ⦃ vs' =>
-      (∀ y, vsMem vs' y ↔ vsMem vs y ∨ y = x) ∧
-      (vs.items.val.Nodup → vs'.items.val.Nodup) ⦄ := by
-  unfold collections.VecSet.insert
-  obtain ⟨b, hcontains, hb⟩ :=
-    spec_imp_exists (vecSetContains_spec inst_c inst_eq heq vs x)
-  rw [hcontains]
-  cases b with
-  | true =>
-    have hx : x ∈ vs.items.val := hb.mp rfl
-    simp only [bind_tc_ok, reduceIte, spec_ok]
-    refine ⟨fun y => ⟨Or.inl, ?_⟩, id⟩
-    rintro (hy | rfl)
-    · exact hy
-    · exact hx
-  | false =>
-    have hx : x ∉ vs.items.val := fun hc => by have := hb.mpr hc; simp at this
-    have hcap' : vs.items.val.length < Usize.max := hcap hx
-    simp only [bind_tc_ok, Bool.false_eq_true, reduceIte]
-    step*
-    refine ⟨fun y => ?_, fun hnd => ?_⟩
-    · simp only [vsMem, v_post, List.mem_append, List.mem_singleton]
-    · simp only [v_post]
-      rw [List.nodup_append]
-      exact ⟨hnd, List.nodup_singleton x,
-        fun a ha b hb hab => hx (by rw [List.mem_singleton] at hb; subst hab; subst hb; exact ha)⟩
-
 /-! ## `flow_decision` -/
 
 /-- The three-way decision of `flow_decision`, fully determined by the four sub-oracle results:
