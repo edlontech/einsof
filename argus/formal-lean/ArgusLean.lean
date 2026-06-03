@@ -12,3 +12,5 @@ import ArgusLean.Refinement.ReturnUnendorsedFlow
 import ArgusLean.Refinement.Actions.SentinelElevateTaint
 -- invoke_complete refinement foundation (remove_from / set_contains_last specs + Rcomplete).
 import ArgusLean.Refinement.Actions.InvokeComplete
+-- Layer 1: unified R + per-action R-preservation (5/12) + kernelStep/absActionOf dispatch bundle.
+import ArgusLean.Refinement.Unified.Bundle
