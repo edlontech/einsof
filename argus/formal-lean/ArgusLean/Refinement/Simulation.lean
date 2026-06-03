@@ -8,6 +8,7 @@ import ArgusLean.Refinement.Actions.SentinelRefreshBudget
 import ArgusLean.Refinement.Actions.ReturnEndorsed
 import ArgusLean.Refinement.Actions.ReturnUnendorsed
 import ArgusLean.Refinement.Actions.InvokeComplete
+import ArgusLean.Refinement.Actions.InvokeStart
 
 /-! # Refinement — simulation bundle
 
@@ -51,7 +52,31 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `vecSetIsEmpty_spec` (the `set_nonempty` in-flight gate), proved
                                `BudgetLevel` eq/clone/debit (`debitC`). No new axioms beyond
                                `optionAgentId_ne_spec`; no root ⇒ no `sorryAx`/`AgentId.root`)
-* [ ] `invoke_start`
+* [x] `invoke_start`        — DONE 12/12 (Actions/InvokeStart.lean). THE LAST + heaviest action: the
+                               three-check invoke gate (capability CHECK 1 + graduated flow gate in three
+                               sweeps 2a/2b/2c + authorizer CHECK 3) plus speculative taint. Refines
+                               against `Rstart` (last-match `vmsMemLast` views of `agent_cap`/`in_flight`/
+                               `taint_levels`/`override_used`, one-directional `invocation_tool`, immutable
+                               flow oracles as in `Rsent`, the named root pinned by `AgentId.root =
+                               .ok a.root_agent`, metadata `tool_conf_floor`/`tool_cap` correspondences,
+                               and the well-formedness invariant "every in-flight invocation is bound to a
+                               tool *with metadata*" — needed for the 2a speculative-taint bridge). New
+                               gate specs `containsKey_spec` (b3, inv unbound) + `anyValueContains_spec`
+                               (b4, inv not in flight) + the last-match `vecMapKVecSetInsertInto_vmLast_spec`
+                               for the `in_flight` write (the find loop picks the last key-match, so no
+                               key-uniqueness needed). `invoke_start_ok_inv` peels the 5 gates + reads `m`,
+                               runs the capability fold + the three flow sweeps (`invoke_start_loop1` over
+                               `speculative_taint`, `invoke_start_loop2` over in-flight tools,
+                               `gate_egress` for the new tool), and reads off the three writes
+                               (`extend_into override_used`, `VecMap.insert invocation_tool`,
+                               `insert_into in_flight`). `invoke_start_refines` establishes the three
+                               abstract flow guards from `denied = false` via `not_egressDenied_disj`,
+                               and the three-clause single-use `override_used` correspondence via per-sweep
+                               `egressConsumed_iff_abstractDenied`. `content_gate_passes`/`authorizer_allows`
+                               are the two opaque oracles (`hcg`/`hcgA`, `hau`/`hauA`); `a.invocation_tool
+                               inv = tool` is the abstract's prediction of the new binding (`hinvtool`).
+                               Gotcha: `subst` on `ag = agent` wrongly eliminates `agent` (pass the eq
+                               explicitly). Axiom-clean: standard three + `String`/id residuals.
 * [x] `invoke_complete`     — DONE 11/12 (Actions/InvokeComplete.lean). Loop-free; branches on the single
                                `zero_taint` conformance gate. Refines against `Rcomplete` (last-match
                                `vmsMemLast` `in_flight`, insert-view `vmsMem` taint/gh, get-style
