@@ -1,16 +1,20 @@
-import ArgusLean.Refinement.Simulation
+import ArgusLean.Refinement.StateRelation
+import ArgusLean.Refinement.ReturnUnendorsedFlow
 import ArgusLean.Refinement.Unified.ViewCoincidence
 import ArgusLean.Refinement.Unified.NodupPreservation
 
 /-! # Layer 1 — the unified state relation `R`
 
-The 12 per-action simulation lemmas were each proven against their **own slice relation**
-(`Rtool`, `Rinstr`, `Rdel`, `Rcasc`, `Rgrant`, `Rrefresh`, `Rret`, `Rretu`, `Rsent`, `Rcomplete`,
-`Rstart`), and those slices disagree on the same fields' *views* (`vmsMem` vs `vmsMemLast` vs
-`capMem`; raw-membership budget vs `budgetReadC`; guarded vs unguarded budget). This module collapses
-them into **one** canonical relation `R`, picking the last-match / get-style views the kernel actually
-computes and carrying the key-uniqueness (`vmNodupKeys`) and well-formedness invariants that make
-those views faithful (and that every per-action slice silently assumed for its own fields).
+The per-action simulation proofs were each developed against their **own slice relation** (a focused
+view of just the fields one action touches), and those slices disagree on the same fields' *views*
+(`vmsMem` vs `vmsMemLast` vs `capMem`; raw-membership budget vs `budgetReadC`; guarded vs unguarded
+budget). This module collapses them into **one** canonical relation `R`, picking the last-match /
+get-style views the kernel actually computes and carrying the key-uniqueness (`vmNodupKeys`) and
+well-formedness invariants that make those views faithful (and that every per-action slice silently
+assumed for its own fields). The surviving slice relations (`Rstart` / `Rretu` / `Rsent`, for the
+oracle/loop-heavy actions whose `Preservation` proof reuses the slice simulation) now live beside
+their `R`-preservation proof in `Unified/Preservation/`; the simpler actions establish `R`
+directly.
 
 `R` is a `structure` (not a flat `∧`) so each per-action `R`-preservation proof can name the exact
 conjunct it consumes/re-establishes — there are ~36 of them.

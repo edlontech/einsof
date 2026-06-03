@@ -18,6 +18,13 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
+/-- The endorsed (zero-taint) condition: the completed tool's output is bounded, the conformance
+    oracle passes, and the agent's budget is not exhausted. -/
+def completeEndorsed (st : state.KernelState) (agent : types.AgentId)
+    (tmeta : background.ToolMetadata) (cf : Bool) : Prop :=
+  tmeta.output_bounded = true ∧ cf = true ∧
+    budgetReadC st.agent_budget agent ≠ types.BudgetLevel.Exhausted
+
 /-- Comprehensive inversion: the `invoke_complete_ok_inv` frame, but with the taint/gh writes read off
     in the canonical last-match `vmsMemLast` view and every written map's `vmNodupKeys` post exposed
     (`in_flight` remove, the endorsed-path budget debit, the unendorsed-path taint/gh inserts). -/

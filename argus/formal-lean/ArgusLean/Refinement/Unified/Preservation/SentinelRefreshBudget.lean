@@ -15,6 +15,48 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
+/-- Inversion lemma for a successful `sentinel_refresh_budget` step. Peels the two gates (active via
+    `VecSet.contains`, the `RefreshBudget` cap via `set_contains`'s forward direction) and reads off
+    the single `agent_budget` write as the key-filtered entry list (`VecMap.remove`). -/
+theorem sentinel_refresh_budget_ok_inv
+    (st : state.KernelState) (bg : background.BackgroundTheory)
+    (agent : types.AgentId)
+    (st' : state.KernelState) (ev : event.KernelAction)
+    (hok : transitions.sentinel_refresh_budget st bg agent = .ok (.Ok (st', ev))) :
+    ∃ vm,
+      vsMem st.agent_active agent ∧
+      vmsMem st.agent_cap agent capability.CapKind.RefreshBudget ∧
+      st' = { st with agent_budget := vm } ∧
+      vm.entries.val = st.agent_budget.entries.val.filter (removeKept agent) := by
+  simp only [transitions.sentinel_refresh_budget] at hok
+  -- Gate 1: `agent` active.
+  obtain ⟨b, hbEq, hbIff⟩ :=
+    spec_imp_exists (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active agent)
+  rw [hbEq] at hok
+  simp only [bind_tc_ok] at hok
+  have hb : b = true := by cases b with | true => rfl | false => simp at hok
+  simp only [hb, reduceIte] at hok
+  -- Gate 2: `agent` holds the `RefreshBudget` capability.
+  obtain ⟨b1, hb1Eq, hb1Imp⟩ := spec_imp_exists
+    (vecMapKVecSetSetContains_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      capability.CapKind.Insts.CoreCloneClone capability.CapKind.Insts.CoreCmpPartialEqCapKind
+      capKind_eq_spec capKind_clone_spec st.agent_cap agent capability.CapKind.RefreshBudget)
+  rw [hb1Eq] at hok
+  simp only [bind_tc_ok] at hok
+  have hb1 : b1 = true := by cases b1 with | true => rfl | false => simp at hok
+  simp only [hb1, reduceIte] at hok
+  -- Body: delete `agent`'s budget entry.
+  obtain ⟨vm, hvmEq, hvmChar⟩ := spec_imp_exists
+    (vecMapRemove_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec
+      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent)
+  rw [hvmEq] at hok
+  simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
+  obtain ⟨hStateEq, _hEventEq⟩ := hok
+  exact ⟨vm, hbIff.mp hb, hb1Imp hb1, hStateEq.symm, hvmChar⟩
+
 /-- `sentinel_refresh_budget` preserves the unified `R`. -/
 theorem sentinel_refresh_budget_preservesR
     (st : state.KernelState) (bg : background.BackgroundTheory)
