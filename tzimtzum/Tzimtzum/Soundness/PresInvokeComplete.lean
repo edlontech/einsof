@@ -22,11 +22,14 @@ set_option linter.unnecessarySeqFocus false
 
 namespace Tzimtzum
 
+variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId : Type}
+
 /-- The resistant VC: `active_has_budget` under `invoke_complete`. For `A ≠ a` budget is
     framed. For `A = a`: either the conform/non-exhausted condition fails (budget kept,
     reuse the `s`-witness) or it holds (debit; enumerate `bl5..bl1` — the condition rules
     out `bl_exhausted` as the source). -/
-private theorem ic_pres_ahb (a : KAgent) (inv : KInv) (s s' : KSt)
+private theorem ic_pres_ahb (a : AgentId) (inv : InvocationId)
+    (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (hahb : active_has_budget s)
     (hg : (invoke_complete a inv).guard s)
     (hn : (invoke_complete a inv).next s s') :
@@ -67,7 +70,9 @@ private theorem ic_pres_ahb (a : KAgent) (inv : KInv) (s s' : KSt)
     · exact ⟨L, by rw [hbeq]; left; exact ⟨rfl, Or.inr ⟨hcond, hL⟩⟩⟩
   · exact ⟨L, by rw [hbeq]; right; exact ⟨hAa, hL⟩⟩
 
-theorem pres_invoke_complete (s s' : KSt) (hinv : allInv s)
+theorem pres_invoke_complete
+    (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (hinv : allInv s)
     (hn : (Kav.close2 invoke_complete).next s s') : allInv s' := by
   simp only [Kav.close2] at hn
   obtain ⟨a, invid, hg, hn⟩ := hn

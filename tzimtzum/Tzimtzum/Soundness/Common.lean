@@ -28,8 +28,14 @@ set_option linter.unreachableTactic false
 
 namespace Tzimtzum
 
-/-- The full TzimtzumV2 invariant bundle, in the order of `allInvariants`. -/
-def allInv (s : KSt) : Prop :=
+variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId : Type}
+
+/-- The full TzimtzumV2 invariant bundle, in the order of `allInvariants`.
+
+    Sort-polymorphic: monomorphising at the opaque `KSt` (the `#kav_check` audit sorts) is just one
+    instance. The concrete-sort refinement (`argus/formal-lean`) instantiates it at the extracted
+    `String`-backed id types via the polymorphic soundness bundle (`kav_soundP`). -/
+def allInv (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   root_always_active s ∧ default_deny s ∧ flow_confinement s ∧ flow_confinement_weak s
   ∧ capability_subsumption s ∧ revocation_clean s ∧ taint_integrity s
   ∧ tool_attestation_intact s ∧ instruction_attestation_intact s

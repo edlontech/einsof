@@ -16,10 +16,13 @@ set_option linter.unnecessarySeqFocus false
 
 namespace Tzimtzum
 
+variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId : Type}
+
 /-- The resistant VC: `active_has_budget` under `return_endorsed`. `budget_unique` + the
     `¬ bl_exhausted` precondition + `active_has_budget s` pin `prnt` to exactly one
     non-exhausted level, each of which has a debit target. -/
-private theorem re_pres_ahb (child prnt : KAgent) (s s' : KSt)
+private theorem re_pres_ahb (child prnt : AgentId)
+    (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (hahb : active_has_budget s)
     (hg : (return_endorsed child prnt).guard s)
     (hn : (return_endorsed child prnt).next s s') :
@@ -60,7 +63,9 @@ private theorem re_pres_ahb (child prnt : KAgent) (s s' : KSt)
         ∨ (X ≠ prnt ∧ s.agent_budget X Y)) := by grind
     rw [hbeq]; right; exact ⟨hAp, hL⟩
 
-theorem pres_return_endorsed (s s' : KSt) (hinv : allInv s)
+theorem pres_return_endorsed
+    (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (hinv : allInv s)
     (hn : (Kav.close2 return_endorsed).next s s') : allInv s' := by
   simp only [Kav.close2] at hn
   obtain ⟨child, prnt, hg, hn⟩ := hn
