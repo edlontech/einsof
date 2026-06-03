@@ -6,6 +6,10 @@ import ArgusLean.Refinement.Unified.Preservation.ReturnEndorsed
 import ArgusLean.Refinement.Unified.Preservation.Revoke
 import ArgusLean.Refinement.Unified.Preservation.CascadeRevoke
 import ArgusLean.Refinement.Unified.Preservation.Delegate
+import ArgusLean.Refinement.Unified.Preservation.InvokeComplete
+import ArgusLean.Refinement.Unified.Preservation.SentinelElevateTaint
+import ArgusLean.Refinement.Unified.Preservation.ReturnUnendorsed
+import ArgusLean.Refinement.Unified.Preservation.InvokeStart
 
 /-! # Layer 1 — top-level dispatch + the `step_refines` bundle (in progress)
 
@@ -21,13 +25,13 @@ so `kernelStep` is parameterised by them; their `step_refines` cases consume the
 
 ## Status (2026-06-03)
 
-`step_refines` is **not yet assembled**: 8 of the 12 `_preservesR` lemmas are proven
-(`register_tool`, `load_instruction`, `grant_capability`, `sentinel_refresh_budget`,
-`return_endorsed`, and the three `clear_agent_state` removals `delegate` / `revoke` /
-`cascade_revoke`), the four oracle actions (`invoke_start` / `invoke_complete` /
-`return_unendorsed` / `sentinel_elevate_taint`) remain. This file provides the dispatcher + the
-`CapacityOK` capacity-honesty hypothesis + the oracle-extraction helpers, so the assembly is a
-mechanical case-split once those land. -/
+`step_refines` is **assembled**: all 12 `_preservesR` lemmas are proven, and `step_refines` collapses
+them into one "the kernel step simulates the spec, preserving `R`" statement by a case-split on the
+extracted action tag. The capacity-honesty assumptions are the per-action `StepPre` bundle (the exact
+bounds each `_preservesR` lists; there is no resource model to discharge them — see the note below); the
+runtime-oracle agreements are the `CgAgree` / `AuAgree` / `CfAgree` hypotheses, reduced to the per-agent
+`cgOf` / `auOf` / `cfOf` the oracle-backed lemmas take via the extraction helpers. `InvokeStart`'s
+abstract binding prediction (`a.invocation_tool inv = tool`) is the last `StepPre` conjunct. -/
 
 namespace ArgusLean.Refinement
 
@@ -75,18 +79,75 @@ def absActionOf (act : event.KernelAction) : Kav.Action AbsState :=
   | .SentinelElevateTaint agent level => Tzimtzum.sentinel_elevate_taint agent (confA level)
   | .SentinelRefreshBudget agent => Tzimtzum.sentinel_refresh_budget agent
 
-/-! ## Capacity honesty
+/-! ## Capacity honesty + per-action precondition
 
 Every `_preservesR` lemma takes its `…entries.length < Usize.max` (and joint/multiplicative) bounds as
 free hypotheses. There is no resource model to discharge them — a `Vec` cannot in practice grow past
-`usize::MAX`, but proving it is out of scope (see the remaining-work note). The bundle states the
-capacity assumption explicitly rather than pretending it away; `CapacityOK st` is the per-action
-conjunction needed by whichever transition fires. (Stated abstractly here; the per-action instances are
-the bounds each `_preservesR` already lists.) -/
+`usize::MAX`, but proving it is out of scope. The bundle states the capacity assumption explicitly
+rather than pretending it away: `StepPre st bg a act` is the per-action conjunction of exactly the
+bounds the fired transition's `_preservesR` lists, plus — for `InvokeStart` — the abstract binding
+prediction `a.invocation_tool inv = tool` (the one non-capacity precondition, the oracle agreement on
+the invocation's tool). The agent-tree removals (`revoke` / `cascade_revoke`) and the budget reset
+(`sentinel_refresh_budget`) need none, so their slot is `True`. -/
 
-/-- Placeholder for the per-step capacity assumption. The concrete bounds are the ones each
-    `_preservesR` lemma takes; `step_refines` will be stated against the relevant instance. -/
-abbrev CapacityOK (_st : state.KernelState) : Prop := True
+/-- The per-action precondition `step_refines` consumes for `act`: the capacity bounds its
+    `_preservesR` lemma requires, plus `InvokeStart`'s abstract binding prediction. -/
+def StepPre (st : state.KernelState) (_bg : background.BackgroundTheory) (a : AbsState)
+    (act : event.KernelAction) : Prop :=
+  match act with
+  | .RegisterTool _ => st.tool_registered.items.val.length < Usize.max
+  | .LoadInstruction _ _ =>
+      st.agent_instruction.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.agent_instruction.entries.val, p.2.items.val.length < Usize.max)
+  | .Delegate _ _ =>
+      st.agent_active.items.val.length < Usize.max ∧
+      st.agent_cap.entries.val.length < Usize.max ∧
+      st.agent_parent.entries.val.length < Usize.max
+  | .GrantCapability _ _ _ =>
+      st.agent_cap.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.agent_cap.entries.val, p.2.items.val.length < Usize.max)
+  | .Revoke _ _ => True
+  | .CascadeRevoke _ _ => True
+  | .InvokeStart agent tool inv =>
+      (vmSetLen st.taint_levels agent + vmSetLen st.in_flight agent
+        + vmSetLen st.in_flight agent + 1 ≤ Usize.max) ∧
+      st.override_used.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.override_used.entries.val,
+        p.2.items.val.length + (vmSetLen st.taint_levels agent + vmSetLen st.in_flight agent
+          + vmSetLen st.in_flight agent + 1) ≤ Usize.max) ∧
+      st.invocation_tool.entries.val.length < Usize.max ∧
+      st.in_flight.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.in_flight.entries.val, p.2.items.val.length < Usize.max) ∧
+      a.invocation_tool inv = tool
+  | .InvokeComplete _ _ =>
+      st.agent_budget.entries.val.length < Usize.max ∧
+      st.taint_levels.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max) ∧
+      st.gh_taint_invoked.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.gh_taint_invoked.entries.val, p.2.items.val.length < Usize.max)
+  | .ReturnEndorsed _ _ => st.agent_budget.entries.val.length < Usize.max
+  | .ReturnUnendorsed child parent =>
+      (vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max) ∧
+      st.taint_levels.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.taint_levels.entries.val,
+        p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max) ∧
+      (vmSetLen st.taint_levels child ≤ Usize.max) ∧
+      st.gh_taint_received.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.gh_taint_received.entries.val,
+        p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max) ∧
+      st.override_used.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.override_used.entries.val,
+        p.2.items.val.length + vmSetLen st.taint_levels child * vmSetLen st.in_flight parent
+          ≤ Usize.max)
+  | .SentinelElevateTaint agent _ =>
+      (inFlightLen st agent ≤ Usize.max) ∧
+      st.override_used.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.override_used.entries.val, p.2.items.val.length + inFlightLen st agent ≤ Usize.max) ∧
+      st.taint_levels.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max) ∧
+      st.gh_taint_invoked.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.gh_taint_invoked.entries.val, p.2.items.val.length < Usize.max)
+  | .SentinelRefreshBudget _ => True
 
 /-! ## Runtime-oracle extraction
 
@@ -132,5 +193,68 @@ theorem cfOfAgree_iff {F : Type} {cfInst : traits.ConformanceOracle F} {conforma
     {bg : background.BackgroundTheory} {a : AbsState}
     (h : CfAgree cfInst conformance bg a) (ag : types.AgentId) (t : types.ToolId) :
     cfOfAgree h ag t = true ↔ a.output_conforms ag t := (h ag t).choose_spec.2
+
+/-! ## The bundle: `step_refines`
+
+The capstone. For any concrete state related to the abstract by `R`, with the runtime oracles agreeing
+(`CgAgree`/`AuAgree`/`CfAgree`) and the fired action's capacity precondition (`StepPre`) met, every
+successful `kernelStep` is matched by the abstract `absActionOf act` — establishing its guard, producing
+a successor, and **preserving `R`**. One case per extracted action tag, each dispatching to the action's
+`_preservesR` lemma; the four oracle-backed cases reduce the state-level agreements to the per-agent
+`cgOf`/`auOf`/`cfOf` the lemmas take. This is the single "the kernel simulates the spec" statement the
+12 per-action islands collapse into. -/
+
+theorem step_refines {A C F : Type}
+    (aInst : traits.AuthorizerOracle A) (cgInst : traits.ContentGateOracle C)
+    (cfInst : traits.ConformanceOracle F)
+    (authorizer : A) (content_gate : C) (conformance : F)
+    (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState)
+    (act : event.KernelAction)
+    (hR : R st bg a)
+    (hCg : CgAgree cgInst content_gate st bg a)
+    (hAu : AuAgree aInst authorizer st bg a)
+    (hCf : CfAgree cfInst conformance bg a)
+    (hPre : StepPre st bg a act)
+    (st' : state.KernelState) (ev : event.KernelAction)
+    (hok : kernelStep aInst cgInst cfInst authorizer content_gate conformance st bg act
+      = .ok (.Ok (st', ev))) :
+    ∃ a', (absActionOf act).guard a ∧ (absActionOf act).next a a' ∧ R st' bg a' := by
+  cases act with
+  | RegisterTool tool =>
+      exact register_tool_preservesR st bg a tool hR hPre st' ev hok
+  | LoadInstruction agent instr =>
+      exact load_instruction_preservesR st bg a agent instr hR hPre.1 hPre.2 st' ev hok
+  | Delegate grantor grantee =>
+      exact delegate_preservesR st bg a grantor grantee hR hPre.1 hPre.2.1 hPre.2.2 st' ev hok
+  | GrantCapability parent child cap =>
+      exact grant_capability_preservesR st bg a parent child cap hR hPre.1 hPre.2 st' ev hok
+  | Revoke parent target =>
+      exact revoke_preservesR st bg a parent target hR st' ev hok
+  | CascadeRevoke child parent =>
+      exact cascade_revoke_preservesR st bg a child parent hR st' ev hok
+  | InvokeStart agent tool inv =>
+      obtain ⟨auOf, hau, hauA⟩ := auOfAgree hAu agent tool
+      exact invoke_start_preservesR aInst cgInst st bg authorizer content_gate a agent tool inv
+        (cgOfAgree hCg agent) auOf (fun t => cgOfAgree_ok hCg agent t)
+        (fun t => cgOfAgree_iff hCg agent t) hau hauA hPre.2.2.2.2.2.2 hR hPre.1 hPre.2.1 hPre.2.2.1
+        hPre.2.2.2.1 hPre.2.2.2.2.1 hPre.2.2.2.2.2.1 st' ev hok
+  | InvokeComplete agent inv =>
+      exact invoke_complete_preservesR cfInst st bg conformance a agent inv (cfOfAgree hCf agent)
+        (fun t s => cfOfAgree_ok hCf agent t s) (fun t => cfOfAgree_iff hCf agent t) hR
+        hPre.1 hPre.2.1 hPre.2.2.1 hPre.2.2.2.1 hPre.2.2.2.2 st' ev hok
+  | ReturnEndorsed child parent =>
+      exact return_endorsed_preservesR st bg a child parent hR hPre st' ev hok
+  | ReturnUnendorsed child parent =>
+      exact return_unendorsed_preservesR cgInst st bg content_gate a child parent
+        (cgOfAgree hCg parent) (fun t => cgOfAgree_ok hCg parent t)
+        (fun t => cgOfAgree_iff hCg parent t) hR hPre.1 hPre.2.1 hPre.2.2.1 hPre.2.2.2.1
+        hPre.2.2.2.2.1 hPre.2.2.2.2.2.1 hPre.2.2.2.2.2.2.1 hPre.2.2.2.2.2.2.2 st' ev hok
+  | SentinelElevateTaint agent level =>
+      exact sentinel_elevate_taint_preservesR cgInst st bg content_gate a agent level
+        (cgOfAgree hCg agent) (fun t => cgOfAgree_ok hCg agent t)
+        (fun t => cgOfAgree_iff hCg agent t) hR hPre.1 hPre.2.1 hPre.2.2.1 hPre.2.2.2.1
+        hPre.2.2.2.2.1 hPre.2.2.2.2.2.1 hPre.2.2.2.2.2.2 st' ev hok
+  | SentinelRefreshBudget agent =>
+      exact sentinel_refresh_budget_preservesR st bg a agent hR st' ev hok
 
 end ArgusLean.Refinement
