@@ -210,6 +210,116 @@ theorem ocC_eq (st : state.KernelState) (agent : types.AgentId) (level : types.C
       · intro hv; exact ⟨p.2, by rw [hL, ← hp1], hv⟩
     cases b <;> simp_all
 
+/-! ## Per-invocation flow contribution (shared by `sentinel_elevate_taint` /
+`return_unendorsed`)
+
+`invToolC` / `egItems` and the per-invocation `invMissing` / `invDenied` / `invConsumed`
+contributions to a flow loop's `missing_binding` / `denied` / `to_consume`, plus the pure
+`FlowMode` keystones `egressConsumed_iff_abstractDenied` / `not_egressDenied_disj` and the
+`inFlightLen` capacity helper. Bridging shared by the egress-gated actions. -/
+
+/-- The live tool bound to `inv` (last-match `invocation_tool`), or `none`. -/
+def invToolC (st : state.KernelState) (inv : types.InvocationId) : Option types.ToolId :=
+  (vmLastEntry st.invocation_tool.entries.val inv).map Prod.snd
+
+/-- A tool's egress list: empty when it has no metadata. -/
+def egItems (bg : background.BackgroundTheory) (tool : types.ToolId) : List types.EgressKind :=
+  match toolMetaC bg tool with
+  | none => []
+  | some m => m.egress.items.val
+
+/-- `inv` lacks a tool binding (the `MissingToolBinding` condition). -/
+def invMissing (st : state.KernelState) (inv : types.InvocationId) : Prop :=
+  invToolC st inv = none
+
+/-- `inv` contributes denial: its bound tool has an egress that the flow gate denies at `level`. -/
+def invDenied (st : state.KernelState) (bg : background.BackgroundTheory) (level : types.ConfLevel)
+    (cgOf ovOf ocOf : types.ToolId → Bool) (inv : types.InvocationId) : Prop :=
+  ∃ tool, invToolC st inv = some tool ∧
+    ∃ E ∈ egItems bg tool, egressDenied (flowModeC bg level E) (cgOf tool) (ovOf tool) (ocOf tool)
+
+/-- `inv` contributes the override key `k` to `to_consume`. -/
+def invConsumed (st : state.KernelState) (bg : background.BackgroundTheory) (level : types.ConfLevel)
+    (ovOf ocOf : types.ToolId → Bool) (inv : types.InvocationId) (k : types.OverrideKey) : Prop :=
+  ∃ tool, invToolC st inv = some tool ∧ k = gateConsumeKey tool level ∧
+    ∃ E ∈ egItems bg tool, egressConsumed (flowModeC bg level E) (ovOf tool) (ocOf tool)
+
+/-- A missing-binding invocation contributes no denial. -/
+theorem not_invDenied_missing {st bg level cgOf ovOf ocOf} {inv : types.InvocationId}
+    (h : invToolC st inv = none) : ¬ invDenied st bg level cgOf ovOf ocOf inv := by
+  simp only [invDenied]; rintro ⟨tool, htool, _⟩; rw [h] at htool; simp at htool
+
+/-- A missing-binding invocation contributes nothing to `to_consume`. -/
+theorem not_invConsumed_missing {st bg level ovOf ocOf} {inv : types.InvocationId}
+    {k : types.OverrideKey} (h : invToolC st inv = none) :
+    ¬ invConsumed st bg level ovOf ocOf inv k := by
+  simp only [invConsumed]; rintro ⟨tool, htool, _⟩; rw [h] at htool; simp at htool
+
+/-- The length of `agent`'s live (last-match) in-flight set, `0` when `agent` is absent. -/
+def inFlightLen (st : state.KernelState) (agent : types.AgentId) : Nat :=
+  match vmLastEntry st.in_flight.entries.val agent with
+  | none => 0
+  | some p => p.2.items.val.length
+
+/-! ## Flow-guard ⇒ consume/denied-modulo-override equivalence
+
+The keystone single-use correspondence, at the pure `FlowMode`/`Bool` level. Under the per-egress
+guard (no egress is `Denied`), a tool's `to_consume` contribution (`∃ Deny egress`, i.e.
+`egressConsumed`) coincides with the abstract "an override was relied on" condition (`override present`
+plus `∃ egress that the flow would deny without the override`). The guard forces `ov ∧ ¬oc` at every
+`Deny` egress and rules out `Inspect`-with-failing-gate, collapsing the two to `∃ Deny egress`. -/
+theorem egressConsumed_iff_abstractDenied
+    (egs : List types.EgressKind) (fm : types.EgressKind → background.FlowMode) (cg ov oc : Bool)
+    (hguard : ∀ E ∈ egs, ¬ egressDenied (fm E) cg ov oc) :
+    (∃ E ∈ egs, egressConsumed (fm E) ov oc) ↔
+    (ov = true ∧ ∃ E ∈ egs, (fm E ≠ background.FlowMode.Allow ∧
+       ¬ (fm E = background.FlowMode.Inspect ∧ cg = true))) := by
+  constructor
+  · rintro ⟨E, hE, hd, hov, _hoc⟩
+    refine ⟨hov, E, hE, ?_, ?_⟩
+    · simp [hd]
+    · simp [hd]
+  · rintro ⟨hov, E, hE, hne, hni⟩
+    refine ⟨E, hE, ?_⟩
+    have hg := hguard E hE
+    simp only [egressDenied] at hg
+    cases hfmE : fm E with
+    | Allow => rw [hfmE] at hne; exact absurd rfl hne
+    | Inspect =>
+      rw [hfmE] at hg hni
+      exfalso
+      cases cg with
+      | false => exact hg (Or.inl ⟨rfl, rfl⟩)
+      | true => exact hni ⟨rfl, rfl⟩
+    | Deny =>
+      rw [hfmE] at hg
+      refine ⟨rfl, hov, ?_⟩
+      cases oc with
+      | false => rfl
+      | true => exact absurd (Or.inr ⟨rfl, Or.inr rfl⟩) hg
+
+/-- `¬ egressDenied` rewritten as the abstract three-way flow disjunction (Allow / Inspect-with-gate /
+    fresh-override). Pure `FlowMode`/`Bool` case analysis. -/
+theorem not_egressDenied_disj (fm : background.FlowMode) (cg ov oc : Bool)
+    (h : ¬ egressDenied fm cg ov oc) :
+    fm = background.FlowMode.Allow ∨ (fm = background.FlowMode.Inspect ∧ cg = true)
+      ∨ (ov = true ∧ oc = false) := by
+  simp only [egressDenied, not_or] at h
+  obtain ⟨h1, h2⟩ := h
+  cases fm with
+  | Allow => exact Or.inl rfl
+  | Inspect =>
+    cases cg with
+    | true => exact Or.inr (Or.inl ⟨rfl, rfl⟩)
+    | false => exact absurd ⟨rfl, rfl⟩ h1
+  | Deny =>
+    cases ov with
+    | false => exact absurd ⟨rfl, Or.inl rfl⟩ h2
+    | true =>
+      cases oc with
+      | false => exact Or.inr (Or.inr ⟨rfl, rfl⟩)
+      | true => exact absurd ⟨rfl, Or.inr rfl⟩ h2
+
 end ArgusLean.Refinement
 
 -- Trust-base audit. Beyond the three standard axioms: the `register_tool` `String`/id residuals (via
