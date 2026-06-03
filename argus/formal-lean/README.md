@@ -22,8 +22,6 @@ Lean 4.30 (pinned via `lean-toolchain`). After a toolchain change run `lake exe 
 ArgusLean.lean                      root: Generated + Smoke + Unified.{Bundle,Soundness}
 ArgusLean/
   Generated/ArgusKernel.lean        Aeneas/Charon-extracted kernel model — DO NOT EDIT
-  Generated/COVERAGE.md             extraction coverage notes
-  Smoke.lean                        spec + extracted model coexist in one scope
   Refinement/
     Bridging/                       reusable spec-bridging: concrete Result/loop ↔ list-level facts
       Collections.lean              VecMap/VecSet last-match insert/remove specs; id/String trust axioms
