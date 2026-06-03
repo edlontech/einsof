@@ -29,9 +29,8 @@ ArgusLean/
       Collections.lean              VecMap/VecSet last-match insert/remove specs; id/String trust axioms
       StateRelation.lean            AbsState, confC/budgetC, capMem/budgetReadC, clear/budget specs
       FlowBridging.lean             flow_decision / gate_egress / egressDenied / egressConsumed
-      ReturnUnendorsedFlow.lean     flow-oracle reads (flowModeC/toolMetaC/…) + per-invocation flow
-                                    contribution (invToolC/invDenied/invConsumed/…). General flow
-                                    bridging despite the legacy name.
+      FlowOracle.lean              flow-oracle reads (flowModeC/toolMetaC/…) + per-invocation
+                                    flow contribution (invToolC/invDenied/…) — general flow bridging
     PlausibleChecks.lean            opt-in property-test harness → `lake build ArgusChecks`
     Unified/
       ViewCoincidence.lean          the canonical-view facts the unified relation needs

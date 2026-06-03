@@ -22,7 +22,7 @@ set_option maxHeartbeats 4000000
 /-! ## The in-flight loop
 
 The per-invocation flow-contribution predicates (`invToolC` / `egItems` / `invMissing` / `invDenied` /
-`invConsumed`) and the pure `FlowMode` keystones live in `ReturnUnendorsedFlow` (shared with
+`invConsumed`) and the pure `FlowMode` keystones live in `FlowOracle` (shared with
 `return_unendorsed`); this file consumes them. -/
 
 /-- Generalised loop spec for `sentinel_elevate_taint_loop`, relative to a fixed reference
