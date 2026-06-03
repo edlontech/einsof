@@ -85,7 +85,7 @@ theorem returnUnendInner_spec {C : Type} (cgInst : traits.ContentGateOracle C)
           (∃ x ∈ invs.items.val.take (iL.val + 1), P x) ↔
           (∃ x ∈ invs.items.val.take iL.val, P x) ∨ P inv := by
         intro P
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨x, hx | hx, hPx⟩
@@ -286,7 +286,7 @@ theorem returnUnendOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
           (∃ x ∈ child_taint.items.val.take (iL.val + 1), P x) ↔
           (∃ x ∈ child_taint.items.val.take iL.val, P x) ∨ P level := by
         intro P
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨x, hx | hx, hPx⟩

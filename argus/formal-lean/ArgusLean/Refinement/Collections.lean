@@ -158,7 +158,7 @@ theorem vecSetContains_loop_spec {T : Type} [DecidableEq T]
         (step*
          simp only [i2_post]
          refine ⟨by omega, ?_, by omega⟩
-         simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+         simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
            List.mem_append, List.mem_singleton, ← ht]
          grind)
     case isFalse h =>
@@ -1547,7 +1547,7 @@ theorem getSetOrEmpty_spec {K T : Type} [DecidableEq K]
     unfold collections.VecSet.new
     simp only [spec_ok]
     intro v
-    simp only [vsMem, alloc.vec.Vec.new, List.not_mem_nil, false_iff]
+    simp only [vsMem, List.not_mem_nil, false_iff]
     rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
   | some p =>
     rw [hL] at ho; simp only [Option.map_some] at ho; subst ho
@@ -1611,7 +1611,7 @@ theorem vecSetUnionWithLoop_spec {T : Type} [DecidableEq T]
       (∀ y, vsMem p.1 y ↔ vsMem self0 y ∨ y ∈ other.items.val.take p.2.val))
   · rintro ⟨accL, iL⟩ ⟨hile, hlenL, hmemL⟩
     dsimp only at hile hlenL hmemL
-    simp only [collections.VecSet.union_with_loop.body, alloc.vec.Vec.len, bind_tc_ok]
+    simp only [collections.VecSet.union_with_loop.body, alloc.vec.Vec.len]
     split
     case isTrue h =>
       have hlt : iL.val < other.items.val.length := by scalar_tac
@@ -1627,7 +1627,7 @@ theorem vecSetUnionWithLoop_spec {T : Type} [DecidableEq T]
       have hi2 : i2.val = iL.val + 1 := by scalar_tac
       rw [hvs1Mem y, hmemL y, hi2]
       have hte : t = other.items.val[iL.val] := he
-      simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+      simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
         List.mem_append, List.mem_singleton, hte]
       rw [or_assoc]
     case isFalse h =>

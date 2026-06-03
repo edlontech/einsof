@@ -14,3 +14,8 @@ package «argus-formal-lean» where
 
 @[default_target]
 lean_lib «ArgusLean» where
+
+-- Opt-in property-test harness (Plausible). NOT in the default build; run with:
+--   lake build ArgusChecks
+lean_lib «ArgusChecks» where
+  roots := #[`ArgusLean.Refinement.PlausibleChecks]

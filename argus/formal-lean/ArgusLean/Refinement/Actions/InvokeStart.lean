@@ -57,7 +57,7 @@ theorem invokeStartLoop0_spec
       rw [hbEq]; simp only [bind_tc_ok]
       have hext : (∃ c ∈ caps.items.val.take (ci'.val + 1), ¬ vmsMemLast vm agent c) ↔
           (∃ c ∈ caps.items.val.take ci'.val, ¬ vmsMemLast vm agent c) ∨ ¬ vmsMemLast vm agent cap := by
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨c, hc | hc, hPc⟩
@@ -123,7 +123,7 @@ theorem specTaintLoop_spec (vm : collections.VecMap types.InvocationId types.Too
           (∃ x ∈ flights.items.val.take (jL.val + 1), P x) ↔
           (∃ x ∈ flights.items.val.take jL.val, P x) ∨ P inv := by
         intro P
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨x, hx | hx, hPx⟩
@@ -297,7 +297,7 @@ theorem invokeStartLoop1_spec {C : Type} (cgInst : traits.ContentGateOracle C)
           (∃ x ∈ spec_taint.items.val.take (iL.val + 1), P x) ↔
           (∃ x ∈ spec_taint.items.val.take iL.val, P x) ∨ P level := by
         intro P
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨x, hx | hx, hPx⟩
@@ -403,7 +403,7 @@ theorem invokeStartLoop2_spec {C : Type} (cgInst : traits.ContentGateOracle C)
           (∃ x ∈ invs.items.val.take (iL.val + 1), P x) ↔
           (∃ x ∈ invs.items.val.take iL.val, P x) ∨ P inv := by
         intro P
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨x, hx | hx, hPx⟩
@@ -563,7 +563,7 @@ theorem containsKeyLoop_spec {K V : Type} [DecidableEq K]
       rw [heq t key]; simp only [bind_tc_ok]
       have hext : (∃ a v, (a, v) ∈ self.entries.val.take (i'.val + 1) ∧ a = key) ↔
           (∃ a v, (a, v) ∈ self.entries.val.take i'.val ∧ a = key) ∨ t = key := by
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨a, v, ha | ha, hPa⟩
@@ -622,7 +622,7 @@ theorem anyValueContainsLoop_spec {K T : Type} [DecidableEq T]
       have hext : (∃ a v, (a, v) ∈ self.entries.val.take (i'.val + 1) ∧ elem ∈ v.items.val) ↔
           (∃ a v, (a, v) ∈ self.entries.val.take i'.val ∧ elem ∈ v.items.val) ∨
             elem ∈ vs0.items.val := by
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨a, v, ha | ha, hPa⟩

@@ -11,7 +11,7 @@ import ArgusLean.Refinement.Unified.Preservation.SentinelElevateTaint
 import ArgusLean.Refinement.Unified.Preservation.ReturnUnendorsed
 import ArgusLean.Refinement.Unified.Preservation.InvokeStart
 
-/-! # Layer 1 — top-level dispatch + the `step_refines` bundle (in progress)
+/-! # Layer 1 — top-level dispatch + the `step_refines` bundle
 
 The capstone of Layer 1: a single concrete step `kernelStep`, the abstract action it refines
 (`absActionOf`), and the bundle theorem `step_refines` collapsing the 12 per-action `_preservesR`

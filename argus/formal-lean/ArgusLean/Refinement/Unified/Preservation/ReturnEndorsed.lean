@@ -156,7 +156,7 @@ theorem return_endorsed_preservesR
       rw [hBud G]
       by_cases hG : G = parent
       · subst hG
-        simp only [if_pos rfl, true_and, and_self, ne_eq, not_true_eq_false, false_and, or_false]
+        simp only [true_and, ne_eq, not_true_eq_false, false_and, or_false]
         rw [hR.budget G Tzimtzum.BudgetLevel.bl5 hactiveG, hR.budget G Tzimtzum.BudgetLevel.bl4 hactiveG,
           hR.budget G Tzimtzum.BudgetLevel.bl3 hactiveG, hR.budget G Tzimtzum.BudgetLevel.bl2 hactiveG,
           hR.budget G Tzimtzum.BudgetLevel.bl1 hactiveG]

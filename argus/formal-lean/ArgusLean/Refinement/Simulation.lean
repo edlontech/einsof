@@ -10,15 +10,20 @@ import ArgusLean.Refinement.Actions.ReturnUnendorsed
 import ArgusLean.Refinement.Actions.InvokeComplete
 import ArgusLean.Refinement.Actions.InvokeStart
 
-/-! # Refinement — simulation bundle
+/-! # Refinement — per-action simulation index
 
-Aggregator for the per-action forward-simulation proofs. Each of the 12 TzimtzumV2
-transitions gets its own file under `Refinement/Actions/`, holding an inversion lemma
-(`<action>_ok_inv`) + a simulation theorem (`<action>_refines`) + its own axiom audit, all
-cloned from the `RegisterTool` exemplar. This file imports them and is where the combined
-"all 12 transitions refine" theorem is assembled once the fan-out is complete.
+Import aggregator for the 12 per-action forward-simulation proofs. Each TzimtzumV2 transition gets
+its own file under `Refinement/Actions/`, holding an inversion lemma (`<action>_ok_inv`) + a
+simulation theorem (`<action>_refines`) against that action's *slice* relation `R<action>` + its own
+axiom audit, all cloned from the `RegisterTool` exemplar.
 
-C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
+This file states no theorem of its own — it is the index for the per-action layer. The end-to-end
+"every reachable kernel state refines the spec" result is assembled separately, against the single
+*unified* relation `R`, in `Refinement/Unified/` (`Unified/Bundle.lean`'s `step_refines`, composed to
+`implementation_sound` in `Unified/Soundness.lean`). The per-action `_refines`/`_ok_inv` lemmas below
+feed that assembly for the oracle/loop-heavy actions — see each `Unified/Preservation/*` file.
+
+C2 fan-out (mirrors the spec's `Tzimtzum/Check*.lean` files):
 
 * [x] `register_tool`        — Actions/RegisterTool.lean (exemplar / template)
 * [x] `load_instruction`     — Actions/LoadInstruction.lean (nested `agent_instruction` write)
@@ -52,7 +57,7 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `vecSetIsEmpty_spec` (the `set_nonempty` in-flight gate), proved
                                `BudgetLevel` eq/clone/debit (`debitC`). No new axioms beyond
                                `optionAgentId_ne_spec`; no root ⇒ no `sorryAx`/`AgentId.root`)
-* [x] `invoke_start`        — DONE 12/12 (Actions/InvokeStart.lean). THE LAST + heaviest action: the
+* [x] `invoke_start`        — Actions/InvokeStart.lean. The heaviest action: the
                                three-check invoke gate (capability CHECK 1 + graduated flow gate in three
                                sweeps 2a/2b/2c + authorizer CHECK 3) plus speculative taint. Refines
                                against `Rstart` (last-match `vmsMemLast` views of `agent_cap`/`in_flight`/
@@ -77,7 +82,7 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                inv = tool` is the abstract's prediction of the new binding (`hinvtool`).
                                Gotcha: `subst` on `ag = agent` wrongly eliminates `agent` (pass the eq
                                explicitly). Axiom-clean: standard three + `String`/id residuals.
-* [x] `invoke_complete`     — DONE 11/12 (Actions/InvokeComplete.lean). Loop-free; branches on the single
+* [x] `invoke_complete`     — Actions/InvokeComplete.lean. Loop-free; branches on the single
                                `zero_taint` conformance gate. Refines against `Rcomplete` (last-match
                                `vmsMemLast` `in_flight`, insert-view `vmsMem` taint/gh, get-style
                                `budgetReadC` budget, metadata `tool_conf_floor`/`tool_output_bounded`
@@ -94,7 +99,7 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `simp at hok` (collapses it + reduces `decide ¬b3 → !bexh`); `subst` on
                                `G = agent` wrongly eliminates `agent` (use `rw`). Axiom-clean: standard
                                three + `String`/id residuals + `invocationId_ne_spec`.
-* [x] `return_unendorsed`   — DONE 10/12 (Actions/ReturnUnendorsed.lean). Refines against `Rretu` (the
+* [x] `return_unendorsed`   — Actions/ReturnUnendorsed.lean. Refines against `Rretu` (the
                                last-match `vmsMemLast` oracle-agreement relation: `in_flight` via the
                                `set_nonempty`/`get_set_or_empty` reads, `taint_levels`/`gh_taint_received`
                                via the `get_set_or_empty` read + `extend_into` write, `override_used` via
@@ -113,7 +118,7 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `override_used` correspondence via `egressConsumed_iff_abstractDenied`. The
                                content gate is the one opaque oracle (`hcg`/`hcgA`). Axiom-clean: standard
                                three + `String`/id residuals + `optionAgentId_ne_spec`.
-* [x] `sentinel_elevate_taint` — DONE 9/12 (Actions/SentinelElevateTaint.lean). Refines against `Rsent`
+* [x] `sentinel_elevate_taint` — Actions/SentinelElevateTaint.lean. Refines against `Rsent`
                                (the oracle-agreement relation: `agent_active`/`taint_levels`/
                                `gh_taint_invoked` via the insert `vmsMem` view, `in_flight`/
                                `override_used` via the last-match `vmsMemLast` view that `get_set_or_empty`

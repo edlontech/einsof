@@ -195,7 +195,7 @@ theorem gateEgressLoop_spec {C : Type} (cgInst : traits.ContentGateOracle C)
       have htkD : (∃ E ∈ egress_set.items.val.take (iL.val + 1), egressDenied (fmOf E) cgVal ovVal ocVal)
           ↔ (∃ E ∈ egress_set.items.val.take iL.val, egressDenied (fmOf E) cgVal ovVal ocVal)
             ∨ egressDenied (fmOf e) cgVal ovVal ocVal := by
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨E, hE | hE, hPE⟩
@@ -207,7 +207,7 @@ theorem gateEgressLoop_spec {C : Type} (cgInst : traits.ContentGateOracle C)
       have htkC : (∃ E ∈ egress_set.items.val.take (iL.val + 1), egressConsumed (fmOf E) ovVal ocVal)
           ↔ (∃ E ∈ egress_set.items.val.take iL.val, egressConsumed (fmOf E) ovVal ocVal)
             ∨ egressConsumed (fmOf e) ovVal ocVal := by
-        simp only [List.take_succ, List.getElem?_eq_getElem hlt, Option.toList_some,
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨E, hE | hE, hPE⟩

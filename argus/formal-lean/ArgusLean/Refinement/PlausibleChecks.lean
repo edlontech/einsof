@@ -18,8 +18,9 @@ under duplicate keys (Check 2), and agrees once a key-uniqueness invariant is as
 Check 3 is now discharged for real — `Rdel` carries that invariant as `vmNodupKeys` and
 `parentPost_vmLast` proves the agreement (`delegate` is 10/10).
 
-Not part of the default build. Run explicitly:
-  lake env lean ArgusLean/Refinement/PlausibleChecks.lean
+Not part of the default build — it lives behind the `ArgusChecks` lean_lib target. Run with:
+  lake build ArgusChecks
+(or directly: `lake env lean ArgusLean/Refinement/PlausibleChecks.lean`)
 -/
 
 namespace ArgusLean.Refinement.PlausibleChecks
@@ -74,21 +75,42 @@ prefers `iffTestable`, which *structurally decomposes* a `↔` into `(p∧q)∨(
 for `∨`/`∧`-shaped bodies that decomposition blows up instance search. The `decide` form keeps the
 body a single decidable `Bool` equation, so `decidableTestable` fires once at the top. -/
 
--- Check 1 — positive control: a clause that IS proven (`mem_filter_removeKept`). Expect no
+-- Each check below is a `#guard_msgs` assertion (fixed seed ⇒ deterministic), so
+-- `lake build ArgusChecks` passes iff the documented falsification/agreement still holds.
+
+-- Check 1 — positive control: a clause that IS proven (`mem_filter_removeKept`). No
 -- counter-example, confirming the harness reports cleanly on true statements.
+/-- info: Unable to find a counter-example -/
+#guard_msgs in
 #eval Testable.check (cfg := cfg)
   (∀ (l : List (Fin 3 × Fin 3)) (key k v : Fin 3),
     decide ((k, v) ∈ l.filter (removeKept key)) = decide ((k, v) ∈ l ∧ k ≠ key))
 
--- Check 2 — the deferred `agent_parent` clause, UNGUARDED. Expect a counter-example of the
+-- Check 2 — the deferred `agent_parent` clause, UNGUARDED. The asserted counter-example has the
 -- documented shape `[(C, X), (C, grantee)]`: the entry-wise drop+rebuild keeps the earlier
 -- `(C, X)`, while the get-style abstract pre-image only saw `(C, grantee)` and then dropped it.
+/--
+error:
+===================
+Found a counter-example!
+l := [(0, 1), (0, 2)]
+grantee := 2
+grantor := 0
+C := 0
+P := 1
+issue: false = true does not hold
+(0 shrinks)
+-------------------
+-/
+#guard_msgs in
 #eval Testable.check (cfg := cfg)
   (∀ (l : List (Fin 3 × Fin 3)) (grantee grantor C P : Fin 3),
     decide (absPost l grantee grantor C P) = decide (concPost l grantee grantor C P))
 
--- Check 3 — the same clause GUARDED by key-uniqueness (the invariant the unified `R` will
--- carry). Expect no counter-example, confirming uniqueness is the right and sufficient fix.
+-- Check 3 — the same clause GUARDED by key-uniqueness (the invariant the unified `R` carries).
+-- No counter-example, confirming uniqueness is the right and sufficient fix.
+/-- info: Unable to find a counter-example -/
+#guard_msgs in
 #eval Testable.check (cfg := cfg)
   (∀ (l : List (Fin 3 × Fin 3)) (grantee grantor C P : Fin 3),
     (l.map Prod.fst).Nodup →
