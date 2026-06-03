@@ -21,4 +21,45 @@ theorem toolMetaC_of_metadata {bg : background.BackgroundTheory} {t : types.Tool
   rw [← ho]
   exact (Result.ok.inj hoEq).symm
 
+set_option maxHeartbeats 1000000
+
+/-- `debit_budget` returns a record update `{ st with agent_budget := vm }` whose get-style budget read
+    debits `agent` by one level and frames every other agent, and whose key-uniqueness is preserved.
+    The structural + nodup strengthening of `debitBudget_spec` that the `return_endorsed` /
+    `invoke_complete` unified-`R` preservations need (so all non-budget fields transport definitionally
+    and `R.ndBudget` re-establishes). -/
+theorem debitBudget_full (st : state.KernelState) (agent : types.AgentId)
+    (hcap : st.agent_budget.entries.val.length < Usize.max) :
+    state.KernelState.debit_budget st agent ⦃ st1 =>
+      ∃ vm, st1 = { st with agent_budget := vm } ∧
+        (∀ G, budgetReadC vm G =
+          if G = agent then debitC (budgetReadC st.agent_budget agent)
+          else budgetReadC st.agent_budget G) ∧
+        (vmNodupKeys st.agent_budget → vmNodupKeys vm) ⦄ := by
+  unfold state.KernelState.debit_budget
+  obtain ⟨bl, hblEq, hbl⟩ := spec_imp_exists (budget_spec st agent)
+  rw [hblEq]
+  simp only [bind_tc_ok, budgetLevel_debit_spec, agentId_clone_spec]
+  obtain ⟨vm, hvmEq, hvmLast⟩ := spec_imp_exists
+    (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
+  obtain ⟨vm2, hvm2Eq, hvm2nd⟩ := spec_imp_exists
+    (vecMapInsert_nodup types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
+  have hvv : vm2 = vm := Result.ok.inj (hvm2Eq.symm.trans hvmEq)
+  rw [hvmEq]
+  simp only [bind_tc_ok, spec_ok]
+  refine ⟨vm, rfl, fun G => ?_, hvv ▸ hvm2nd⟩
+  show budgetReadC vm G =
+    if G = agent then debitC (budgetReadC st.agent_budget agent) else budgetReadC st.agent_budget G
+  by_cases hG : G = agent
+  · rw [if_pos hG]
+    have hvr : budgetReadC vm G = debitC bl := by
+      unfold budgetReadC; rw [hvmLast G, if_pos hG]
+    rw [hvr, hbl]
+  · rw [if_neg hG]
+    unfold budgetReadC; rw [hvmLast G, if_neg hG]
+
 end ArgusLean.Refinement
