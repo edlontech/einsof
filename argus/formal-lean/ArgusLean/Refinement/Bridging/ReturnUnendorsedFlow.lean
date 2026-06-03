@@ -1,4 +1,4 @@
-import ArgusLean.Refinement.FlowBridging
+import ArgusLean.Refinement.Bridging.FlowBridging
 
 /-! # Refinement — flow-oracle reads for the egress-gated actions
 

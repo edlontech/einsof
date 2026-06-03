@@ -141,7 +141,7 @@ theorem sentinelLoop_spec {C : Type} (cgInst : traits.ContentGateOracle C)
         rw [hocase] at hoInv
         have hsome : invToolC st inv = some tool := hoInv.symm
         have hnmiss : ¬ invMissing st inv := by rw [invMissing, hsome]; simp
-        simp only [bind_tc_ok]
+        simp only []
         obtain ⟨tmeta, hmetaEq, hmeta⟩ := spec_imp_exists (toolMetadata_spec bg tool)
         rw [hmetaEq]; simp only [bind_tc_ok]
         have hcapAcc : accL.to_consume.items.val.length < Usize.max := by
@@ -218,7 +218,7 @@ theorem sentinelLoop_spec {C : Type} (cgInst : traits.ContentGateOracle C)
             by rw [hi2 _ fi1_post]; exact hDen2,
             by intro k; rw [hi2 _ fi1_post]; exact hCon2 k, by scalar_tac⟩
         | some m =>
-          simp only [bind_tc_ok]
+          simp only []
           rw [vecSetClone_spec types.EgressKind.Insts.CoreCloneClone egressKind_clone_spec m.egress]
           simp only [bind_tc_ok]
           rw [hst]
@@ -268,7 +268,7 @@ theorem getSetOrEmptyInFlight_spec (st : state.KernelState) (agent : types.Agent
     unfold collections.VecSet.new
     simp only [spec_ok]
     refine ⟨fun v => ?_, by trivial⟩
-    simp only [vsMem, alloc.vec.Vec.new, List.not_mem_nil, false_iff]
+    simp only [vsMem, List.not_mem_nil, false_iff]
     rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
   | some p =>
     rw [hL] at ho; simp only [Option.map_some] at ho; subst ho

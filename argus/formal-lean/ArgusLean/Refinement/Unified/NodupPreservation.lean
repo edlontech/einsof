@@ -1,4 +1,4 @@
-import ArgusLean.Refinement.StateRelation
+import ArgusLean.Refinement.Bridging.StateRelation
 
 /-! # Layer 1 — key-uniqueness preservation under the writes
 

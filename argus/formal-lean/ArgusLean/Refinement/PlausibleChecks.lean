@@ -1,4 +1,4 @@
-import ArgusLean.Refinement.Collections
+import ArgusLean.Refinement.Bridging.Collections
 import Plausible
 
 /-! # Plausible harness — vet candidate bridging clauses before proving them

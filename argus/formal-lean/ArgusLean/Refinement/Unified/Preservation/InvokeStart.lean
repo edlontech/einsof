@@ -154,7 +154,7 @@ theorem specTaintLoop_spec (vm : collections.VecMap types.InvocationId types.Too
       | some tool =>
         have hsome : (vmLastEntry vm.entries.val inv).map Prod.snd = some tool := by
           rw [← ho]; exact hocase
-        simp only [bind_tc_ok]
+        simp only []
         obtain ⟨o1, ho1Eq, ho1⟩ := spec_imp_exists (toolMetadata_spec bg tool)
         rw [ho1Eq]; simp only [bind_tc_ok]
         cases hmcase : o1 with
@@ -446,7 +446,7 @@ theorem invokeStartLoop2_spec {C : Type} (cgInst : traits.ContentGateOracle C)
       | some tool =>
         rw [hocase] at hoInv
         have hsome : invToolC st inv = some tool := hoInv.symm
-        simp only [bind_tc_ok]
+        simp only []
         obtain ⟨tmeta, hmetaEq, hmeta⟩ := spec_imp_exists (toolMetadata_spec bg tool)
         rw [hmetaEq]; simp only [bind_tc_ok]
         have hcapAcc : accL.to_consume.items.val.length < Usize.max := by
@@ -514,7 +514,7 @@ theorem invokeStartLoop2_spec {C : Type} (cgInst : traits.ContentGateOracle C)
             by rw [hi2 _ fi1_post]; exact hDen2,
             by intro k; rw [hi2 _ fi1_post]; exact hCon2 k, by scalar_tac⟩
         | some m =>
-          simp only [bind_tc_ok]
+          simp only []
           rw [vecSetClone_spec types.EgressKind.Insts.CoreCloneClone egressKind_clone_spec m.egress]
           simp only [bind_tc_ok]
           rw [hst]
@@ -550,7 +550,7 @@ theorem containsKeyLoop_spec {K V : Type} [DecidableEq K]
       (p.1 = true ↔ ∃ a v, (a, v) ∈ self.entries.val.take p.2.val ∧ a = key))
   · rintro ⟨fnd, i'⟩ ⟨hile, hfL⟩
     dsimp only at hile hfL ⊢
-    simp only [collections.VecMap.contains_key_loop.body, alloc.vec.Vec.len, bind_tc_ok]
+    simp only [collections.VecMap.contains_key_loop.body, alloc.vec.Vec.len]
     split
     case isTrue h =>
       have hlt : i'.val < self.entries.val.length := by scalar_tac
@@ -606,7 +606,7 @@ theorem anyValueContainsLoop_spec {K T : Type} [DecidableEq T]
       (p.1 = true ↔ ∃ a v, (a, v) ∈ self.entries.val.take p.2.val ∧ elem ∈ v.items.val))
   · rintro ⟨fnd, i'⟩ ⟨hile, hfL⟩
     dsimp only at hile hfL ⊢
-    simp only [collections.VecMapKVecSet.any_value_contains_loop.body, alloc.vec.Vec.len, bind_tc_ok]
+    simp only [collections.VecMapKVecSet.any_value_contains_loop.body, alloc.vec.Vec.len]
     split
     case isTrue h =>
       have hlt : i'.val < self.entries.val.length := by scalar_tac
@@ -1317,13 +1317,13 @@ theorem invoke_start_refines {A C : Type} (aInst : traits.AuthorizerOracle A)
             subst htT
             have hLcf : confC L = m.conf_floor := by rw [hLf, hfloor, confC_confA]
             refine ⟨hag, Or.inr (Or.inr ⟨?_, ?_⟩)⟩
-            · simp only [gateConsumeKey, types.OverrideKey.mk.injEq, hLcf]
+            · simp only [gateConsumeKey, hLcf]
             · exact hCons2c.mpr ⟨hfloor ▸ hflov, hfloor ▸ hegr⟩
           · obtain ⟨hag, hLf, I, hIfl, htI, hflov, hegr⟩ := h2b
             have hmem : vmsMemLast st.in_flight agent I := (hRinfl agent I).mp hIfl
             have hLcf : confC L = m.conf_floor := by rw [hLf, hfloor, confC_confA]
             refine ⟨hag, Or.inr (Or.inl ⟨I, hmem, a.invocation_tool I, hbind I hmem, ?_, ?_⟩)⟩
-            · simp only [gateConsumeKey, types.OverrideKey.mk.injEq, hLcf, htI]
+            · simp only [gateConsumeKey, hLcf, htI]
             · exact (hCons2b I hmem).mpr ⟨hfloor ▸ hflov, hfloor ▸ hegr⟩
         · rintro ⟨hagE, hc2a | hc2b | hc2c⟩
           · obtain ⟨level, hlevel, hkey, hegr⟩ := hc2a

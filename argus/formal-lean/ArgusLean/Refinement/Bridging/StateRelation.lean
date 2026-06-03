@@ -1,4 +1,4 @@
-import ArgusLean.Refinement.Collections
+import ArgusLean.Refinement.Bridging.Collections
 import Tzimtzum
 
 /-! # C1 refinement spike — state relation

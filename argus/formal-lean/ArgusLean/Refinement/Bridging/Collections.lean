@@ -2207,7 +2207,7 @@ theorem getSetOrEmptyLen_spec {K T : Type} [DecidableEq K]
     unfold collections.VecSet.new
     simp only [spec_ok]
     refine ⟨fun v => ?_, by trivial⟩
-    simp only [vsMem, alloc.vec.Vec.new, List.not_mem_nil, false_iff]
+    simp only [vsMem, List.not_mem_nil, false_iff]
     rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
   | some p =>
     rw [hL] at ho; simp only [Option.map_some] at ho; subst ho

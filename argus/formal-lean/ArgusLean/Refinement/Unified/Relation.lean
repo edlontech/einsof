@@ -1,5 +1,5 @@
-import ArgusLean.Refinement.StateRelation
-import ArgusLean.Refinement.ReturnUnendorsedFlow
+import ArgusLean.Refinement.Bridging.StateRelation
+import ArgusLean.Refinement.Bridging.ReturnUnendorsedFlow
 import ArgusLean.Refinement.Unified.ViewCoincidence
 import ArgusLean.Refinement.Unified.NodupPreservation
 

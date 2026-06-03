@@ -1,4 +1,4 @@
-import ArgusLean.Refinement.Collections
+import ArgusLean.Refinement.Bridging.Collections
 
 /-! # Refinement — flow-gate bridging foundation
 
