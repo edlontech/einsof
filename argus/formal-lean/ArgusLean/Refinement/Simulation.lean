@@ -6,6 +6,7 @@ import ArgusLean.Refinement.Actions.Revoke
 import ArgusLean.Refinement.Actions.GrantCapability
 import ArgusLean.Refinement.Actions.SentinelRefreshBudget
 import ArgusLean.Refinement.Actions.ReturnEndorsed
+import ArgusLean.Refinement.Actions.ReturnUnendorsed
 
 /-! # Refinement — simulation bundle
 
@@ -51,24 +52,25 @@ C2 fan-out checklist (mirrors the spec's `Tzimtzum/Check*.lean` files):
                                `optionAgentId_ne_spec`; no root ⇒ no `sorryAx`/`AgentId.root`)
 * [ ] `invoke_start`
 * [ ] `invoke_complete`
-* [~] `return_unendorsed`   — FOUNDATION DONE, assembly TODO. Reusable building blocks proven +
-                               committed: in `Collections.lean` the leaf specs `vecSetUnionWith_spec`,
-                               `extendInto_spec` (last-match `vmsMemLast` write), `getSetOrEmpty_spec`,
-                               `vecMapKVecSetSetNonempty_spec` + `vecSetIsEmpty_spec`, plus
-                               `OverrideEntry`/`ConfLevel`/`BudgetLevel` eq/clone; in
-                               `ReturnUnendorsedFlow.lean` the oracle reads `flowMode_spec` (+`flowModeC`),
-                               `hasFlowOverride_spec`, `overrideConsumed_spec` (+`FlowKey`/`EgressKind`/
-                               `OverrideKey`/`FlowMode` eq/clone). REMAINING: the inner loop
-                               (`return_unendorsed_loop0_loop0`, per-level fold over `parent_flights`
-                               calling `gate_egress`) + outer loop (over `child_taint` levels) specs,
-                               an oracle-agreement relation `Rretu` (content-gate totality is the only
-                               opaque oracle to assume), and the inversion+refines assembly relating
-                               the loop accumulator's `denied`/`to_consume` to the abstract flow-gate
-                               guard + `override_used` write. The refinement direction is sound:
-                               kernel success (denied=false) is strictly stronger than the abstract
-                               guard (kernel ignores override at Inspect mode; abstract allows it), and
-                               `to_consume` matches the abstract `override_used` add-condition *under
-                               the guard*.
+* [x] `return_unendorsed`   — DONE 10/12 (Actions/ReturnUnendorsed.lean). Refines against `Rretu` (the
+                               last-match `vmsMemLast` oracle-agreement relation: `in_flight` via the
+                               `set_nonempty`/`get_set_or_empty` reads, `taint_levels`/`gh_taint_received`
+                               via the `get_set_or_empty` read + `extend_into` write, `override_used` via
+                               `override_consumed`/`extend_into`; `agent_parent` get-style; immutable flow
+                               oracles as in `Rsent`; plus the **well-formedness** binding-totality
+                               conjunct the abstract guard needs). The DOUBLE loop accumulates the per-
+                               `(level, inv)` flow decision: `returnUnendInner_spec` (per-level fold over
+                               `parent_flights`, the `sentinelLoop_spec` machinery minus `missing_binding`,
+                               reusing `invDenied`/`invConsumed`) nested under `returnUnendOuter_spec`
+                               (fold over `child_taint` levels, multiplicative `|ct|*|pf|` capacity).
+                               `return_unendorsed_ok_inv` peels the 4 gates, runs the double loop, and
+                               reads off the three `extend_into` writes uniformly across the two `is_empty`
+                               branches (full `simp` collapses the tuple-bind pattern-`let (vm, vm1)`).
+                               `return_unendorsed_refines` establishes the abstract flow guard from
+                               `denied = false` via `not_egressDenied_disj`, and the single-use
+                               `override_used` correspondence via `egressConsumed_iff_abstractDenied`. The
+                               content gate is the one opaque oracle (`hcg`/`hcgA`). Axiom-clean: standard
+                               three + `String`/id residuals + `optionAgentId_ne_spec`.
 * [x] `sentinel_elevate_taint` — DONE 9/12 (Actions/SentinelElevateTaint.lean). Refines against `Rsent`
                                (the oracle-agreement relation: `agent_active`/`taint_levels`/
                                `gh_taint_invoked` via the insert `vmsMem` view, `in_flight`/
