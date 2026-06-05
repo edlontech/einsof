@@ -16,7 +16,7 @@ mod event;
 mod kernel;
 mod state;
 mod traits;
-pub(crate) mod transitions;
+pub mod transitions;
 mod types;
 
 pub use background::{BackgroundTheory, BackgroundTheoryBuilder, FlowMode, ToolMetadata};

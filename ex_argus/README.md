@@ -1,0 +1,39 @@
+# ExArgus
+
+Elixir binding for the verified `argus-kernel` authorization state machine
+(TzimtzumV2). Pure functional: one function per kernel transition. The caller
+owns state, the event log, and the (unverified) authorizer / content-gate /
+conformance oracles.
+
+## Usage
+
+    bg = %ExArgus.Kernel.Background{
+      tools: %{"read_file" => %{capabilities: [:filesystem_read], egress: [],
+                                conf_floor: :sensitive, output_bounded: false,
+                                issuer: "trusted"}},
+      flow_policy: %{}, flow_overrides: [],
+      trusted_issuers: ["trusted"], instruction_issuer: %{}
+    }
+
+    state = ExArgus.Kernel.initial_state()
+    {:ok, state, _action} = ExArgus.Kernel.register_tool(state, bg, "read_file")
+
+## Building locally
+
+The native crate is at `native/argus_nif` and depends on `../argus` (monorepo
+sibling). To force a local build instead of downloading a precompiled artifact:
+
+    RUSTLER_PRECOMPILED_FORCE_BUILD=1 mix compile
+
+(`:dev` and `:test` force-build by default.)
+
+## Releasing precompiled artifacts
+
+1. Tag `ex_argus-vX.Y.Z` and push; CI builds the cdylib for every target in
+   `ExArgus.Native` and attaches the archives to the GitHub release.
+2. Regenerate the checksum file and commit it:
+
+       mix rustler_precompiled.download ExArgus.Native --all --print
+
+The checksum file `checksum-Elixir.ExArgus.Native.exs` MUST be committed and
+shipped in the Hex package.

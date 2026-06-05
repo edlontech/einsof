@@ -26,6 +26,8 @@ The pure-Lean transition-system verifier Tzimtzum is built on (`#kav_check_actio
 
 `argus-kernel`: the pure-functional state machine implementing the TzimtzumV2 transitions.
 
+### [ExArgus](ex_argus/) -- Elixir NIF
+
 ### [Lean Refinement](argus/formal-lean/) -- Rust-to-Spec
 
 The Rust kernel is mechanically extracted to Lean via Aeneas/Charon and refined against the Kav

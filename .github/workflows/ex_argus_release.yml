@@ -1,0 +1,77 @@
+name: ex_argus precompiled NIF
+
+on:
+  push:
+    tags:
+      - "ex_argus-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }} (NIF ${{ matrix.nif }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        nif: ["2.16", "2.15"]
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract bare version from tag
+        id: version
+        run: |
+          # Strip "ex_argus-" prefix, leaving e.g. "v0.1.0"
+          echo "value=${GITHUB_REF_NAME#ex_argus-}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ '1.93.0' }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93.0"
+          targets: ${{ matrix.target }}
+
+      - name: Build precompiled NIF
+        id: build
+        uses: philss/rustler-precompiled-action@v1.1.4
+        with:
+          project-name: argus_nif
+          project-version: ${{ steps.version.outputs.value }}
+          target: ${{ matrix.target }}
+          nif-version: ${{ matrix.nif }}
+          use-cross: ${{ matrix.os == 'ubuntu-latest' }}
+          project-dir: "ex_argus/native/argus_nif"
+
+      - name: Artifact upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.file-name }}
+          path: ${{ steps.build.outputs.file-path }}
+
+      - name: Publish archives to GitHub release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ steps.build.outputs.file-path }}
