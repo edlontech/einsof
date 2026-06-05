@@ -3,6 +3,9 @@ defmodule ExArgus.Kernel.State do
   An Argus kernel state. Mirrors `argus_kernel::KernelState`. Sets are represented as
   lists (the kernel keeps them unique); maps are plain maps. IDs are binaries and the
   kernel enums are atoms.
+
+  This struct's fields define the snapshot wire shape stamped by `ExArgus.state_version/0`.
+  Bump that version whenever these fields or the NIF encode/decode change.
   """
 
   alias ExArgus.Kernel.Types

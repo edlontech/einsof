@@ -16,7 +16,62 @@ defmodule ExArgus.Kernel do
   @type state :: State.t()
   @type background :: ExArgus.Kernel.Background.t()
   @type id :: String.t()
-  @type outcome :: {:ok, state, tuple} | {:error, atom}
+
+  @typedoc """
+  A kernel-transition denial. Each variant names a precondition class and carries no
+  payload -- human-readable diagnostics belong in the (unverified) adapter, not the
+  verified kernel. This is the closed set a caller can rely on as a contract (e.g. to map
+  to deny-telemetry).
+
+  Keep it in sync with `KernelError` in `argus-kernel/src/error.rs`, which is the single
+  source of truth; the NIF crosses each variant as the snake_case atom below.
+
+  | Atom | Precondition class |
+  | ---- | ------------------ |
+  | `:tool_not_in_theory` | Tool has no metadata in the background theory. |
+  | `:tool_already_registered` | Tool is already registered. |
+  | `:tool_not_registered` | Tool is not registered. |
+  | `:untrusted_issuer` | Issuer (of a tool or instruction) is not trusted. |
+  | `:instruction_issuer_unknown` | Instruction has no registered issuer in the background theory. |
+  | `:agent_inactive` | Named agent (actor / grantor / parent / child / target) is not active. |
+  | `:agent_already_active` | Grantee is already active. |
+  | `:root_not_allowed` | The operation may not target / be performed by the root agent. |
+  | `:not_direct_child` | The agent is not a direct child of the named parent. |
+  | `:parent_still_active` | Parent is still active (use `revoke`, not `cascade_revoke`). |
+  | `:capability_missing` | A required capability is missing (required tool cap / declassify / refresh-budget). |
+  | `:invocation_exists` | An invocation with this id already exists. |
+  | `:invocation_in_flight` | The invocation is already in-flight. |
+  | `:not_in_flight` | The invocation is not in-flight for the agent. |
+  | `:child_has_in_flight` | The child still has in-flight invocations. |
+  | `:flow_gate_blocked` | A flow-policy gate blocked the (level, egress) pair. |
+  | `:authorizer_denied` | The authorizer denied the (agent, tool) pair. |
+  | `:budget_exhausted` | The declassification budget is exhausted. |
+  | `:missing_tool_binding` | An in-flight invocation has no tool binding. |
+  | `:event_store` | The event store failed to persist an event. |
+  """
+  @type error_reason ::
+          :tool_not_in_theory
+          | :tool_already_registered
+          | :tool_not_registered
+          | :untrusted_issuer
+          | :instruction_issuer_unknown
+          | :agent_inactive
+          | :agent_already_active
+          | :root_not_allowed
+          | :not_direct_child
+          | :parent_still_active
+          | :capability_missing
+          | :invocation_exists
+          | :invocation_in_flight
+          | :not_in_flight
+          | :child_has_in_flight
+          | :flow_gate_blocked
+          | :authorizer_denied
+          | :budget_exhausted
+          | :missing_tool_binding
+          | :event_store
+
+  @type outcome :: {:ok, state, tuple} | {:error, error_reason}
 
   defdelegate initial_state(), to: Native
   defdelegate register_tool(state, bg, tool), to: Native

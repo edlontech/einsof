@@ -18,6 +18,17 @@ conformance oracles.
     state = ExArgus.Kernel.initial_state()
     {:ok, state, _action} = ExArgus.Kernel.register_tool(state, bg, "read_file")
 
+Transitions return `{:ok, state, action}` or `{:error, reason}`, where `reason` is one
+of the closed `ExArgus.Kernel.error_reason/0` atoms (mirroring `argus-kernel`'s
+`KernelError`).
+
+## Snapshot wire version
+
+`ExArgus.state_version/0` stamps the wire shape of `ExArgus.Kernel.State`. Callers that
+persist a `State` snapshot store it with this version and fail closed on a mismatch.
+**Bump `@state_version` (in `lib/ex_argus.ex`) on any change to `Kernel.State`'s fields
+or the NIF encode/decode**, and update the golden field list in `test/ex_argus_test.exs`.
+
 ## Building locally
 
 The native crate is at `native/argus_nif` and depends on `../argus` (monorepo
