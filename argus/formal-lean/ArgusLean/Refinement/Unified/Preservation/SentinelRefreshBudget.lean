@@ -82,11 +82,12 @@ theorem sentinel_refresh_budget_preservesR
   · -- next
     simp [Tzimtzum.sentinel_refresh_budget]
   · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.active, hR.tool_reg, hR.parent, hR.cap,
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg, hR.parent, hR.cap,
       hR.instr, hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, hR.override, ?_, hR.toolCap,
       hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
       hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr,
-      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, ?_, hR.wfInflight⟩
+      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndFlowOverride,
+      ?_, hR.wfInflight⟩
     · -- budget (active-guarded budgetReadC; the deleted entry reads back as full on `agent`, and is
       -- untouched off `agent`)
       intro G L hactiveG

@@ -37,7 +37,7 @@ theorem sentinelLoop_spec {C : Type} (cgInst : traits.ContentGateOracle C)
     (agent : types.AgentId) (level : types.ConfLevel)
     (cgOf ovOf ocOf : types.ToolId → Bool)
     (hcg : ∀ t, cgInst.passes content_gate agent t st bg = .ok (cgOf t))
-    (hov : ∀ t, background.BackgroundTheory.has_flow_override bg agent t level = .ok (ovOf t))
+    (hov : ∀ t, state.KernelState.has_flow_override st agent t level = .ok (ovOf t))
     (hoc : ∀ t, state.KernelState.override_consumed st agent t level = .ok (ocOf t))
     (invs : collections.VecSet types.InvocationId)
     (accStart : transitions.GateAccum) (mbStart : Bool)
@@ -53,8 +53,8 @@ theorem sentinelLoop_spec {C : Type} (cgInst : traits.ContentGateOracle C)
       ∃ inv ∈ invs.items.val.take fi.val, invConsumed st bg level ovOf ocOf inv k) :
     transitions.sentinel_elevate_taint_loop cgInst st.agent_active st.agent_parent st.agent_cap
       st.taint_levels st.in_flight st.invocation_tool st.tool_registered st.gh_taint_invoked
-      st.gh_taint_received st.agent_instruction st.override_used st.agent_budget bg content_gate
-      agent level acc mb invs fi ⦃ res =>
+      st.gh_taint_received st.agent_instruction st.override_used st.flow_override st.agent_budget
+      bg content_gate agent level acc mb invs fi ⦃ res =>
       (res.2 = true ↔ mbStart = true ∨ ∃ inv ∈ invs.items.val, invMissing st inv) ∧
       (res.1.denied = true ↔ accStart.denied = true ∨
         ∃ inv ∈ invs.items.val, invDenied st bg level cgOf ovOf ocOf inv) ∧
@@ -149,7 +149,7 @@ theorem sentinelLoop_spec {C : Type} (cgInst : traits.ContentGateOracle C)
         -- the kernel rebuilds the state record from `st`'s fields; it is `st` (structure eta)
         have hst : ((⟨st.agent_active, st.agent_parent, st.agent_cap, st.taint_levels,
             st.in_flight, st.invocation_tool, st.tool_registered, st.gh_taint_invoked,
-            st.gh_taint_received, st.agent_instruction, st.override_used,
+            st.gh_taint_received, st.agent_instruction, st.override_used, st.flow_override,
             st.agent_budget⟩ : state.KernelState)) = st := by cases st; rfl
         -- The remaining body, once the egress set `eg` is fixed (`hegItems`). Proven inline per
         -- egress case (no shared WP `have` — restating the loop's `match`-post compiles to a
@@ -300,10 +300,10 @@ def Rsent (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsSt
   (∀ ag t L, a.override_used ag t L ↔
     vmsMemLast st.override_used ag { tool := t, level := confC L }) ∧
   (∀ T E, a.tool_egress T E ↔ E ∈ egItems bg T) ∧
-  (∀ L E, a.flow_allows L E ↔ flowModeC bg (confC L) E = background.FlowMode.Allow) ∧
-  (∀ L E, a.flow_inspects L E ↔ flowModeC bg (confC L) E = background.FlowMode.Inspect) ∧
+  (∀ L E, a.flow_allows L E ↔ ceilAdmitsC bg.allow_ceiling (confC L) E = true) ∧
+  (∀ L E, a.flow_inspects L E ↔ ceilAdmitsC bg.inspect_ceiling (confC L) E = true) ∧
   (∀ A T L, a.flow_override A T L ↔
-    vsMem bg.flow_overrides { agent := A, tool := T, level := confC L }) ∧
+    vmsMemLast st.flow_override A { tool := T, level := confC L }) ∧
   (∀ I t, invToolC st I = some t → a.invocation_tool I = t)
 
 /-! ## Inversion -/
@@ -334,19 +334,19 @@ theorem sentinel_elevate_taint_ok_inv {C : Type} (cgInst : traits.ContentGateOra
     (∀ inv tool E, vmsMemLast st.in_flight agent inv → invToolC st inv = some tool →
       E ∈ egItems bg tool →
       ¬ egressDenied (flowModeC bg level E) (cgOf tool)
-        (ovC bg agent level tool) (ocC st agent level tool)) ∧
+        (ovC st agent level tool) (ocC st agent level tool)) ∧
     st'.agent_active = st.agent_active ∧ st'.agent_parent = st.agent_parent ∧
     st'.agent_cap = st.agent_cap ∧ st'.in_flight = st.in_flight ∧
     st'.invocation_tool = st.invocation_tool ∧ st'.tool_registered = st.tool_registered ∧
     st'.gh_taint_received = st.gh_taint_received ∧ st'.agent_instruction = st.agent_instruction ∧
-    st'.agent_budget = st.agent_budget ∧
+    st'.agent_budget = st.agent_budget ∧ st'.flow_override = st.flow_override ∧
     (∀ ag L', vmsMem st'.taint_levels ag L' ↔
       vmsMem st.taint_levels ag L' ∨ (ag = agent ∧ L' = level)) ∧
     (∀ ag L', vmsMem st'.gh_taint_invoked ag L' ↔
       vmsMem st.gh_taint_invoked ag L' ∨ (ag = agent ∧ L' = level)) ∧
     (∀ ag key, vmsMemLast st'.override_used ag key ↔ vmsMemLast st.override_used ag key ∨
       (ag = agent ∧ ∃ inv, vmsMemLast st.in_flight agent inv ∧
-        invConsumed st bg level (ovC bg agent level) (ocC st agent level) inv key)) := by
+        invConsumed st bg level (ovC st agent level) (ocC st agent level) inv key)) := by
   simp only [transitions.sentinel_elevate_taint] at hok
   obtain ⟨b, hbEq, hbIff⟩ := spec_imp_exists
     (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
@@ -362,8 +362,8 @@ theorem sentinel_elevate_taint_ok_inv {C : Type} (cgInst : traits.ContentGateOra
   obtain ⟨invs, hinvsEq, hinvsMem, hinvsLen⟩ := spec_imp_exists (getSetOrEmptyInFlight_spec st agent)
   rw [hinvsEq] at hok; simp only [bind_tc_ok] at hok
   obtain ⟨⟨acc, mb⟩, hloopEq, hMb, hDen, hCon, _hNd, hLen⟩ := spec_imp_exists
-    (sentinelLoop_spec cgInst st bg content_gate agent level cgOf (ovC bg agent level)
-      (ocC st agent level) hcg (fun t => ovC_eq bg agent level t)
+    (sentinelLoop_spec cgInst st bg content_gate agent level cgOf (ovC st agent level)
+      (ocC st agent level) hcg (fun t => ovC_eq st agent level t)
       (fun t => ocC_eq st agent level t) invs { denied := false, to_consume := vs } false
       (by show vs.items.val.length + invs.items.val.length ≤ Usize.max
           rw [hvsNil, hinvsLen]; simpa using hcapInvs)
@@ -433,13 +433,13 @@ theorem sentinel_elevate_taint_ok_inv {C : Type} (cgInst : traits.ContentGateOra
   have hNotDenied : ∀ inv tool E, vmsMemLast st.in_flight agent inv → invToolC st inv = some tool →
       E ∈ egItems bg tool →
       ¬ egressDenied (flowModeC bg level E) (cgOf tool)
-        (ovC bg agent level tool) (ocC st agent level tool) := by
+        (ovC st agent level tool) (ocC st agent level tool) := by
     intro inv tool E hmem htool hE hden'
     have hd : acc.denied = true :=
       hDen.mpr (Or.inr ⟨inv, (hinvsMem inv).mpr hmem, tool, htool, E, hE, hden'⟩)
     simp [hDenF] at hd
   have hAcc : ∀ key, vsMem acc.to_consume key ↔ ∃ inv, vmsMemLast st.in_flight agent inv ∧
-      invConsumed st bg level (ovC bg agent level) (ocC st agent level) inv key := by
+      invConsumed st bg level (ovC st agent level) (ocC st agent level) inv key := by
     intro key
     rw [hCon key]
     constructor
@@ -449,12 +449,12 @@ theorem sentinel_elevate_taint_ok_inv {C : Type} (cgInst : traits.ContentGateOra
     · rintro ⟨inv, hmem, hcons⟩
       exact Or.inr ⟨inv, (hinvsMem inv).mpr hmem, hcons⟩
   subst hStateEq
-  refine ⟨hActive, hNoMiss, hNotDenied, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+  refine ⟨hActive, hNoMiss, hNotDenied, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
     hvm1Mem, hvm2Mem, ?_⟩
   intro ag key
   show vmsMemLast vm ag key ↔ vmsMemLast st.override_used ag key ∨
     (ag = agent ∧ ∃ inv, vmsMemLast st.in_flight agent inv ∧
-      invConsumed st bg level (ovC bg agent level) (ocC st agent level) inv key)
+      invConsumed st bg level (ovC st agent level) (ocC st agent level) inv key)
   rw [hvmMem ag key, hAcc key]
 
 /-! ## Forward simulation -/
@@ -487,7 +487,7 @@ theorem sentinel_elevate_taint_refines {C : Type} (cgInst : traits.ContentGateOr
           (Tzimtzum.sentinel_elevate_taint agent (confA level)).next a a' ∧ Rsent st' bg a' := by
   obtain ⟨hRact, hRinfl, hRtaint, hRgh, hRov, hReg, hRallow, hRinsp, hRovr, hRinvtool⟩ := hR
   obtain ⟨hActive, hNoMiss, hNotDenied, hAct, hPar, hCap, hFl, hInvT, hToolReg,
-      hGhRecv, hAgInstr, hBudget, hTaintW, hGhW, hOvW⟩ :=
+      hGhRecv, hAgInstr, hBudget, hFlowOv, hTaintW, hGhW, hOvW⟩ :=
     sentinel_elevate_taint_ok_inv cgInst st bg content_gate agent level cgOf hcg
       hcapInvs hcapOvE hcapOvJoint hcapTaintE hcapTaintS hcapGhE hcapGhS st' ev hok
   -- the level correspondence and the per-oracle agreement iffs
@@ -495,11 +495,11 @@ theorem sentinel_elevate_taint_refines {C : Type} (cgInst : traits.ContentGateOr
     intro L; constructor
     · intro h; rw [← h, confA_confC]
     · intro h; rw [h, confC_confA]
-  have hovIff : ∀ t, ovC bg agent level t = true ↔
-      vsMem bg.flow_overrides { agent := agent, tool := t, level := level } := by
+  have hovIff : ∀ t, ovC st agent level t = true ↔
+      vmsMemLast st.flow_override agent { tool := t, level := level } := by
     intro t
-    obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec bg agent t level)
-    rw [ovC_eq bg agent level t, Result.ok.injEq] at hb
+    obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec st agent t level)
+    rw [ovC_eq st agent level t, Result.ok.injEq] at hb
     rw [hb]; exact hbiff
   have hocIff : ∀ t, ocC st agent level t = true ↔
       vmsMemLast st.override_used agent { tool := t, level := level } := by
@@ -507,10 +507,34 @@ theorem sentinel_elevate_taint_refines {C : Type} (cgInst : traits.ContentGateOr
     obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (overrideConsumed_spec st agent t level)
     rw [ocC_eq st agent level t, Result.ok.injEq] at hb
     rw [hb]; exact hbiff
+  -- band tests, in `flowModeC` terms via the mediating iffs. `flow_allows ↔ flowModeC = Allow`
+  -- STILL holds; `flow_inspects ↔ flowModeC = Inspect` does NOT (inspect band may overlap allow band) —
+  -- only the band membership survives, and we route everything through `hDenForm` (both directions hold).
   have hAllowIff : ∀ E, a.flow_allows (confA level) E ↔ flowModeC bg level E = background.FlowMode.Allow := by
-    intro E; rw [hRallow (confA level) E, confC_confA]
-  have hInspIff : ∀ E, a.flow_inspects (confA level) E ↔ flowModeC bg level E = background.FlowMode.Inspect := by
+    intro E; rw [hRallow (confA level) E, confC_confA, flowModeC_allow_iff]
+  have hInspBand : ∀ E, a.flow_inspects (confA level) E ↔ ceilAdmitsC bg.inspect_ceiling level E = true := by
     intro E; rw [hRinsp (confA level) E, confC_confA]
+  -- the abstract-denial form ⇔ the `flowModeC` denial form (both directions, despite the band overlap)
+  have hDenForm : ∀ (E : types.EgressKind) (cg : Bool),
+      ((flowModeC bg level E ≠ background.FlowMode.Allow ∧
+        ¬ (flowModeC bg level E = background.FlowMode.Inspect ∧ cg = true))
+      ↔ (¬ a.flow_allows (confA level) E ∧
+          ¬ (a.flow_inspects (confA level) E ∧ cg = true))) := by
+    intro E cg
+    rw [hAllowIff E, hInspBand E]
+    constructor
+    · rintro ⟨hne, hni⟩
+      refine ⟨hne, ?_⟩
+      rintro ⟨hib, hcg⟩
+      -- inspect band ∧ ¬allow band ⇒ flowModeC = Inspect, contradicting hni
+      have hab : ceilAdmitsC bg.allow_ceiling level E = false := by
+        by_contra hc
+        exact hne ((flowModeC_allow_iff bg level E).mpr (by simp_all))
+      exact hni ⟨(flowModeC_inspect_iff bg level E).mpr ⟨hab, hib⟩, hcg⟩
+    · rintro ⟨hna, hni⟩
+      refine ⟨hna, ?_⟩
+      rintro ⟨hi, hcg⟩
+      exact hni ⟨((flowModeC_inspect_iff bg level E).mp hi).2, hcg⟩
   -- success ⇒ every in-flight invocation is bound to its abstract tool
   have hbind : ∀ inv, vmsMemLast st.in_flight agent inv →
       invToolC st inv = some (a.invocation_tool inv) := by
@@ -522,33 +546,33 @@ theorem sentinel_elevate_taint_refines {C : Type} (cgInst : traits.ContentGateOr
   have hguardOf : ∀ inv, vmsMemLast st.in_flight agent inv →
       ∀ E ∈ egItems bg (a.invocation_tool inv),
         ¬ egressDenied (flowModeC bg level E) (cgOf (a.invocation_tool inv))
-          (ovC bg agent level (a.invocation_tool inv)) (ocC st agent level (a.invocation_tool inv)) := by
+          (ovC st agent level (a.invocation_tool inv)) (ocC st agent level (a.invocation_tool inv)) := by
     intro inv hmem E hE
     exact hNotDenied inv (a.invocation_tool inv) E hmem (hbind inv hmem) hE
   -- the single-use consume / abstract-denied equivalence, specialised to a matched in-flight tool
   have hConsEquiv : ∀ inv, vmsMemLast st.in_flight agent inv →
       ((∃ E ∈ egItems bg (a.invocation_tool inv),
-          egressConsumed (flowModeC bg level E) (ovC bg agent level (a.invocation_tool inv))
+          egressConsumed (flowModeC bg level E) (ovC st agent level (a.invocation_tool inv))
             (ocC st agent level (a.invocation_tool inv))) ↔
        (a.flow_override agent (a.invocation_tool inv) (confA level) ∧
         ∃ E, a.tool_egress (a.invocation_tool inv) E ∧ ¬ a.flow_allows (confA level) E ∧
           ¬ (a.flow_inspects (confA level) E ∧ a.content_gate_passes agent (a.invocation_tool inv)))) := by
     intro inv hmem
     rw [egressConsumed_iff_abstractDenied (egItems bg (a.invocation_tool inv)) (flowModeC bg level)
-      (cgOf (a.invocation_tool inv)) (ovC bg agent level (a.invocation_tool inv))
+      (cgOf (a.invocation_tool inv)) (ovC st agent level (a.invocation_tool inv))
       (ocC st agent level (a.invocation_tool inv)) (hguardOf inv hmem)]
     apply and_congr
     · rw [hovIff (a.invocation_tool inv), hRovr agent (a.invocation_tool inv) (confA level),
         confC_confA]
     · constructor
-      · rintro ⟨E, hE, hne, hni⟩
-        refine ⟨E, (hReg (a.invocation_tool inv) E).mpr hE, ?_, ?_⟩
-        · rw [hAllowIff E]; exact hne
-        · rw [hInspIff E, ← hcgA (a.invocation_tool inv)]; exact hni
-      · rintro ⟨E, hEg, hna, hni⟩
-        refine ⟨E, (hReg (a.invocation_tool inv) E).mp hEg, ?_, ?_⟩
-        · exact fun h => hna ((hAllowIff E).mpr h)
-        · exact fun ⟨h1, h2⟩ => hni ⟨(hInspIff E).mpr h1, (hcgA (a.invocation_tool inv)).mp h2⟩
+      · rintro ⟨E, hE, hden⟩
+        refine ⟨E, (hReg (a.invocation_tool inv) E).mpr hE, ?_⟩
+        have := (hDenForm E (cgOf (a.invocation_tool inv))).mp hden
+        rwa [hcgA (a.invocation_tool inv)] at this
+      · rintro ⟨E, hEg, hden⟩
+        refine ⟨E, (hReg (a.invocation_tool inv) E).mp hEg, ?_⟩
+        rw [← hcgA (a.invocation_tool inv)] at hden
+        exact (hDenForm E (cgOf (a.invocation_tool inv))).mpr hden
   -- the abstract guard
   have hguard : ∀ I E, a.in_flight agent I ∧ a.tool_egress (a.invocation_tool I) E →
       a.flow_allows (confA level) E
@@ -560,10 +584,11 @@ theorem sentinel_elevate_taint_refines {C : Type} (cgInst : traits.ContentGateOr
     have hEItem : E ∈ egItems bg (a.invocation_tool I) := (hReg (a.invocation_tool I) E).mp hEg
     have hnd := hNotDenied I (a.invocation_tool I) E hmem (hbind I hmem) hEItem
     rcases not_egressDenied_disj (flowModeC bg level E) (cgOf (a.invocation_tool I))
-      (ovC bg agent level (a.invocation_tool I)) (ocC st agent level (a.invocation_tool I)) hnd
+      (ovC st agent level (a.invocation_tool I)) (ocC st agent level (a.invocation_tool I)) hnd
       with hA | ⟨hI, hcgv⟩ | ⟨hovv, hocv⟩
     · exact Or.inl ((hAllowIff E).mpr hA)
-    · exact Or.inr (Or.inl ⟨(hInspIff E).mpr hI, (hcgA (a.invocation_tool I)).mp hcgv⟩)
+    · exact Or.inr (Or.inl ⟨(hInspBand E).mpr ((flowModeC_inspect_iff bg level E).mp hI).2,
+        (hcgA (a.invocation_tool I)).mp hcgv⟩)
     · refine Or.inr (Or.inr ⟨?_, ?_⟩)
       · rw [hRovr agent (a.invocation_tool I) (confA level), confC_confA]
         exact (hovIff (a.invocation_tool I)).mp hovv
@@ -624,7 +649,7 @@ theorem sentinel_elevate_taint_refines {C : Type} (cgInst : traits.ContentGateOr
     · exact hReg
     · exact hRallow
     · exact hRinsp
-    · exact hRovr
+    · intro A T L; rw [hFlowOv]; exact hRovr A T L
     · intro I t hI
       have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
       exact hRinvtool I t (heq ▸ hI)
@@ -652,7 +677,7 @@ theorem sentinel_elevate_taint_inv_full {C : Type} (cgInst : traits.ContentGateO
     st'.agent_cap = st.agent_cap ∧ st'.in_flight = st.in_flight ∧
     st'.invocation_tool = st.invocation_tool ∧ st'.tool_registered = st.tool_registered ∧
     st'.gh_taint_received = st.gh_taint_received ∧ st'.agent_instruction = st.agent_instruction ∧
-    st'.agent_budget = st.agent_budget ∧
+    st'.agent_budget = st.agent_budget ∧ st'.flow_override = st.flow_override ∧
     (vmNodupKeys st.taint_levels → vmNodupKeys st'.taint_levels) ∧
     (vmNodupKeys st.gh_taint_invoked → vmNodupKeys st'.gh_taint_invoked) ∧
     (vmNodupKeys st.override_used → vmNodupKeys st'.override_used) := by
@@ -670,8 +695,8 @@ theorem sentinel_elevate_taint_inv_full {C : Type} (cgInst : traits.ContentGateO
   obtain ⟨invs, hinvsEq, hinvsMem, hinvsLen⟩ := spec_imp_exists (getSetOrEmptyInFlight_spec st agent)
   rw [hinvsEq] at hok; simp only [bind_tc_ok] at hok
   obtain ⟨⟨acc, mb⟩, hloopEq, hMb, hDen, hCon, _hNd, hLen⟩ := spec_imp_exists
-    (sentinelLoop_spec cgInst st bg content_gate agent level cgOf (ovC bg agent level)
-      (ocC st agent level) hcg (fun t => ovC_eq bg agent level t)
+    (sentinelLoop_spec cgInst st bg content_gate agent level cgOf (ovC st agent level)
+      (ocC st agent level) hcg (fun t => ovC_eq st agent level t)
       (fun t => ocC_eq st agent level t) invs { denied := false, to_consume := vs } false
       (by show vs.items.val.length + invs.items.val.length ≤ Usize.max
           rw [hvsNil, hinvsLen]; simpa using hcapInvs)
@@ -738,7 +763,7 @@ theorem sentinel_elevate_taint_inv_full {C : Type} (cgInst : traits.ContentGateO
   simp only [Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
   obtain ⟨hStateEq, _⟩ := hok
   subst hStateEq
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, fun h => hvv1 ▸ hvm1Nd h,
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, fun h => hvv1 ▸ hvm1Nd h,
     fun h => hvv2 ▸ hvm2Nd h, hvmNd⟩
 
 /-- `sentinel_elevate_taint` preserves the unified `R`. -/
@@ -771,24 +796,25 @@ theorem sentinel_elevate_taint_preservesR {C : Type} (cgInst : traits.ContentGat
   obtain ⟨a', hguard, hnext, hRsent'⟩ :=
     sentinel_elevate_taint_refines cgInst st bg content_gate a agent level cgOf hcg hcgA hRsent
       hcapInvs hcapOvE hcapOvJoint hcapTaintE hcapTaintS hcapGhE hcapGhS st' ev hok
-  obtain ⟨hf_act, hf_par, hf_cap, hf_infl, hf_invt, hf_reg, hf_ghrec, hf_instr, hf_bud,
+  obtain ⟨hf_act, hf_par, hf_cap, hf_infl, hf_invt, hf_reg, hf_ghrec, hf_instr, hf_bud, hf_flowov,
       hNdTaint, hNdGh, hNdOver⟩ :=
     sentinel_elevate_taint_inv_full cgInst st bg content_gate agent level cgOf hcg hcapInvs hcapOvE
       hcapOvJoint hcapTaintE hcapTaintS hcapGhE hcapGhS st' ev hok
   obtain ⟨hRact', hRinfl', hRtaint', hRgh', hRov', hReg', hAllow', hInsp', hOvr', hInvtool'⟩ := hRsent'
   simp only [Tzimtzum.sentinel_elevate_taint] at hnext
   obtain ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
-      ha_ghrec, ha_over, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_instriss, ha_allow, ha_insp, ha_ovr, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
-      ha_caprefresh⟩ := hnext
+      ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
+      ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
+      ha_caprefresh, ha_capgrantov⟩ := hnext
   refine ⟨a', hguard, ?_, ?_⟩
   · simp only [Tzimtzum.sentinel_elevate_taint]
     exact ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
-      ha_ghrec, ha_over, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_instriss, ha_allow, ha_insp, ha_ovr, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
-      ha_caprefresh⟩
+      ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
+      ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
+      ⟨ha_caprefresh, ha_capgrantov⟩⟩
   · refine ⟨by rw [ha_root]; exact hR.root, by rw [ha_capdecl]; exact hR.cap_declass,
-      by rw [ha_caprefresh]; exact hR.cap_refresh, hRact',
+      by rw [ha_caprefresh]; exact hR.cap_refresh, by rw [ha_capgrantov]; exact hR.cap_grantov,
+      hRact',
       fun t => by rw [ha_reg, hf_reg]; exact hR.tool_reg t,
       fun Cc P => by rw [ha_parent, hf_par]; exact hR.parent Cc P,
       fun N Cc => by rw [ha_cap, hf_cap]; exact hR.cap N Cc,
@@ -809,6 +835,7 @@ theorem sentinel_elevate_taint_preservesR {C : Type} (cgInst : traits.ContentGat
       hInvtool', by rw [hf_par]; exact hR.ndParent, by rw [hf_cap]; exact hR.ndCap,
       by rw [hf_instr]; exact hR.ndInstr, hNdTaint hR.ndTaint, by rw [hf_infl]; exact hR.ndInflight,
       hNdGh hR.ndGhInvoked, by rw [hf_ghrec]; exact hR.ndGhReceived, hNdOver hR.ndOverride,
+      by rw [hf_flowov]; exact hR.ndFlowOverride,
       by rw [hf_bud]; exact hR.ndBudget, fun ag I hmem => ?_⟩
     -- wfInflight: in_flight + invocation_tool unchanged
     have hmem' : vmsMemLast st.in_flight ag I := by rw [← hf_infl]; exact hmem

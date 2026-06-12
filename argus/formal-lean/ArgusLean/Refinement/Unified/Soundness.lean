@@ -61,6 +61,8 @@ private theorem mem_srb : ("sentinel_refresh_budget", Kav.close1 Tzimtzum.sentin
   simp [sysActs, Tzimtzum.system]
 private theorem mem_li : ("load_instruction", Kav.close2 Tzimtzum.load_instruction) ∈ sysActs := by
   simp [sysActs, Tzimtzum.system]
+private theorem mem_go : ("grant_override", Kav.close4 Tzimtzum.grant_override) ∈ sysActs := by
+  simp [sysActs, Tzimtzum.system]
 
 theorem absStep_reachable (a a' : AbsState) (act : event.KernelAction)
     (hreach : Kav.Reachable Tzimtzum.system a)
@@ -90,6 +92,9 @@ theorem absStep_reachable (a a' : AbsState) (act : event.KernelAction)
       Kav.Reachable.step mem_srb hreach ⟨agent, hg⟩ ⟨agent, hg, hn⟩
   | .LoadInstruction agent instr, hg, hn =>
       Kav.Reachable.step mem_li hreach ⟨agent, instr, hg⟩ ⟨agent, instr, hg, hn⟩
+  | .GrantOverride granter target tool level, hg, hn =>
+      Kav.Reachable.step mem_go hreach ⟨granter, target, tool, confA level, hg⟩
+        ⟨granter, target, tool, confA level, hg, hn⟩
 
 /-- The abstract oracle fields are immutable background — every action frames them — so a step never
     changes `content_gate_passes` / `authorizer_allows` / `output_conforms`. Lets the fixed oracle
@@ -102,7 +107,8 @@ theorem absNext_oracle_frame (a a' : AbsState) (act : event.KernelAction)
     simp only [absActionOf, Tzimtzum.register_tool, Tzimtzum.load_instruction, Tzimtzum.delegate,
       Tzimtzum.grant_capability, Tzimtzum.revoke, Tzimtzum.cascade_revoke, Tzimtzum.invoke_start,
       Tzimtzum.invoke_complete, Tzimtzum.return_endorsed, Tzimtzum.return_unendorsed,
-      Tzimtzum.sentinel_elevate_taint, Tzimtzum.sentinel_refresh_budget] at hn <;>
+      Tzimtzum.sentinel_elevate_taint, Tzimtzum.sentinel_refresh_budget,
+      Tzimtzum.grant_override] at hn <;>
     refine ⟨?_, ?_, ?_⟩ <;> tauto
 
 /-- Reachability closure of the extracted kernel: states reachable from `KernelState.initial` by any

@@ -42,6 +42,7 @@ theorem delegate_inv_full
       st'.gh_taint_received.entries.val = st.gh_taint_received.entries.val.filter (removeKept grantee) ∧
       st'.agent_instruction.entries.val = st.agent_instruction.entries.val.filter (removeKept grantee) ∧
       st'.override_used.entries.val = st.override_used.entries.val.filter (removeKept grantee) ∧
+      st'.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept grantee) ∧
       st'.agent_budget.entries.val = st.agent_budget.entries.val.filter (removeKept grantee) ∧
       st'.agent_parent.entries.val =
         st.agent_parent.entries.val.filter (parentKept grantee) ++ [(grantee, grantor)] := by
@@ -105,7 +106,7 @@ theorem delegate_inv_full
   rw [hvm2Eq] at hok
   simp only [bind_tc_ok] at hok
   obtain ⟨st1, hclearEq, hActiveF, hParentF, hCapF, hInvocF, hToolF, hTaint, hInflight,
-    hGhInv, hGhRec, hInstr, hOverride, hBudget⟩ :=
+    hGhInv, hGhRec, hInstr, hOverride, hClrFlow, hBudget⟩ :=
     spec_imp_exists (clearAgentState_spec
       { st with agent_active := vs, agent_parent := vm1, agent_cap := vm2 } grantee)
   rw [hclearEq] at hok
@@ -117,7 +118,7 @@ theorem delegate_inv_full
     hToolF, hInvocF,
     (fun y => by rw [hActiveF]; exact hvsMem y), (fun j => by rw [hCapF]; exact hvm2Mem j),
     (fun hnd => by rw [hCapF]; exact hvv ▸ hvm2ndChar hnd),
-    hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hBudget,
+    hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hClrFlow, hBudget,
     (by rw [hParentF]; exact hvm1Char.trans (by rw [hvmChar]))⟩
 
 /-- `delegate` preserves the unified `R`. -/
@@ -133,7 +134,7 @@ theorem delegate_preservesR
     ∃ a', (Tzimtzum.delegate grantor grantee).guard a ∧
           (Tzimtzum.delegate grantor grantee).next a a' ∧ R st' bg a' := by
   obtain ⟨vs1, rootVal, hgrantor, hgrantee, hrootEq, hgrne, hvs1empty, hToolF, hInvocF, hActive,
-      hCap, hCapNd, hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hBudget, hParent⟩ :=
+      hCap, hCapNd, hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hClrFlow, hBudget, hParent⟩ :=
     delegate_inv_full st bg grantor grantee hcapA hcapC hcapP hR.ndParent st' ev hok
   have hrootId : a.root_agent = rootVal := by rw [hR.root] at hrootEq; exact Result.ok.inj hrootEq
   have hndP : (st.agent_parent.entries.val.map Prod.fst).Nodup := hR.ndParent
@@ -149,7 +150,8 @@ theorem delegate_preservesR
       in_flight := fun A I => a.in_flight A I ∧ A ≠ grantee
       gh_taint_invoked := fun A L => a.gh_taint_invoked A L ∧ A ≠ grantee
       gh_taint_received := fun A L => a.gh_taint_received A L ∧ A ≠ grantee
-      override_used := fun A T L => a.override_used A T L ∧ A ≠ grantee }, ?_, ?_, ?_⟩
+      override_used := fun A T L => a.override_used A T L ∧ A ≠ grantee
+      flow_override := fun A T L => a.flow_override A T L ∧ A ≠ grantee }, ?_, ?_, ?_⟩
   · -- guard
     simp only [Tzimtzum.delegate]
     exact ⟨(hR.active grantor).mpr hgrantor, fun h => hgrantee ((hR.active grantee).mp h),
@@ -157,10 +159,10 @@ theorem delegate_preservesR
   · -- next
     simp [Tzimtzum.delegate]
   · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
-      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.flowOverride, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_⟩
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+      ?_, ?_, ?_, ?_, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer,
+      hR.trustedIss, hR.instrIssuer, hR.flowAllows, hR.flowInspects, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+      ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro x; show (a.agent_active x ∨ x = grantee) ↔ vsMem st'.agent_active x
       rw [hActive x, hR.active x]
     · intro t; show a.tool_registered t ↔ vsMem st'.tool_registered t
@@ -228,6 +230,12 @@ theorem delegate_preservesR
             a.agent_budget G L :=
           ⟨fun h => h.elim (fun hp => absurd hp.1 hG) (fun hp => hp.1), fun h => Or.inr ⟨h, hG⟩⟩
         rw [hL]; exact hR.budget G L hGact
+    · -- flowOverride
+      intro ag t L
+      show (a.flow_override ag t L ∧ ag ≠ grantee) ↔
+        vmsMemLast st'.flow_override ag { tool := t, level := confC L }
+      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hClrFlow hR.ndFlowOverride),
+        vmsMem_filter_removeKept _ _ _ hClrFlow, vmsMem_iff_vmsMemLast _ hR.ndFlowOverride, ← hR.flowOverride]
     · intro I t; show invToolC st' I = some t → a.invocation_tool I = t
       unfold invToolC; rw [hInvocF]; exact hR.invTool I t
     · -- ndParent (rebuild keeps keys unique)
@@ -240,6 +248,7 @@ theorem delegate_preservesR
     · exact vmNodupKeysFilter hGhInv hR.ndGhInvoked
     · exact vmNodupKeysFilter hGhRec hR.ndGhReceived
     · exact vmNodupKeysFilter hOverride hR.ndOverride
+    · exact vmNodupKeysFilter hClrFlow hR.ndFlowOverride
     · exact vmNodupKeysFilter hBudget hR.ndBudget
     · intro ag I hmem
       have hmem' : vmsMemLast st.in_flight ag I := by

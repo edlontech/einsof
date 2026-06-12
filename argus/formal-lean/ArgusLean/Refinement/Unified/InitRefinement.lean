@@ -98,7 +98,8 @@ theorem init_chars (c0 : state.KernelState) (hc0 : state.KernelState.initial = .
       c0.in_flight.entries.val = [] ∧ c0.invocation_tool.entries.val = [] ∧
       c0.tool_registered.items.val = [] ∧ c0.gh_taint_invoked.entries.val = [] ∧
       c0.gh_taint_received.entries.val = [] ∧ c0.agent_instruction.entries.val = [] ∧
-      c0.override_used.entries.val = [] ∧ c0.agent_budget.entries.val = [] := by
+      c0.override_used.entries.val = [] ∧ c0.flow_override.entries.val = [] ∧
+      c0.agent_budget.entries.val = [] := by
   simp only [state.KernelState.initial, collections.VecSet.new, collections.VecMap.new,
     bind_tc_ok] at hc0
   obtain ⟨root, hroot⟩ : ∃ r, types.AgentId.root = .ok r := by
@@ -132,7 +133,7 @@ theorem init_chars (c0 : state.KernelState) (hc0 : state.KernelState.initial = .
   rw [hacapEq] at hc0
   simp only [bind_tc_ok, Result.ok.injEq] at hc0
   subst hc0
-  refine ⟨root, hroot, ?_, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨root, hroot, ?_, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   · intro y; rw [haaMem y]; simp [vsMem]
   · intro N C
     show vmsMemLast acap N C ↔ N = root
@@ -173,15 +174,16 @@ noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.Ag
   instruction_issuer := fun i => match background.BackgroundTheory.impl.instruction_issuer bg i with
     | .ok (some iss) => iss
     | _ => default
-  flow_allows := fun L E => flowModeC bg (confC L) E = background.FlowMode.Allow
-  flow_inspects := fun L E => flowModeC bg (confC L) E = background.FlowMode.Inspect
-  flow_override := fun A T L => vsMem bg.flow_overrides { agent := A, tool := T, level := confC L }
+  egress_allow_ceiling := fun E => (ceilC bg.allow_ceiling E).map confA
+  egress_inspect_ceiling := fun E => (ceilC bg.inspect_ceiling E).map confA
+  flow_override := fun _ _ _ => False
   authorizer_allows := auRel
   content_gate_passes := cgRel
   invocation_tool := fun _ => default
   root_agent := root
   cap_declassify := capability.CapKind.Declassify
   cap_refresh_budget := capability.CapKind.RefreshBudget
+  cap_grant_override := capability.CapKind.GrantOverride
 
 /-- **Init refinement.** The extracted initial state relates, under the unified `R`, to `absInitial`,
     which satisfies `Tzimtzum.initial`. The runtime-oracle relations are free parameters (the caller
@@ -192,13 +194,13 @@ theorem init_refines (bg : background.BackgroundTheory)
     ∃ a0 : AbsState, Tzimtzum.initial a0 ∧ R c0 bg a0 ∧
       a0.content_gate_passes = cgRel ∧ a0.authorizer_allows = auRel ∧ a0.output_conforms = cfRel := by
   obtain ⟨root, hroot, hactive, hcap, hcapNd, hpar, htaint, hinf, hinv, htool, hghi, hghr, hinstr,
-    hovr, hbud⟩ := init_chars c0 hc0
+    hovr, hflow, hbud⟩ := init_chars c0 hc0
   refine ⟨absInitial bg root cgRel auRel cfRel, ?_, ?_, rfl, rfl, rfl⟩
   · -- Tzimtzum.initial
-    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [absInitial]
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [absInitial]
   · -- R
-    refine ⟨hroot, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨hroot, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro x; exact (hactive x).symm
     · intro t; simp [absInitial, vsMem, htool]
     · intro C P; simp [absInitial, hpar, vmLastEntry]
@@ -232,9 +234,17 @@ theorem init_refines (bg : background.BackgroundTheory)
     · intro t tmeta htm; simp only [absInitial, htm]
     · intro i; exact Iff.rfl
     · intro i issuer hii; simp only [absInitial, hii]
-    · intro L E; exact Iff.rfl
-    · intro L E; exact Iff.rfl
-    · intro A T L; exact Iff.rfl
+    · intro L E
+      show Tzimtzum.St.flow_allows _ L E ↔ _
+      simp only [Tzimtzum.St.flow_allows, absInitial]
+      exact ceilingAdmits_mapA_iff bg.allow_ceiling L E
+    · intro L E
+      show Tzimtzum.St.flow_inspects _ L E ↔ _
+      simp only [Tzimtzum.St.flow_inspects, absInitial]
+      exact ceilingAdmits_mapA_iff bg.inspect_ceiling L E
+    · intro A T L
+      simp only [absInitial, false_iff]
+      rintro ⟨vs, hvs, _⟩; rw [hflow] at hvs; simp [vmLastEntry] at hvs
     · intro I t hIt; simp [invToolC, hinv, vmLastEntry] at hIt
     · simp [vmNodupKeys, hpar]
     · exact hcapNd
@@ -244,6 +254,7 @@ theorem init_refines (bg : background.BackgroundTheory)
     · simp [vmNodupKeys, hghi]
     · simp [vmNodupKeys, hghr]
     · simp [vmNodupKeys, hovr]
+    · simp [vmNodupKeys, hflow]
     · simp [vmNodupKeys, hbud]
     · intro ag I hmem; simp [vmsMemLast, hinf, vmLastEntry] at hmem
 

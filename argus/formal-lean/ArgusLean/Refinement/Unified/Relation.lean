@@ -28,6 +28,34 @@ namespace ArgusLean.Refinement
 
 open Aeneas Aeneas.Std Result argus_kernel
 
+/-! ## Abstract ↔ concrete ceiling-band bridge
+
+The abstract flow gates are the derived band tests `St.flow_allows` / `St.flow_inspects`
+(`ceilingAdmits` over the abstract ceiling fields); the kernel's are `ceilAdmitsC` over the two
+ceiling `VecMap`s. These two lemmas cross between them for the canonical abstraction of a ceiling
+map, `fun E => (ceilC m E).map confA`. -/
+
+/-- `le_conf` against an abstracted concrete level is the kernel's rank compare. -/
+theorem le_conf_confLeC (L : Tzimtzum.ConfLevel) (c : types.ConfLevel) :
+    Tzimtzum.le_conf L (confA c) ↔ confLeC (confC L) c = true := by
+  cases L <;> cases c <;> simp [Tzimtzum.le_conf, Tzimtzum.confRank, confA, confC, confLeC]
+
+/-- The abstract band test over the canonical abstraction of a concrete ceiling map coincides
+    with the kernel's `ceilAdmitsC`. -/
+theorem ceilingAdmits_mapA_iff (m : collections.VecMap types.EgressKind types.ConfLevel)
+    (L : Tzimtzum.ConfLevel) (E : types.EgressKind) :
+    Tzimtzum.ceilingAdmits (fun e => (ceilC m e).map confA) L E ↔
+      ceilAdmitsC m (confC L) E = true := by
+  rw [Tzimtzum.ceilingAdmits]
+  unfold ceilAdmitsC
+  cases hc : ceilC m E with
+  | none => simp [hc]
+  | some c =>
+    simp only [hc, Option.map_some, Option.some_inj]
+    constructor
+    · rintro ⟨ca, hca, hle⟩; subst hca; exact (le_conf_confLeC L c).mp hle
+    · intro h; exact ⟨confA c, rfl, (le_conf_confLeC L c).mpr h⟩
+
 /-- The unified refinement relation between an extracted `KernelState`/`BackgroundTheory` and the
     abstract TzimtzumV2 state. One canonical view per field:
 
@@ -47,6 +75,7 @@ structure R (st : state.KernelState) (bg : background.BackgroundTheory) (a : Abs
   root          : types.AgentId.root = .ok a.root_agent
   cap_declass   : a.cap_declassify = capability.CapKind.Declassify
   cap_refresh   : a.cap_refresh_budget = capability.CapKind.RefreshBudget
+  cap_grantov   : a.cap_grant_override = capability.CapKind.GrantOverride
   -- mutable fields (canonical last-match / get-style views)
   active        : ∀ x, a.agent_active x ↔ vsMem st.agent_active x
   tool_reg      : ∀ t, a.tool_registered t ↔ vsMem st.tool_registered t
@@ -72,10 +101,10 @@ structure R (st : state.KernelState) (bg : background.BackgroundTheory) (a : Abs
   trustedIss    : ∀ i, a.trusted_issuer i ↔ vsMem bg.trusted_issuers i
   instrIssuer   : ∀ i issuer, background.BackgroundTheory.impl.instruction_issuer bg i = .ok (some issuer) →
                     a.instruction_issuer i = issuer
-  flowAllows    : ∀ L E, a.flow_allows L E ↔ flowModeC bg (confC L) E = background.FlowMode.Allow
-  flowInspects  : ∀ L E, a.flow_inspects L E ↔ flowModeC bg (confC L) E = background.FlowMode.Inspect
+  flowAllows    : ∀ L E, a.flow_allows L E ↔ ceilAdmitsC bg.allow_ceiling (confC L) E = true
+  flowInspects  : ∀ L E, a.flow_inspects L E ↔ ceilAdmitsC bg.inspect_ceiling (confC L) E = true
   flowOverride  : ∀ A T L, a.flow_override A T L ↔
-                    vsMem bg.flow_overrides { agent := A, tool := T, level := confC L }
+                    vmsMemLast st.flow_override A { tool := T, level := confC L }
   invTool       : ∀ I t, invToolC st I = some t → a.invocation_tool I = t
   -- carried well-formedness invariants
   ndParent      : vmNodupKeys st.agent_parent
@@ -86,6 +115,7 @@ structure R (st : state.KernelState) (bg : background.BackgroundTheory) (a : Abs
   ndGhInvoked   : vmNodupKeys st.gh_taint_invoked
   ndGhReceived  : vmNodupKeys st.gh_taint_received
   ndOverride    : vmNodupKeys st.override_used
+  ndFlowOverride : vmNodupKeys st.flow_override
   ndBudget      : vmNodupKeys st.agent_budget
   wfInflight    : ∀ ag I, vmsMemLast st.in_flight ag I →
                     ∃ t tmeta, invToolC st I = some t ∧ toolMetaC bg t = some tmeta

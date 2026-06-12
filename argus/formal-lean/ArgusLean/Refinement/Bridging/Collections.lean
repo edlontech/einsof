@@ -1426,42 +1426,18 @@ deriving instance DecidableEq for types.BudgetLevel
 @[simp] theorem confLevel_clone_spec (a : types.ConfLevel) :
     types.ConfLevel.Insts.CoreCloneClone.clone a = .ok a := rfl
 
-/-! ## `OverrideEntry` equality / clone
+/-! ## `ConfLevel` equality
 
-`OverrideEntry` is the `(agent, tool, level)` struct keying `flow_overrides`. Its `eq` is the
-field-wise conjunction (`AgentId` then `ToolId` then `ConfLevel`), its `clone` the field-wise
-identity. Both reduce to the already-pinned per-field specs — `eq` is *proved* faithful decidable
-equality. Consumed by `has_flow_override` (a `VecSet.contains` on `flow_overrides`). -/
+(`OverrideEntry`/`FlowKey` died with the ceiling encoding — overrides are now keyed per-agent by
+`OverrideKey` in `KernelState.flow_override`, and the flow policy is two per-egress ceilings.) -/
 
 deriving instance DecidableEq for types.ConfLevel
-deriving instance DecidableEq for types.OverrideEntry
 
-/-- `ConfLevel.eq` faithful decidable equality (nullary enum; needed for `OverrideEntry.eq`). -/
+/-- `ConfLevel.eq` faithful decidable equality (nullary enum). -/
 @[simp] theorem confLevel_eq_spec (a b : types.ConfLevel) :
     types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq a b = .ok (decide (a = b)) := by
   cases a <;> cases b <;>
     simp [types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq, types.ConfLevel.read_discriminant]
-
-/-- `OverrideEntry.eq` is faithful decidable equality: agent (`String`) then tool (`String`) then
-    level (enum). -/
-@[simp] theorem overrideEntry_eq_spec (a b : types.OverrideEntry) :
-    types.OverrideEntry.Insts.CoreCmpPartialEqOverrideEntry.eq a b = .ok (decide (a = b)) := by
-  obtain ⟨a1, a2, a3⟩ := a; obtain ⟨b1, b2, b3⟩ := b
-  simp only [types.OverrideEntry.Insts.CoreCmpPartialEqOverrideEntry.eq, agentId_eq_spec, bind_tc_ok]
-  by_cases h1 : a1 = b1
-  · subst h1
-    simp only [decide_true, reduceIte, toolId_eq_spec]
-    by_cases h2 : a2 = b2
-    · subst h2; simp [confLevel_eq_spec]
-    · simp [h2]
-  · simp [h1]
-
-/-- `OverrideEntry.clone` is the identity (field-wise). -/
-@[simp] theorem overrideEntry_clone_spec (a : types.OverrideEntry) :
-    types.OverrideEntry.Insts.CoreCloneClone.clone a = .ok a := by
-  obtain ⟨a1, a2, a3⟩ := a
-  simp only [types.OverrideEntry.Insts.CoreCloneClone.clone, agentId_clone_spec, toolId_clone_spec,
-    confLevel_clone_spec, bind_tc_ok]
 
 /-! ## `VecSet.is_empty` and last-match nested membership
 
@@ -1866,6 +1842,16 @@ theorem vecSetInsertNodup_spec {T : Type} [DecidableEq T]
 /-- The opaque extracted `InvocationId.ne` is faithful decidable disequality. -/
 axiom invocationId_ne_spec (a b : types.InvocationId) :
     types.InvocationId.Insts.CoreCmpPartialEqInvocationId.ne a b = .ok (decide (a ≠ b))
+
+-- `DecidableEq types.OverrideKey` (also derived in `FlowBridging`; both yield the same structural
+-- instance) — needed for the `decide (a ≠ b)` in `overrideKey_ne_spec` below.
+deriving instance DecidableEq for types.OverrideKey
+
+/-- The opaque extracted `OverrideKey.ne` is faithful decidable disequality. The derived `ne` was
+    extracted as an axiom (a String-`ne` residual via the `ToolId` field), so its faithfulness is
+    pinned here in the same `agentId_ne_spec` / `invocationId_ne_spec` baseline family. -/
+axiom overrideKey_ne_spec (a b : types.OverrideKey) :
+    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.ne a b = .ok (decide (a ≠ b))
 
 theorem setContainsLast_spec {K T : Type} [DecidableEq K] [DecidableEq T]
     (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)

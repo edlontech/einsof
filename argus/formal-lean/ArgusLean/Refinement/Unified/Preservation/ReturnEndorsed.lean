@@ -145,11 +145,12 @@ theorem return_endorsed_preservesR
   · -- next
     simp [Tzimtzum.return_endorsed]
   · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.active, hR.tool_reg, hR.parent, hR.cap,
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg, hR.parent, hR.cap,
       hR.instr, hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, hR.override, ?_, hR.toolCap,
       hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
       hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr,
-      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, ?_, hR.wfInflight⟩
+      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndFlowOverride,
+      ?_, hR.wfInflight⟩
     · -- budget
       intro G L hactiveG
       show ((G = parent ∧ _) ∨ (G ≠ parent ∧ a.agent_budget G L)) ↔ budgetReadC vm G = budgetC L

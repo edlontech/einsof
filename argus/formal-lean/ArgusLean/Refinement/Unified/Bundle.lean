@@ -10,6 +10,7 @@ import ArgusLean.Refinement.Unified.Preservation.InvokeComplete
 import ArgusLean.Refinement.Unified.Preservation.SentinelElevateTaint
 import ArgusLean.Refinement.Unified.Preservation.ReturnUnendorsed
 import ArgusLean.Refinement.Unified.Preservation.InvokeStart
+import ArgusLean.Refinement.Unified.Preservation.GrantOverride
 
 /-! # Layer 1 — top-level dispatch + the `step_refines` bundle
 
@@ -61,6 +62,8 @@ noncomputable def kernelStep {A C F : Type}
   | .SentinelElevateTaint agent level =>
       transitions.sentinel_elevate_taint cgInst st bg content_gate agent level
   | .SentinelRefreshBudget agent => transitions.sentinel_refresh_budget st bg agent
+  | .GrantOverride granter target tool level =>
+      transitions.grant_override st bg granter target tool level
 
 /-- The abstract action a tagged step refines: the matching `Tzimtzum` action at the tag's parameters.
     `SentinelElevateTaint` maps its concrete `ConfLevel` to the abstract lattice via `confA`. -/
@@ -78,6 +81,8 @@ def absActionOf (act : event.KernelAction) : Kav.Action AbsState :=
   | .ReturnUnendorsed child parent => Tzimtzum.return_unendorsed child parent
   | .SentinelElevateTaint agent level => Tzimtzum.sentinel_elevate_taint agent (confA level)
   | .SentinelRefreshBudget agent => Tzimtzum.sentinel_refresh_budget agent
+  | .GrantOverride granter target tool level =>
+      Tzimtzum.grant_override granter target tool (confA level)
 
 /-! ## Capacity honesty + per-action precondition
 
@@ -148,6 +153,10 @@ def StepPre (st : state.KernelState) (_bg : background.BackgroundTheory) (a : Ab
       st.gh_taint_invoked.entries.val.length < Usize.max ∧
       (∀ p ∈ st.gh_taint_invoked.entries.val, p.2.items.val.length < Usize.max)
   | .SentinelRefreshBudget _ => True
+  | .GrantOverride _ _ _ _ =>
+      st.flow_override.entries.val.length < Usize.max ∧
+      (∀ p ∈ st.flow_override.entries.val, p.2.items.val.length < Usize.max) ∧
+      st.agent_budget.entries.val.length < Usize.max
 
 /-! ## Runtime-oracle extraction
 
@@ -256,5 +265,8 @@ theorem step_refines {A C F : Type}
         hPre.2.2.2.2.1 hPre.2.2.2.2.2.1 hPre.2.2.2.2.2.2 st' ev hok
   | SentinelRefreshBudget agent =>
       exact sentinel_refresh_budget_preservesR st bg a agent hR st' ev hok
+  | GrantOverride granter target tool level =>
+      exact grant_override_preservesR st bg a granter target tool level hR
+        hPre.1 hPre.2.1 hPre.2.2 st' ev hok
 
 end ArgusLean.Refinement

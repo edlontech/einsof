@@ -33,7 +33,7 @@ theorem returnUnendInner_spec {C : Type} (cgInst : traits.ContentGateOracle C)
     (parent : types.AgentId) (level : types.ConfLevel)
     (cgOf ovOf ocOf : types.ToolId → Bool)
     (hcg : ∀ t, cgInst.passes content_gate parent t st bg = .ok (cgOf t))
-    (hov : ∀ t, background.BackgroundTheory.has_flow_override bg parent t level = .ok (ovOf t))
+    (hov : ∀ t, state.KernelState.has_flow_override st parent t level = .ok (ovOf t))
     (hoc : ∀ t, state.KernelState.override_consumed st parent t level = .ok (ocOf t))
     (invs : collections.VecSet types.InvocationId)
     (accStart : transitions.GateAccum)
@@ -48,8 +48,8 @@ theorem returnUnendInner_spec {C : Type} (cgInst : traits.ContentGateOracle C)
       ∃ inv ∈ invs.items.val.take fi.val, invConsumed st bg level ovOf ocOf inv k) :
     transitions.return_unendorsed_loop0_loop0 cgInst st.agent_active st.agent_parent st.agent_cap
       st.taint_levels st.in_flight st.invocation_tool st.tool_registered st.gh_taint_invoked
-      st.gh_taint_received st.agent_instruction st.override_used st.agent_budget bg content_gate
-      parent acc invs level fi ⦃ res =>
+      st.gh_taint_received st.agent_instruction st.override_used st.flow_override st.agent_budget
+      bg content_gate parent acc invs level fi ⦃ res =>
       (res.denied = true ↔ accStart.denied = true ∨
         ∃ inv ∈ invs.items.val, invDenied st bg level cgOf ovOf ocOf inv) ∧
       (∀ k, vsMem res.to_consume k ↔ vsMem accStart.to_consume k ∨
@@ -133,7 +133,7 @@ theorem returnUnendInner_spec {C : Type} (cgInst : traits.ContentGateOracle C)
           have := hlenL; have := hlt; have := hcapS; omega
         have hst : ((⟨st.agent_active, st.agent_parent, st.agent_cap, st.taint_levels,
             st.in_flight, st.invocation_tool, st.tool_registered, st.gh_taint_invoked,
-            st.gh_taint_received, st.agent_instruction, st.override_used,
+            st.gh_taint_received, st.agent_instruction, st.override_used, st.flow_override,
             st.agent_budget⟩ : state.KernelState)) = st := by cases st; rfl
         have htail : ∀ (eg : collections.VecSet types.EgressKind),
             eg.items.val = egItems bg tool →
@@ -237,20 +237,20 @@ theorem returnUnendOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
         ≤ accStart.to_consume.items.val.length + li.val * parent_flights.items.val.length)
     (hden : acc.denied = true ↔ accStart.denied = true ∨
       ∃ level ∈ child_taint.items.val.take li.val, ∃ inv ∈ parent_flights.items.val,
-        invDenied st bg level cgOf (ovC bg parent level) (ocC st parent level) inv)
+        invDenied st bg level cgOf (ovC st parent level) (ocC st parent level) inv)
     (hcon : ∀ k, vsMem acc.to_consume k ↔ vsMem accStart.to_consume k ∨
       ∃ level ∈ child_taint.items.val.take li.val, ∃ inv ∈ parent_flights.items.val,
-        invConsumed st bg level (ovC bg parent level) (ocC st parent level) inv k) :
+        invConsumed st bg level (ovC st parent level) (ocC st parent level) inv k) :
     transitions.return_unendorsed_loop0 cgInst st.agent_active st.agent_parent st.agent_cap
       st.taint_levels st.in_flight st.invocation_tool st.tool_registered st.gh_taint_invoked
-      st.gh_taint_received st.agent_instruction st.override_used st.agent_budget bg content_gate
-      parent child_taint acc parent_flights li ⦃ res =>
+      st.gh_taint_received st.agent_instruction st.override_used st.flow_override st.agent_budget
+      bg content_gate parent child_taint acc parent_flights li ⦃ res =>
       (res.denied = true ↔ accStart.denied = true ∨
         ∃ level ∈ child_taint.items.val, ∃ inv ∈ parent_flights.items.val,
-          invDenied st bg level cgOf (ovC bg parent level) (ocC st parent level) inv) ∧
+          invDenied st bg level cgOf (ovC st parent level) (ocC st parent level) inv) ∧
       (∀ k, vsMem res.to_consume k ↔ vsMem accStart.to_consume k ∨
         ∃ level ∈ child_taint.items.val, ∃ inv ∈ parent_flights.items.val,
-          invConsumed st bg level (ovC bg parent level) (ocC st parent level) inv k) ∧
+          invConsumed st bg level (ovC st parent level) (ocC st parent level) inv k) ∧
       res.to_consume.items.val.Nodup ∧
       res.to_consume.items.val.length ≤
         accStart.to_consume.items.val.length
@@ -263,10 +263,10 @@ theorem returnUnendOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
         accStart.to_consume.items.val.length + p.2.val * parent_flights.items.val.length ∧
       (p.1.denied = true ↔ accStart.denied = true ∨
         ∃ level ∈ child_taint.items.val.take p.2.val, ∃ inv ∈ parent_flights.items.val,
-          invDenied st bg level cgOf (ovC bg parent level) (ocC st parent level) inv) ∧
+          invDenied st bg level cgOf (ovC st parent level) (ocC st parent level) inv) ∧
       (∀ k, vsMem p.1.to_consume k ↔ vsMem accStart.to_consume k ∨
         ∃ level ∈ child_taint.items.val.take p.2.val, ∃ inv ∈ parent_flights.items.val,
-          invConsumed st bg level (ovC bg parent level) (ocC st parent level) inv k))
+          invConsumed st bg level (ovC st parent level) (ocC st parent level) inv k))
   · rintro ⟨accL, iL⟩ ⟨hile, hndL, hlenL, hdenL, hconL⟩
     dsimp only at hile hndL hlenL hdenL hconL ⊢
     simp only [transitions.return_unendorsed_loop0.body, collections.VecSet.len,
@@ -302,8 +302,8 @@ theorem returnUnendOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
         omega
       obtain ⟨acc1, hacc1Eq, hDen1, hCon1, hNd1, hLen1⟩ := spec_imp_exists
         (returnUnendInner_spec cgInst st bg content_gate parent level cgOf
-          (ovC bg parent level) (ocC st parent level) hcg
-          (fun t => ovC_eq bg parent level t) (fun t => ocC_eq st parent level t)
+          (ovC st parent level) (ocC st parent level) hcg
+          (fun t => ovC_eq st parent level t) (fun t => ocC_eq st parent level t)
           parent_flights accL hcapInner accL 0#usize (by simp) hndL (by simp) (by simp) (by simp))
       rw [hacc1Eq]; simp only [bind_tc_ok]
       step*
@@ -315,13 +315,13 @@ theorem returnUnendOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
         omega
       · -- denied
         rw [hi2 _ li1_post, hext (fun lev => ∃ inv ∈ parent_flights.items.val,
-          invDenied st bg lev cgOf (ovC bg parent lev) (ocC st parent lev) inv), hDen1, hdenL,
+          invDenied st bg lev cgOf (ovC st parent lev) (ocC st parent lev) inv), hDen1, hdenL,
           or_assoc]
       · -- consume
         intro k
         rw [hi2 _ li1_post, hCon1 k, hconL k,
           hext (fun lev => ∃ inv ∈ parent_flights.items.val,
-            invConsumed st bg lev (ovC bg parent lev) (ocC st parent lev) inv k), or_assoc]
+            invConsumed st bg lev (ovC st parent lev) (ocC st parent lev) inv k), or_assoc]
     case isFalse h =>
       have heq' : iL.val = child_taint.items.val.length := by scalar_tac
       rw [heq'] at hlenL
@@ -358,10 +358,10 @@ def Rretu (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsSt
   (∀ ag t L, a.override_used ag t L ↔
     vmsMemLast st.override_used ag { tool := t, level := confC L }) ∧
   (∀ T E, a.tool_egress T E ↔ E ∈ egItems bg T) ∧
-  (∀ L E, a.flow_allows L E ↔ flowModeC bg (confC L) E = background.FlowMode.Allow) ∧
-  (∀ L E, a.flow_inspects L E ↔ flowModeC bg (confC L) E = background.FlowMode.Inspect) ∧
+  (∀ L E, a.flow_allows L E ↔ ceilAdmitsC bg.allow_ceiling (confC L) E = true) ∧
+  (∀ L E, a.flow_inspects L E ↔ ceilAdmitsC bg.inspect_ceiling (confC L) E = true) ∧
   (∀ A T L, a.flow_override A T L ↔
-    vsMem bg.flow_overrides { agent := A, tool := T, level := confC L }) ∧
+    vmsMemLast st.flow_override A { tool := T, level := confC L }) ∧
   (∀ I t, invToolC st I = some t → a.invocation_tool I = t) ∧
   (∀ ag I, vmsMemLast st.in_flight ag I → invToolC st I ≠ none)
 
@@ -401,12 +401,12 @@ theorem return_unendorsed_ok_inv {C : Type} (cgInst : traits.ContentGateOracle C
     (∀ level inv tool E, vmsMemLast st.taint_levels child level →
       vmsMemLast st.in_flight parent inv → invToolC st inv = some tool → E ∈ egItems bg tool →
       ¬ egressDenied (flowModeC bg level E) (cgOf tool)
-        (ovC bg parent level tool) (ocC st parent level tool)) ∧
+        (ovC st parent level tool) (ocC st parent level tool)) ∧
     st'.agent_active = st.agent_active ∧ st'.agent_parent = st.agent_parent ∧
     st'.agent_cap = st.agent_cap ∧ st'.in_flight = st.in_flight ∧
     st'.invocation_tool = st.invocation_tool ∧ st'.tool_registered = st.tool_registered ∧
     st'.gh_taint_invoked = st.gh_taint_invoked ∧ st'.agent_instruction = st.agent_instruction ∧
-    st'.agent_budget = st.agent_budget ∧
+    st'.agent_budget = st.agent_budget ∧ st'.flow_override = st.flow_override ∧
     (∀ ag v, vmsMemLast st'.taint_levels ag v ↔
       vmsMemLast st.taint_levels ag v ∨ (ag = parent ∧ vmsMemLast st.taint_levels child v)) ∧
     (∀ ag v, vmsMemLast st'.gh_taint_received ag v ↔
@@ -414,7 +414,7 @@ theorem return_unendorsed_ok_inv {C : Type} (cgInst : traits.ContentGateOracle C
     (∀ ag key, vmsMemLast st'.override_used ag key ↔ vmsMemLast st.override_used ag key ∨
       (ag = parent ∧ ∃ level, vmsMemLast st.taint_levels child level ∧
         ∃ inv, vmsMemLast st.in_flight parent inv ∧
-          invConsumed st bg level (ovC bg parent level) (ocC st parent level) inv key)) := by
+          invConsumed st bg level (ovC st parent level) (ocC st parent level) inv key)) := by
   simp only [transitions.return_unendorsed] at hok
   -- Gate 1: the parent edge `child → parent`.
   obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
@@ -504,7 +504,7 @@ theorem return_unendorsed_ok_inv {C : Type} (cgInst : traits.ContentGateOracle C
   have hNotDenied : ∀ level inv tool E, vmsMemLast st.taint_levels child level →
       vmsMemLast st.in_flight parent inv → invToolC st inv = some tool → E ∈ egItems bg tool →
       ¬ egressDenied (flowModeC bg level E) (cgOf tool)
-        (ovC bg parent level tool) (ocC st parent level tool) := by
+        (ovC st parent level tool) (ocC st parent level tool) := by
     intro level inv tool E hlevel hinv htool hE hden'
     have hd : acc.denied = true := by
       rw [hDen]; right
@@ -512,7 +512,7 @@ theorem return_unendorsed_ok_inv {C : Type} (cgInst : traits.ContentGateOracle C
     rw [hDenF] at hd; simp at hd
   have hAcc : ∀ key, vsMem acc.to_consume key ↔ ∃ level, vmsMemLast st.taint_levels child level ∧
       ∃ inv, vmsMemLast st.in_flight parent inv ∧
-        invConsumed st bg level (ovC bg parent level) (ocC st parent level) inv key := by
+        invConsumed st bg level (ovC st parent level) (ocC st parent level) inv key := by
     intro key
     rw [hCon key]
     constructor
@@ -617,7 +617,7 @@ theorem return_unendorsed_ok_inv {C : Type} (cgInst : traits.ContentGateOracle C
   obtain ⟨hStateEq, _⟩ := hok
   subst hStateEq
   refine ⟨hlast, hb1Iff.mp hb1, hb2Iff.mp hb2, hNoFlight, hNotDenied,
-    rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+    rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
   · intro ag v
     show vmsMemLast vm ag v ↔ _
     rw [hvmMem ag v]
@@ -667,7 +667,7 @@ theorem return_unendorsed_refines {C : Type} (cgInst : traits.ContentGateOracle 
   obtain ⟨hRact, hRparent, hRinfl, hRtaint, hRghr, hRov, hReg, hRallow, hRinsp, hRovr, hRinvtool,
       hRwf⟩ := hR
   obtain ⟨hParentEdge, hChildActive, hParentActive, hNoFlight, hNotDenied, hAct, hPar, hCap, hFl,
-      hInvT, hToolReg, hGhInv, hAgInstr, hBudget, hTaintW, hGhrW, hOvW⟩ :=
+      hInvT, hToolReg, hGhInv, hAgInstr, hBudget, hFlowOv, hTaintW, hGhrW, hOvW⟩ :=
     return_unendorsed_ok_inv cgInst st bg content_gate child parent cgOf hcg hcapLoop
       hcapTaintE hcapTaintJoint hcapTaintChild hcapGhrE hcapGhrJoint hcapOvE hcapOvJoint st' ev hok
   -- success ⇒ every in-flight invocation of `parent` is bound to its abstract tool
@@ -677,11 +677,11 @@ theorem return_unendorsed_refines {C : Type} (cgInst : traits.ContentGateOracle 
     cases hc : invToolC st inv with
     | none => exact absurd hc (hRwf parent inv hmem)
     | some t => rw [hRinvtool inv t hc]
-  have hovIff : ∀ L t, ovC bg parent (confC L) t = true ↔
-      vsMem bg.flow_overrides { agent := parent, tool := t, level := confC L } := by
+  have hovIff : ∀ L t, ovC st parent (confC L) t = true ↔
+      vmsMemLast st.flow_override parent { tool := t, level := confC L } := by
     intro L t
-    obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec bg parent t (confC L))
-    rw [ovC_eq bg parent (confC L) t, Result.ok.injEq] at hb
+    obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec st parent t (confC L))
+    rw [ovC_eq st parent (confC L) t, Result.ok.injEq] at hb
     rw [hb]; exact hbiff
   have hocIff : ∀ L t, ocC st parent (confC L) t = true ↔
       vmsMemLast st.override_used parent { tool := t, level := confC L } := by
@@ -689,12 +689,38 @@ theorem return_unendorsed_refines {C : Type} (cgInst : traits.ContentGateOracle 
     obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (overrideConsumed_spec st parent t (confC L))
     rw [ocC_eq st parent (confC L) t, Result.ok.injEq] at hb
     rw [hb]; exact hbiff
+  -- band tests in `flowModeC` terms. `flow_allows ↔ flowModeC = Allow` STILL holds; `flow_inspects ↔
+  -- flowModeC = Inspect` does NOT (inspect band may overlap allow band) — only band membership
+  -- survives, and we route the denial form through `hDenForm` (both directions hold).
+  have hAllowIff : ∀ L E, a.flow_allows L E ↔ flowModeC bg (confC L) E = background.FlowMode.Allow := by
+    intro L E; rw [hRallow L E, flowModeC_allow_iff]
+  have hInspBand : ∀ L E, a.flow_inspects L E ↔ ceilAdmitsC bg.inspect_ceiling (confC L) E = true := by
+    intro L E; rw [hRinsp L E]
+  have hDenForm : ∀ (L : Tzimtzum.ConfLevel) (E : types.EgressKind) (cg : Bool),
+      ((flowModeC bg (confC L) E ≠ background.FlowMode.Allow ∧
+        ¬ (flowModeC bg (confC L) E = background.FlowMode.Inspect ∧ cg = true))
+      ↔ (¬ a.flow_allows L E ∧
+          ¬ (a.flow_inspects L E ∧ cg = true))) := by
+    intro L E cg
+    rw [hAllowIff L E, hInspBand L E]
+    constructor
+    · rintro ⟨hne, hni⟩
+      refine ⟨hne, ?_⟩
+      rintro ⟨hib, hcg⟩
+      have hab : ceilAdmitsC bg.allow_ceiling (confC L) E = false := by
+        by_contra hc
+        exact hne ((flowModeC_allow_iff bg (confC L) E).mpr (by simp_all))
+      exact hni ⟨(flowModeC_inspect_iff bg (confC L) E).mpr ⟨hab, hib⟩, hcg⟩
+    · rintro ⟨hna, hni⟩
+      refine ⟨hna, ?_⟩
+      rintro ⟨hi, hcg⟩
+      exact hni ⟨((flowModeC_inspect_iff bg (confC L) E).mp hi).2, hcg⟩
   -- per-tool guard from the concrete `not denied`, packaged for the matched in-flight tool
   have hguardOf : ∀ L inv, vmsMemLast st.taint_levels child (confC L) →
       vmsMemLast st.in_flight parent inv →
       ∀ E ∈ egItems bg (a.invocation_tool inv),
         ¬ egressDenied (flowModeC bg (confC L) E) (cgOf (a.invocation_tool inv))
-          (ovC bg parent (confC L) (a.invocation_tool inv))
+          (ovC st parent (confC L) (a.invocation_tool inv))
           (ocC st parent (confC L) (a.invocation_tool inv)) := by
     intro L inv hlevel hmem E hE
     exact hNotDenied (confC L) inv (a.invocation_tool inv) E hlevel hmem (hbind inv hmem) hE
@@ -702,26 +728,26 @@ theorem return_unendorsed_refines {C : Type} (cgInst : traits.ContentGateOracle 
   have hConsEquiv : ∀ L inv, vmsMemLast st.taint_levels child (confC L) →
       vmsMemLast st.in_flight parent inv →
       ((∃ E ∈ egItems bg (a.invocation_tool inv),
-          egressConsumed (flowModeC bg (confC L) E) (ovC bg parent (confC L) (a.invocation_tool inv))
+          egressConsumed (flowModeC bg (confC L) E) (ovC st parent (confC L) (a.invocation_tool inv))
             (ocC st parent (confC L) (a.invocation_tool inv))) ↔
        (a.flow_override parent (a.invocation_tool inv) L ∧
         ∃ E, a.tool_egress (a.invocation_tool inv) E ∧ ¬ a.flow_allows L E ∧
           ¬ (a.flow_inspects L E ∧ a.content_gate_passes parent (a.invocation_tool inv)))) := by
     intro L inv hlevel hmem
     rw [egressConsumed_iff_abstractDenied (egItems bg (a.invocation_tool inv)) (flowModeC bg (confC L))
-      (cgOf (a.invocation_tool inv)) (ovC bg parent (confC L) (a.invocation_tool inv))
+      (cgOf (a.invocation_tool inv)) (ovC st parent (confC L) (a.invocation_tool inv))
       (ocC st parent (confC L) (a.invocation_tool inv)) (hguardOf L inv hlevel hmem)]
     apply and_congr
     · rw [hovIff L (a.invocation_tool inv), hRovr parent (a.invocation_tool inv) L]
     · constructor
-      · rintro ⟨E, hE, hne, hni⟩
-        refine ⟨E, (hReg (a.invocation_tool inv) E).mpr hE, ?_, ?_⟩
-        · rw [hRallow L E]; exact hne
-        · rw [hRinsp L E, ← hcgA (a.invocation_tool inv)]; exact hni
-      · rintro ⟨E, hEg, hna, hni⟩
-        refine ⟨E, (hReg (a.invocation_tool inv) E).mp hEg, ?_, ?_⟩
-        · exact fun h => hna ((hRallow L E).mpr h)
-        · exact fun ⟨h1, h2⟩ => hni ⟨(hRinsp L E).mpr h1, (hcgA (a.invocation_tool inv)).mp h2⟩
+      · rintro ⟨E, hE, hden⟩
+        refine ⟨E, (hReg (a.invocation_tool inv) E).mpr hE, ?_⟩
+        have := (hDenForm L E (cgOf (a.invocation_tool inv))).mp hden
+        rwa [hcgA (a.invocation_tool inv)] at this
+      · rintro ⟨E, hEg, hden⟩
+        refine ⟨E, (hReg (a.invocation_tool inv) E).mp hEg, ?_⟩
+        rw [← hcgA (a.invocation_tool inv)] at hden
+        exact (hDenForm L E (cgOf (a.invocation_tool inv))).mpr hden
   -- the abstract flow guard
   have hguard : ∀ L I E,
       a.taint_levels child L ∧ a.in_flight parent I ∧ a.tool_egress (a.invocation_tool I) E →
@@ -735,10 +761,11 @@ theorem return_unendorsed_refines {C : Type} (cgInst : traits.ContentGateOracle 
     have hEItem : E ∈ egItems bg (a.invocation_tool I) := (hReg (a.invocation_tool I) E).mp hEg
     have hnd := hNotDenied (confC L) I (a.invocation_tool I) E hlevel hmem (hbind I hmem) hEItem
     rcases not_egressDenied_disj (flowModeC bg (confC L) E) (cgOf (a.invocation_tool I))
-      (ovC bg parent (confC L) (a.invocation_tool I)) (ocC st parent (confC L) (a.invocation_tool I))
+      (ovC st parent (confC L) (a.invocation_tool I)) (ocC st parent (confC L) (a.invocation_tool I))
       hnd with hA | ⟨hI, hcgv⟩ | ⟨hovv, hocv⟩
-    · exact Or.inl ((hRallow L E).mpr hA)
-    · exact Or.inr (Or.inl ⟨(hRinsp L E).mpr hI, (hcgA (a.invocation_tool I)).mp hcgv⟩)
+    · exact Or.inl ((hAllowIff L E).mpr hA)
+    · exact Or.inr (Or.inl ⟨(hInspBand L E).mpr ((flowModeC_inspect_iff bg (confC L) E).mp hI).2,
+        (hcgA (a.invocation_tool I)).mp hcgv⟩)
     · refine Or.inr (Or.inr ⟨?_, ?_⟩)
       · rw [hRovr parent (a.invocation_tool I) L]; exact (hovIff L (a.invocation_tool I)).mp hovv
       · rw [hRov parent (a.invocation_tool I) L]
@@ -801,7 +828,7 @@ theorem return_unendorsed_refines {C : Type} (cgInst : traits.ContentGateOracle 
     · exact hReg
     · exact hRallow
     · exact hRinsp
-    · exact hRovr
+    · intro A T L; rw [hFlowOv]; exact hRovr A T L
     · intro I t hI
       have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
       exact hRinvtool I t (heq ▸ hI)
@@ -835,7 +862,7 @@ theorem return_unendorsed_inv_full {C : Type} (cgInst : traits.ContentGateOracle
     st'.agent_cap = st.agent_cap ∧ st'.in_flight = st.in_flight ∧
     st'.invocation_tool = st.invocation_tool ∧ st'.tool_registered = st.tool_registered ∧
     st'.gh_taint_invoked = st.gh_taint_invoked ∧ st'.agent_instruction = st.agent_instruction ∧
-    st'.agent_budget = st.agent_budget ∧
+    st'.agent_budget = st.agent_budget ∧ st'.flow_override = st.flow_override ∧
     (vmNodupKeys st.taint_levels → vmNodupKeys st'.taint_levels) ∧
     (vmNodupKeys st.gh_taint_received → vmNodupKeys st'.gh_taint_received) ∧
     (vmNodupKeys st.override_used → vmNodupKeys st'.override_used) := by
@@ -983,7 +1010,7 @@ theorem return_unendorsed_inv_full {C : Type} (cgInst : traits.ContentGateOracle
   simp only [Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
   obtain ⟨hStateEq, _⟩ := hok
   subst hStateEq
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, hvmNd, hvm1Nd, houNd⟩
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, hvmNd, hvm1Nd, houNd⟩
 
 /-- `return_unendorsed` preserves the unified `R`. -/
 theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOracle C)
@@ -1017,7 +1044,7 @@ theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOrac
     return_unendorsed_refines cgInst st bg content_gate a child parent cgOf hcg hcgA hRretu
       hcapLoop hcapTaintE hcapTaintJoint hcapTaintChild hcapGhrE hcapGhrJoint hcapOvE hcapOvJoint
       st' ev hok
-  obtain ⟨hf_act, hf_par, hf_cap, hf_infl, hf_invt, hf_reg, hf_ghinv, hf_instr, hf_bud,
+  obtain ⟨hf_act, hf_par, hf_cap, hf_infl, hf_invt, hf_reg, hf_ghinv, hf_instr, hf_bud, hf_flowov,
       hNdTaint, hNdGhr, hNdOver⟩ :=
     return_unendorsed_inv_full cgInst st bg content_gate child parent cgOf hcg hcapLoop hcapTaintE
       hcapTaintJoint hcapTaintChild hcapGhrE hcapGhrJoint hcapOvE hcapOvJoint st' ev hok
@@ -1025,17 +1052,18 @@ theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOrac
       hInvtool', _hRwf'⟩ := hRretu'
   simp only [Tzimtzum.return_unendorsed] at hnext
   obtain ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
-      ha_ghrec, ha_over, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_instriss, ha_allow, ha_insp, ha_ovr, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
-      ha_caprefresh⟩ := hnext
+      ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
+      ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
+      ha_caprefresh, ha_capgrantov⟩ := hnext
   refine ⟨a', hguard, ?_, ?_⟩
   · simp only [Tzimtzum.return_unendorsed]
     exact ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
-      ha_ghrec, ha_over, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_instriss, ha_allow, ha_insp, ha_ovr, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
-      ha_caprefresh⟩
+      ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
+      ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
+      ⟨ha_caprefresh, ha_capgrantov⟩⟩
   · refine ⟨by rw [ha_root]; exact hR.root, by rw [ha_capdecl]; exact hR.cap_declass,
-      by rw [ha_caprefresh]; exact hR.cap_refresh, hRact',
+      by rw [ha_caprefresh]; exact hR.cap_refresh, by rw [ha_capgrantov]; exact hR.cap_grantov,
+      hRact',
       fun t => by rw [ha_reg, hf_reg]; exact hR.tool_reg t, hRparent',
       fun N Cc => by rw [ha_cap, hf_cap]; exact hR.cap N Cc,
       fun ag ins => by rw [ha_instr, hf_instr]; exact hR.instr ag ins, hRtaint', hRinfl',
@@ -1050,6 +1078,7 @@ theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOrac
       hInvtool', by rw [hf_par]; exact hR.ndParent, by rw [hf_cap]; exact hR.ndCap,
       by rw [hf_instr]; exact hR.ndInstr, hNdTaint hR.ndTaint, by rw [hf_infl]; exact hR.ndInflight,
       by rw [hf_ghinv]; exact hR.ndGhInvoked, hNdGhr hR.ndGhReceived, hNdOver hR.ndOverride,
+      by rw [hf_flowov]; exact hR.ndFlowOverride,
       by rw [hf_bud]; exact hR.ndBudget, fun ag I hmem => ?_⟩
     -- wfInflight: in_flight + invocation_tool unchanged
     have hmem' : vmsMemLast st.in_flight ag I := by rw [← hf_infl]; exact hmem

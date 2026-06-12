@@ -103,9 +103,10 @@ theorem capMem_filter_removeKept
 
 /-! ## Shared transition helper: `clear_agent_state`
 
-`clear_agent_state st agent` deletes `agent`'s key from the seven per-agent maps
+`clear_agent_state st agent` deletes `agent`'s key from the eight per-agent maps
 (`taint_levels`, `in_flight`, `gh_taint_invoked`, `gh_taint_received`, `agent_instruction`,
-`override_used`, `agent_budget`) and frames everything else. Each delete is a `VecMap.remove`,
+`override_used`, `flow_override`, `agent_budget`) and frames everything else. Each delete is a
+`VecMap.remove`,
 so each touched field becomes the key-filtered entry list. Shared by `delegate` / `revoke` /
 `cascade_revoke`. -/
 theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
@@ -121,6 +122,7 @@ theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
       st1.gh_taint_received.entries.val = st.gh_taint_received.entries.val.filter (removeKept agent) ∧
       st1.agent_instruction.entries.val = st.agent_instruction.entries.val.filter (removeKept agent) ∧
       st1.override_used.entries.val = st.override_used.entries.val.filter (removeKept agent) ∧
+      st1.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept agent) ∧
       st1.agent_budget.entries.val = st.agent_budget.entries.val.filter (removeKept agent) ⦄ := by
   unfold transitions.clear_agent_state
   obtain ⟨vm0, h0Eq, h0⟩ := spec_imp_exists
@@ -149,9 +151,13 @@ theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
   rw [h5Eq]; simp only [bind_tc_ok]
   obtain ⟨vm6, h6Eq, h6⟩ := spec_imp_exists
     (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.agent_budget agent)
+      st.flow_override agent)
   rw [h6Eq]; simp only [bind_tc_ok]
-  exact ⟨rfl, rfl, rfl, rfl, rfl, h0, h1, h2, h3, h4, h5, h6⟩
+  obtain ⟨vm7, h7Eq, h7⟩ := spec_imp_exists
+    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
+      st.agent_budget agent)
+  rw [h7Eq]; simp only [bind_tc_ok]
+  exact ⟨rfl, rfl, rfl, rfl, rfl, h0, h1, h2, h3, h4, h5, h6, h7⟩
 
 /-! ## Budget reads/writes: `budget`, `budget_exhausted`, `debit_budget`
 
@@ -222,7 +228,7 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
       st1.taint_levels = st.taint_levels ∧ st1.gh_taint_received = st.gh_taint_received ∧
       st1.override_used = st.override_used ∧ st1.gh_taint_invoked = st.gh_taint_invoked ∧
       st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
-      st1.tool_registered = st.tool_registered ∧
+      st1.tool_registered = st.tool_registered ∧ st1.flow_override = st.flow_override ∧
       (∀ G, budgetReadC st1.agent_budget G =
         if G = agent then debitC (budgetReadC st.agent_budget agent)
         else budgetReadC st.agent_budget G) ⦄ := by
@@ -235,7 +241,7 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
       types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
   rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
   refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
-    trivial, fun G => ?_⟩
+    trivial, trivial, fun G => ?_⟩
   show budgetReadC vm G = _
   by_cases hG : G = agent
   · have hread : budgetReadC vm G = debitC bl := by unfold budgetReadC; rw [hvm G, if_pos hG]

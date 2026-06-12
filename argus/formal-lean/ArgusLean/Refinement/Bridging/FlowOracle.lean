@@ -5,15 +5,17 @@ import ArgusLean.Refinement.Bridging.FlowBridging
 The concrete-only oracle reads the egress-gated actions (`return_unendorsed`, `sentinel_elevate_taint`)
 perform, pinned to their faithful values so they can feed `flowDecision_spec` / `gateEgress_spec`:
 
-* `flowMode_spec` — `flow_mode` is total (`VecMap.get` on `flow_policy` defaults to `Deny`); `flowModeC`
-  is its pure value.
-* `hasFlowOverride_spec` — `has_flow_override` is membership of the `(agent, tool, level)`
-  `OverrideEntry` in `flow_overrides`.
+* `flowMode_spec` — `flow_mode` is total (two ceiling `VecMap.get_cloned` reads, absent = deny);
+  `flowModeC` is its pure value, characterised per-mode by `flowModeC_allow_iff` /
+  `flowModeC_inspect_iff` / `flowModeC_deny_iff` over the pure band test `ceilAdmitsC`.
+* `hasFlowOverride_spec` — `has_flow_override` is the last-match nested membership of the
+  `(tool, level)` `OverrideKey` in the agent's `flow_override` set (state-side since Campaign A;
+  the exact `override_consumed` shape).
 * `overrideConsumed_spec` — `override_consumed` is the last-match nested membership of the
   `(tool, level)` `OverrideKey` in the agent's `override_used` set (`vmsMemLast`).
 
-Plus the supporting `FlowKey` / `EgressKind` / `OverrideKey` / `FlowMode` decidable-equality / clone
-facts — all *proved* (nullary enums / structs of them), no extractor trust beyond the `String` ids. -/
+Plus the supporting `EgressKind` / `OverrideKey` / `FlowMode` / `ConfLevel.le` decidable facts —
+all *proved* (nullary enums / structs of them), no extractor trust beyond the `String` ids. -/
 
 namespace ArgusLean.Refinement
 
@@ -22,10 +24,9 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
-/-! ## `EgressKind` / `FlowKey` / `OverrideKey` / `FlowMode` equality and clone -/
+/-! ## `EgressKind` / `OverrideKey` / `FlowMode` equality and clone, `ConfLevel.le` -/
 
 deriving instance DecidableEq for types.EgressKind
-deriving instance DecidableEq for types.FlowKey
 
 /-- `EgressKind.eq` faithful decidable equality (nullary enum). -/
 @[simp] theorem egressKind_eq_spec (a b : types.EgressKind) :
@@ -33,22 +34,22 @@ deriving instance DecidableEq for types.FlowKey
   cases a <;> cases b <;>
     simp [types.EgressKind.Insts.CoreCmpPartialEqEgressKind.eq, types.EgressKind.read_discriminant]
 
-/-- `FlowKey.eq` faithful decidable equality: level (enum) then egress (enum). -/
-@[simp] theorem flowKey_eq_spec (a b : types.FlowKey) :
-    types.FlowKey.Insts.CoreCmpPartialEqFlowKey.eq a b = .ok (decide (a = b)) := by
-  obtain ⟨l1, e1⟩ := a; obtain ⟨l2, e2⟩ := b
-  simp only [types.FlowKey.Insts.CoreCmpPartialEqFlowKey.eq, confLevel_eq_spec, bind_tc_ok]
-  by_cases hl : l1 = l2
-  · subst hl; simp [egressKind_eq_spec]
-  · simp [hl]
+/-- The pure rank-compare behind `ConfLevel::le` (the kernel's trait-free total order). -/
+def confLeC (a b : types.ConfLevel) : Bool :=
+  match a, b with
+  | .Public, _ => true
+  | .Internal, .Public => false
+  | .Internal, _ => true
+  | .Sensitive, .Public => false
+  | .Sensitive, .Internal => false
+  | .Sensitive, _ => true
+  | .Restricted, .Restricted => true
+  | .Restricted, _ => false
 
-/-- `FlowKey.clone` is the identity (nullary-enum fields, body `ok self`). -/
-@[simp] theorem flowKey_clone_spec (a : types.FlowKey) :
-    types.FlowKey.Insts.CoreCloneClone.clone a = .ok a := rfl
-
-/-- `FlowMode.clone` is the identity (body `ok self`). -/
-@[simp] theorem flowMode_clone_spec (a : background.FlowMode) :
-    background.FlowMode.Insts.CoreCloneClone.clone a = .ok a := rfl
+/-- `ConfLevel.le` is total and computes `confLeC` (16-case rank compare). -/
+@[simp] theorem confLevel_le_spec (a b : types.ConfLevel) :
+    types.ConfLevel.le a b = .ok (confLeC a b) := by
+  cases a <;> cases b <;> rfl
 
 /-- `OverrideKey.clone` is the identity (field-wise). -/
 @[simp] theorem overrideKey_clone_spec (a : types.OverrideKey) :
@@ -86,14 +87,27 @@ theorem toolMetadata_spec (bg : background.BackgroundTheory) (tool : types.ToolI
     types.ToolId.Insts.CoreCmpPartialEqToolId toolId_eq_spec
     background.ToolMetadata.Insts.CoreCloneClone toolMetadata_clone_spec bg.tools tool
 
-/-! ## `flow_mode` -/
+/-! ## `flow_mode` (two-ceiling band compute) -/
 
-/-- The pure value of `flow_mode`: the live `(level, egress)` policy entry, defaulting to `Deny`. -/
+/-- The live ceiling for `E` in a per-egress ceiling map (last-match `get_cloned` read). -/
+def ceilC (m : collections.VecMap types.EgressKind types.ConfLevel) (E : types.EgressKind) :
+    Option types.ConfLevel :=
+  (vmLastEntry m.entries.val E).map Prod.snd
+
+/-- The pure band test: `level` is at or below `E`'s ceiling (absent ceiling admits nothing). -/
+def ceilAdmitsC (m : collections.VecMap types.EgressKind types.ConfLevel)
+    (level : types.ConfLevel) (E : types.EgressKind) : Bool :=
+  match ceilC m E with
+  | none => false
+  | some c => confLeC level c
+
+/-- The pure value of `flow_mode`: ALLOW iff the allow band admits, else INSPECT iff the inspect
+    band admits, else DENY. -/
 def flowModeC (bg : background.BackgroundTheory) (level : types.ConfLevel) (E : types.EgressKind) :
     background.FlowMode :=
-  match vmLastEntry bg.flow_policy.entries.val { level := level, egress := E } with
-  | none => background.FlowMode.Deny
-  | some p => p.2
+  if ceilAdmitsC bg.allow_ceiling level E then background.FlowMode.Allow
+  else if ceilAdmitsC bg.inspect_ceiling level E then background.FlowMode.Inspect
+  else background.FlowMode.Deny
 
 /-- `flow_mode` is total and computes `flowModeC`. -/
 theorem flowMode_spec (bg : background.BackgroundTheory) (level : types.ConfLevel)
@@ -101,14 +115,64 @@ theorem flowMode_spec (bg : background.BackgroundTheory) (level : types.ConfLeve
     background.BackgroundTheory.flow_mode bg level E ⦃ fm => fm = flowModeC bg level E ⦄ := by
   unfold background.BackgroundTheory.flow_mode
   obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
-    (vecMapGet_spec types.FlowKey.Insts.CoreCloneClone types.FlowKey.Insts.CoreCmpPartialEqFlowKey
-      flowKey_eq_spec background.FlowMode.Insts.CoreCloneClone bg.flow_policy
-      { level := level, egress := E })
+    (vecMapGetCloned_spec types.EgressKind.Insts.CoreCloneClone
+      types.EgressKind.Insts.CoreCmpPartialEqEgressKind egressKind_eq_spec
+      types.ConfLevel.Insts.CoreCloneClone confLevel_clone_spec bg.allow_ceiling E)
   rw [hoEq]; simp only [bind_tc_ok]
+  obtain ⟨o1, ho1Eq, ho1⟩ := spec_imp_exists
+    (vecMapGetCloned_spec types.EgressKind.Insts.CoreCloneClone
+      types.EgressKind.Insts.CoreCmpPartialEqEgressKind egressKind_eq_spec
+      types.ConfLevel.Insts.CoreCloneClone confLevel_clone_spec bg.inspect_ceiling E)
+  unfold flowModeC ceilAdmitsC ceilC
+  rw [← ho, ← ho1]
+  cases o with
+  | none =>
+    simp only [Bool.false_eq_true, if_false, bind_tc_ok]
+    rw [ho1Eq]; simp only [bind_tc_ok]
+    cases o1 with
+    | none => simp
+    | some c1 => simp only [confLevel_le_spec, bind_tc_ok]; split <;> simp_all
+  | some c =>
+    simp only [confLevel_le_spec, bind_tc_ok]
+    by_cases hle : confLeC level c
+    · simp [hle]
+    · simp only [hle, Bool.false_eq_true, if_false, bind_tc_ok]
+      rw [ho1Eq]; simp only [bind_tc_ok]
+      cases o1 with
+      | none => simp
+      | some c1 => simp only [confLevel_le_spec, bind_tc_ok]; split <;> simp_all
+
+/-! ### Per-mode characterisations (the R-clause mediators)
+
+The abstract gates are band tests (`flow_allows` = allow band, `flow_inspects` = inspect band,
+independently); the kernel's `FlowMode` is the prioritised three-way split. These three iffs are
+the only facts the sims need to cross between the two. -/
+
+theorem flowModeC_allow_iff (bg : background.BackgroundTheory) (level : types.ConfLevel)
+    (E : types.EgressKind) :
+    flowModeC bg level E = background.FlowMode.Allow ↔
+      ceilAdmitsC bg.allow_ceiling level E = true := by
   unfold flowModeC
-  cases hL : vmLastEntry bg.flow_policy.entries.val { level := level, egress := E } with
-  | none => rw [hL] at ho; subst ho; simp
-  | some p => rw [hL] at ho; subst ho; simp
+  by_cases ha : ceilAdmitsC bg.allow_ceiling level E <;>
+    by_cases hi : ceilAdmitsC bg.inspect_ceiling level E <;> simp [ha, hi]
+
+theorem flowModeC_inspect_iff (bg : background.BackgroundTheory) (level : types.ConfLevel)
+    (E : types.EgressKind) :
+    flowModeC bg level E = background.FlowMode.Inspect ↔
+      (ceilAdmitsC bg.allow_ceiling level E = false ∧
+       ceilAdmitsC bg.inspect_ceiling level E = true) := by
+  unfold flowModeC
+  by_cases ha : ceilAdmitsC bg.allow_ceiling level E <;>
+    by_cases hi : ceilAdmitsC bg.inspect_ceiling level E <;> simp [ha, hi]
+
+theorem flowModeC_deny_iff (bg : background.BackgroundTheory) (level : types.ConfLevel)
+    (E : types.EgressKind) :
+    flowModeC bg level E = background.FlowMode.Deny ↔
+      (ceilAdmitsC bg.allow_ceiling level E = false ∧
+       ceilAdmitsC bg.inspect_ceiling level E = false) := by
+  unfold flowModeC
+  by_cases ha : ceilAdmitsC bg.allow_ceiling level E <;>
+    by_cases hi : ceilAdmitsC bg.inspect_ceiling level E <;> simp [ha, hi]
 
 /-- Equational form of `flowMode_spec`, for feeding `gateEgress_spec`'s `hfmOf`. -/
 theorem flowMode_eq (bg : background.BackgroundTheory) (level : types.ConfLevel)
@@ -116,19 +180,42 @@ theorem flowMode_eq (bg : background.BackgroundTheory) (level : types.ConfLevel)
     background.BackgroundTheory.flow_mode bg level E = .ok (flowModeC bg level E) := by
   obtain ⟨fm, h1, h2⟩ := spec_imp_exists (flowMode_spec bg level E); rw [← h2]; exact h1
 
-/-! ## `has_flow_override` -/
+/-! ## `has_flow_override` (state-side since Campaign A — the `override_consumed` twin) -/
 
-/-- `has_flow_override agent tool level` is membership of the `(agent, tool, level)` `OverrideEntry`
-    in `flow_overrides`. -/
-theorem hasFlowOverride_spec (bg : background.BackgroundTheory) (agent : types.AgentId)
+/-- `has_flow_override agent tool level` is the last-match nested membership of the `(tool, level)`
+    `OverrideKey` in `agent`'s `flow_override` grant set. -/
+theorem hasFlowOverride_spec (st : state.KernelState) (agent : types.AgentId)
     (tool : types.ToolId) (level : types.ConfLevel) :
-    background.BackgroundTheory.has_flow_override bg agent tool level ⦃ b =>
-      b = true ↔ vsMem bg.flow_overrides { agent := agent, tool := tool, level := level } ⦄ := by
-  unfold background.BackgroundTheory.has_flow_override
-  rw [agentId_clone_spec, bind_tc_ok, toolId_clone_spec, bind_tc_ok]
-  exact vecSetContains_spec types.OverrideEntry.Insts.CoreCloneClone
-    types.OverrideEntry.Insts.CoreCmpPartialEqOverrideEntry overrideEntry_eq_spec
-    bg.flow_overrides { agent := agent, tool := tool, level := level }
+    state.KernelState.has_flow_override st agent tool level ⦃ b =>
+      b = true ↔ vmsMemLast st.flow_override agent { tool := tool, level := level } ⦄ := by
+  unfold state.KernelState.has_flow_override
+  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+    (vecMapGet_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      (collections.VecSet.Insts.CoreCloneClone types.OverrideKey.Insts.CoreCloneClone)
+      st.flow_override agent)
+  rw [hoEq]; simp only [bind_tc_ok]
+  cases hL : vmLastEntry st.flow_override.entries.val agent with
+  | none =>
+    rw [hL] at ho; simp only [Option.map_none] at ho; subst ho
+    simp only [spec_ok, Bool.false_eq_true, false_iff]
+    rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
+  | some p =>
+    rw [hL] at ho; simp only [Option.map_some] at ho; subst ho
+    have hp1 : p.1 = agent := vmLastEntry_fst _ _ _ hL
+    have hLk : vmLastEntry st.flow_override.entries.val agent = some (agent, p.2) := by rw [hL, ← hp1]
+    simp only [toolId_clone_spec, bind_tc_ok]
+    obtain ⟨b, hbEq, hbIff⟩ := spec_imp_exists
+      (vecSetContains_spec types.OverrideKey.Insts.CoreCloneClone
+        types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey overrideKey_eq_spec p.2
+        { tool := tool, level := level })
+    rw [hbEq]; simp only [spec_ok]
+    rw [hbIff]
+    constructor
+    · intro hmem; exact ⟨p.2, hLk, hmem⟩
+    · rintro ⟨vs, hvs, hv⟩
+      rw [hLk, Option.some_inj, Prod.mk.injEq] at hvs
+      obtain ⟨_, rfl⟩ := hvs; exact hv
 
 /-! ## `override_consumed` -/
 
@@ -173,16 +260,32 @@ The egress-gated actions feed `gateEgress_spec` per-tool Bool oracle values. `ov
 `has_flow_override` / `override_consumed` results as total Bool functions (the only opaque oracle is
 the content gate, supplied separately). -/
 
-/-- `has_flow_override` as a total Bool function: membership of the override entry. -/
-def ovC (bg : background.BackgroundTheory) (agent : types.AgentId) (level : types.ConfLevel)
+/-- `has_flow_override` as a total Bool function: last-match nested membership of the grant key
+    in the agent's state-side `flow_override` set (the `ocC` twin). -/
+def ovC (st : state.KernelState) (agent : types.AgentId) (level : types.ConfLevel)
     (t : types.ToolId) : Bool :=
-  decide ((⟨agent, t, level⟩ : types.OverrideEntry) ∈ bg.flow_overrides.items.val)
+  match vmLastEntry st.flow_override.entries.val agent with
+  | none => false
+  | some p => decide ((⟨t, level⟩ : types.OverrideKey) ∈ p.2.items.val)
 
-theorem ovC_eq (bg : background.BackgroundTheory) (agent : types.AgentId) (level : types.ConfLevel)
+theorem ovC_eq (st : state.KernelState) (agent : types.AgentId) (level : types.ConfLevel)
     (t : types.ToolId) :
-    background.BackgroundTheory.has_flow_override bg agent t level = .ok (ovC bg agent level t) := by
-  obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec bg agent t level)
-  rw [hb]; congr 1; unfold ovC; cases b <;> simp_all [vsMem]
+    state.KernelState.has_flow_override st agent t level = .ok (ovC st agent level t) := by
+  obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec st agent t level)
+  rw [hb]; congr 1; unfold ovC
+  cases hL : vmLastEntry st.flow_override.entries.val agent with
+  | none =>
+    have hnot : ¬ vmsMemLast st.flow_override agent ⟨t, level⟩ := by
+      rintro ⟨vs, hvs, _⟩; rw [hL] at hvs; simp at hvs
+    cases b <;> simp_all
+  | some p =>
+    have hp1 : p.1 = agent := vmLastEntry_fst _ _ _ hL
+    have hiff : vmsMemLast st.flow_override agent ⟨t, level⟩ ↔
+        (⟨t, level⟩ : types.OverrideKey) ∈ p.2.items.val := by
+      constructor
+      · rintro ⟨vs, hvs, hv⟩; rw [hL, Option.some_inj] at hvs; subst hvs; exact hv
+      · intro hv; exact ⟨p.2, by rw [hL, ← hp1], hv⟩
+    cases b <;> simp_all
 
 /-- `override_consumed` as a total Bool function: last-match nested membership of the override key. -/
 def ocC (st : state.KernelState) (agent : types.AgentId) (level : types.ConfLevel)

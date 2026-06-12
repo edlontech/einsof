@@ -121,12 +121,12 @@ theorem grant_capability_preservesR
   · -- next
     simp [Tzimtzum.grant_capability]
   · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.active, hR.tool_reg, hR.parent, ?_, hR.instr,
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg, hR.parent, ?_, hR.instr,
       hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, hR.override, hR.budget, hR.toolCap,
       hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
       hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool, hR.ndParent, ?_, hR.ndInstr,
-      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndBudget,
-      hR.wfInflight⟩
+      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndFlowOverride,
+      hR.ndBudget, hR.wfInflight⟩
     · -- cap
       intro N C
       show ((N = child ∧ C = cap) ∨ a.agent_cap N C) ↔ vmsMemLast vmAfter N C

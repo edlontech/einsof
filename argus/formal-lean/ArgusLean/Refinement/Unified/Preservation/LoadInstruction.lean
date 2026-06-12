@@ -100,12 +100,12 @@ theorem load_instruction_preservesR
   · -- next
     simp [Tzimtzum.load_instruction]
   · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.active, hR.tool_reg, hR.parent, hR.cap, ?_,
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg, hR.parent, hR.cap, ?_,
       hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, hR.override, hR.budget, hR.toolCap,
       hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
       hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, ?_,
-      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndBudget,
-      hR.wfInflight⟩
+      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndFlowOverride,
+      hR.ndBudget, hR.wfInflight⟩
     · -- instr: last-match view, converted from R's pre-state view
       intro ag ins
       show (a.agent_instruction ag ins ∨ (ag = agent ∧ ins = instr)) ↔ vmsMemLast vmAfter ag ins

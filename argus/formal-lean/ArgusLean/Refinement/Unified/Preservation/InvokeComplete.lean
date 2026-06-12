@@ -51,6 +51,7 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
     st'.agent_cap = st.agent_cap ∧ st'.invocation_tool = st.invocation_tool ∧
     st'.tool_registered = st.tool_registered ∧ st'.gh_taint_received = st.gh_taint_received ∧
     st'.agent_instruction = st.agent_instruction ∧ st'.override_used = st.override_used ∧
+    st'.flow_override = st.flow_override ∧
     ((completeEndorsed st agent tmeta (cfOf tool) ∧
         st'.taint_levels = st.taint_levels ∧ st'.gh_taint_invoked = st.gh_taint_invoked ∧
         (∀ G, budgetReadC st'.agent_budget G =
@@ -142,7 +143,7 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
     rw [hStruct] at hStateEq
     subst hStateEq
     refine ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-      rfl, Or.inl ⟨hZTiff.mp hzt0, rfl, rfl, ?_, ?_⟩⟩
+      rfl, rfl, Or.inl ⟨hZTiff.mp hzt0, rfl, rfl, ?_, ?_⟩⟩
     · intro k v; exact hvmMem k v
     · exact fun h => hvvNd ▸ hvmNd h
     · intro G; exact hBudW G
@@ -183,7 +184,7 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
     have hNotCe : ¬ completeEndorsed st agent tmeta (cfOf tool) := by
       intro hce; have h := hZTiff.mpr hce; rw [hzt0] at h; exact absurd h (by decide)
     refine ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-      rfl, Or.inr ⟨hNotCe, rfl, ?_, ?_, ?_, ?_⟩⟩
+      rfl, rfl, Or.inr ⟨hNotCe, rfl, ?_, ?_, ?_, ?_⟩⟩
     · intro k v; exact hvmMem k v
     · exact fun h => hvvNd ▸ hvmNd h
     · intro ag L'; exact hvm1Mem ag L'
@@ -209,7 +210,7 @@ theorem invoke_complete_preservesR {F : Type} (cfInst : traits.ConformanceOracle
     ∃ a', (Tzimtzum.invoke_complete agent inv).guard a ∧
           (Tzimtzum.invoke_complete agent inv).next a a' ∧ R st' bg a' := by
   obtain ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, hInFlightW, hInflNd, hAct, hPar, hCap, hInvT,
-      hToolReg, hGhRecv, hAgInstr, hOv, hBranch⟩ :=
+      hToolReg, hGhRecv, hAgInstr, hOv, hFlowOv, hBranch⟩ :=
     invoke_complete_inv_full cfInst st bg conformance agent inv cfOf hcf hR.wfInflight hcapBudget
       hcapTaintE hcapTaintS hcapGhE hcapGhS st' ev hok
   have htoolA : a.invocation_tool inv = tool := hR.invTool inv tool htool
@@ -280,19 +281,20 @@ theorem invoke_complete_preservesR {F : Type} (cfInst : traits.ConformanceOracle
           hR.budget G Tzimtzum.BudgetLevel.bl3 hGact, hR.budget G Tzimtzum.BudgetLevel.bl2 hGact,
           hR.budget G Tzimtzum.BudgetLevel.bl1 hGact]
         cases hcur : budgetReadC st.agent_budget G <;> cases L <;> simp_all [debitC, budgetC]
-      refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, fun x => by rw [hAct]; exact hR.active x,
+      refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, fun x => by rw [hAct]; exact hR.active x,
         fun t => by rw [hToolReg]; exact hR.tool_reg t, fun C P => by rw [hPar]; exact hR.parent C P,
         fun N C => by rw [hCap]; exact hR.cap N C, fun ag ins => by rw [hAgInstr]; exact hR.instr ag ins,
         fun ag L => ?_, fun ag I => ?_, fun ag L => ?_,
         fun ag L => by rw [hGhRecv]; exact hR.ghReceived ag L,
         fun ag t L => by rw [hOv]; exact hR.override ag t L, fun G L => ?_, hR.toolCap, hR.toolEgress,
         hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer, hR.flowAllows,
-        hR.flowInspects, hR.flowOverride, fun I t hI => ?_, by rw [hPar]; exact hR.ndParent,
+        hR.flowInspects, fun A T L => by rw [hFlowOv]; exact hR.flowOverride A T L, fun I t hI => ?_, by rw [hPar]; exact hR.ndParent,
         by rw [hCap]; exact hR.ndCap, by rw [hAgInstr]; exact hR.ndInstr,
         by rw [hTaintEq]; exact hR.ndTaint, hInflNd hR.ndInflight,
         by rw [hGhEq]; exact hR.ndGhInvoked,
-        by rw [hGhRecv]; exact hR.ndGhReceived, by rw [hOv]; exact hR.ndOverride, hBudNd hR.ndBudget,
-        hWf'⟩
+        by rw [hGhRecv]; exact hR.ndGhReceived, by rw [hOv]; exact hR.ndOverride,
+        by rw [hFlowOv]; exact hR.ndFlowOverride,
+        hBudNd hR.ndBudget, hWf'⟩
       · -- taint (unchanged on endorsed; the abstract disjunct collapses)
         show (a.taint_levels ag L ∨ (ag = agent ∧ ¬ _ ∧ _)) ↔ vmsMemLast st'.taint_levels ag (confC L)
         rw [hTaintEq, hR.taint ag L]
@@ -332,17 +334,18 @@ theorem invoke_complete_preservesR {F : Type} (cfInst : traits.ConformanceOracle
           ¬ a.agent_budget agent Tzimtzum.BudgetLevel.bl_exhausted) := fun h => hNotCe (hCeIff.mpr h)
       have hcfl : a.tool_conf_floor (a.invocation_tool inv) = confA tmeta.conf_floor := by
         rw [htoolA]; exact hcfloorA
-      refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, fun x => by rw [hAct]; exact hR.active x,
+      refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, fun x => by rw [hAct]; exact hR.active x,
         fun t => by rw [hToolReg]; exact hR.tool_reg t, fun C P => by rw [hPar]; exact hR.parent C P,
         fun N C => by rw [hCap]; exact hR.cap N C, fun ag ins => by rw [hAgInstr]; exact hR.instr ag ins,
         fun ag L => ?_, fun ag I => ?_, fun ag L => ?_,
         fun ag L => by rw [hGhRecv]; exact hR.ghReceived ag L,
         fun ag t L => by rw [hOv]; exact hR.override ag t L, fun G L => ?_, hR.toolCap, hR.toolEgress,
         hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer, hR.flowAllows,
-        hR.flowInspects, hR.flowOverride, fun I t hI => ?_, by rw [hPar]; exact hR.ndParent,
+        hR.flowInspects, fun A T L => by rw [hFlowOv]; exact hR.flowOverride A T L, fun I t hI => ?_, by rw [hPar]; exact hR.ndParent,
         by rw [hCap]; exact hR.ndCap, by rw [hAgInstr]; exact hR.ndInstr, hTaintNd hR.ndTaint,
         hInflNd hR.ndInflight, hGhNd hR.ndGhInvoked, by rw [hGhRecv]; exact hR.ndGhReceived,
-        by rw [hOv]; exact hR.ndOverride, by rw [hBudEq]; exact hR.ndBudget, hWf'⟩
+        by rw [hOv]; exact hR.ndOverride, by rw [hFlowOv]; exact hR.ndFlowOverride,
+        by rw [hBudEq]; exact hR.ndBudget, hWf'⟩
       · -- taint (insert tool's conf_floor on agent)
         show (a.taint_levels ag L ∨ (ag = agent ∧ ¬ _ ∧ a.tool_conf_floor (a.invocation_tool inv) = L))
           ↔ vmsMemLast st'.taint_levels ag (confC L)
