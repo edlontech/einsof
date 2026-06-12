@@ -20,11 +20,12 @@ pub enum CapKind {
     Ipc,
     Declassify,
     RefreshBudget,
+    GrantOverride,
 }
 
 impl CapKind {
     /// All capability kinds, as an owned array (extraction-friendly: no `&'static` slice).
-    pub const ALL: [CapKind; 17] = [
+    pub const ALL: [CapKind; 18] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::FilesystemDelete,
@@ -42,6 +43,7 @@ impl CapKind {
         Self::Ipc,
         Self::Declassify,
         Self::RefreshBudget,
+        Self::GrantOverride,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -63,6 +65,7 @@ impl CapKind {
             Self::Ipc => "ipc",
             Self::Declassify => "declassify",
             Self::RefreshBudget => "refresh_budget",
+            Self::GrantOverride => "grant_override",
         }
     }
 
@@ -85,6 +88,7 @@ impl CapKind {
             "ipc" => Some(Self::Ipc),
             "declassify" => Some(Self::Declassify),
             "refresh_budget" => Some(Self::RefreshBudget),
+            "grant_override" => Some(Self::GrantOverride),
             _ => None,
         }
     }
@@ -125,7 +129,7 @@ mod tests {
 
     #[test]
     fn cap_kind_all_variants_count() {
-        assert_eq!(CapKind::ALL.len(), 17);
+        assert_eq!(CapKind::ALL.len(), 18);
     }
 
     #[test]
