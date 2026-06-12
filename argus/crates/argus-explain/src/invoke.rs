@@ -25,7 +25,7 @@ pub(crate) fn gate_finding(
         FlowMode::Inspect if gate_passes => CheckOutcome::AllowedViaInspect,
         FlowMode::Inspect => CheckOutcome::Denied,
         FlowMode::Deny
-            if bg.has_flow_override(agent, tool, level)
+            if st.has_flow_override(agent, tool, level)
                 && !st.override_consumed(agent, tool, level) =>
         {
             CheckOutcome::RescuedByOverride
@@ -34,7 +34,7 @@ pub(crate) fn gate_finding(
     };
     let mut rescues = Vec::new();
     if outcome == CheckOutcome::Denied {
-        rescues.push(Rescue::PolicyAllow { level, egress });
+        rescues.push(Rescue::CeilingRaise { egress, to_level: level });
         if mode == FlowMode::Inspect {
             rescues.push(Rescue::ContentGatePass { tool: tool.0.clone() });
         } else {
@@ -155,7 +155,7 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
 mod tests {
     use super::*;
     use argus_kernel::{
-        AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, FlowMode,
+        AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind,
         InvocationId, IssuerId, KernelError, KernelState, ToolId, ToolMetadata, VecSet,
     };
     use argus_kernel::{transitions, AuthorizerOracle, BackgroundTheory, ContentGateOracle};
@@ -186,7 +186,7 @@ mod tests {
                 issuer: IssuerId::new("trusted"),
             },
         );
-        b.set_flow(ConfLevel::Public, EgressKind::NetworkExternal, FlowMode::Allow);
+        b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
         b.build()
     }
 
@@ -231,9 +231,9 @@ mod tests {
             tool: "send_email".into(),
             level: ConfLevel::Sensitive,
         }));
-        assert!(f.rescues.contains(&Rescue::PolicyAllow {
-            level: ConfLevel::Sensitive,
+        assert!(f.rescues.contains(&Rescue::CeilingRaise {
             egress: EgressKind::NetworkExternal,
+            to_level: ConfLevel::Sensitive,
         }));
     }
 

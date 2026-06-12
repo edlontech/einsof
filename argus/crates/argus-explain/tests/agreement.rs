@@ -1,7 +1,7 @@
 use argus_explain::{explain_invoke, explain_return_unendorsed, explain_sentinel_elevate_taint};
 use argus_kernel::{
     transitions, AgentId, AuthorizerOracle, BackgroundTheory, BackgroundTheoryBuilder, CapKind,
-    ConfLevel, ContentGateOracle, EgressKind, FlowMode, InvocationId, IssuerId, KernelState,
+    ConfLevel, ContentGateOracle, EgressKind, InvocationId, IssuerId, KernelState,
     OverrideKey, ToolId, ToolMetadata, VecSet,
 };
 use proptest::prelude::*;
@@ -50,17 +50,15 @@ fn conf_level() -> impl Strategy<Value = ConfLevel> {
     prop::sample::select(LEVELS.to_vec())
 }
 
-fn flow_mode() -> impl Strategy<Value = FlowMode> {
-    prop_oneof![Just(FlowMode::Allow), Just(FlowMode::Inspect), Just(FlowMode::Deny)]
-}
-
 prop_compose! {
     fn arb_background()(
         floors in prop::collection::vec(conf_level(), TOOLS.len()),
         egress_mask in prop::collection::vec(prop::collection::vec(any::<bool>(), EGRESS.len()), TOOLS.len()),
         cap_mask in prop::collection::vec(any::<bool>(), TOOLS.len()),
-        modes in prop::collection::vec(prop::option::of(flow_mode()), LEVELS.len() * EGRESS.len()),
-        overrides in prop::collection::vec(any::<bool>(), AGENTS.len() * TOOLS.len() * LEVELS.len()),
+        ceilings in prop::collection::vec(
+            (prop::option::of(conf_level()), prop::option::of(conf_level())),
+            EGRESS.len(),
+        ),
     ) -> BackgroundTheory {
         let mut b = BackgroundTheoryBuilder::new();
         b.trust_issuer(IssuerId::new("trusted"));
@@ -79,23 +77,9 @@ prop_compose! {
                 issuer: IssuerId::new("trusted"),
             });
         }
-        let mut k = 0;
-        for l in LEVELS {
-            for e in EGRESS {
-                if let Some(m) = modes[k] { b.set_flow(l, e, m); }
-                k += 1;
-            }
-        }
-        let mut k = 0;
-        for a in AGENTS {
-            for t in TOOLS {
-                for l in LEVELS {
-                    if overrides[k] {
-                        b.add_override(AgentId::new(a), ToolId::new(t), l);
-                    }
-                    k += 1;
-                }
-            }
+        for (ei, e) in EGRESS.iter().enumerate() {
+            let (allow, inspect) = ceilings[ei];
+            b.set_egress_ceilings(*e, allow, inspect);
         }
         b.build()
     }
@@ -111,6 +95,7 @@ prop_compose! {
         flights in prop::collection::vec(0usize..3, AGENTS.len()),
         bind_flight in prop::collection::vec(any::<bool>(), AGENTS.len() * 3),
         used in prop::collection::vec(any::<bool>(), AGENTS.len() * TOOLS.len() * LEVELS.len()),
+        flow_override in prop::collection::vec(any::<bool>(), AGENTS.len() * TOOLS.len() * LEVELS.len()),
     ) -> KernelState {
         let mut st = KernelState::initial();
         for (ai, a) in AGENTS.iter().enumerate() {
@@ -143,6 +128,20 @@ prop_compose! {
                 for l in LEVELS {
                     if used[k] {
                         st.override_used.insert_into(
+                            AgentId::new(a),
+                            OverrideKey { tool: ToolId::new(t), level: l },
+                        );
+                    }
+                    k += 1;
+                }
+            }
+        }
+        let mut k = 0;
+        for a in AGENTS {
+            for t in TOOLS {
+                for l in LEVELS {
+                    if flow_override[k] {
+                        st.flow_override.insert_into(
                             AgentId::new(a),
                             OverrideKey { tool: ToolId::new(t), level: l },
                         );

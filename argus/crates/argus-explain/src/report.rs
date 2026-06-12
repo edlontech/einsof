@@ -31,9 +31,9 @@ pub enum CheckOutcome {
 pub enum Rescue {
     /// Arm (or re-arm) a flow override for (agent, tool, level).
     OverrideGrant { agent: String, tool: String, level: ConfLevel },
-    /// Make the flow policy pass this (level, egress) pair (matrix entry today,
-    /// ceiling raise after campaign A -- the name is representation-neutral).
-    PolicyAllow { level: ConfLevel, egress: EgressKind },
+    /// Raise the named egress's ALLOW ceiling to `to_level` (the minimal raise that
+    /// would flip this finding).
+    CeilingRaise { egress: EgressKind, to_level: ConfLevel },
     /// Lower the named tool's conf floor below its current value (only emitted when
     /// the denied level IS that tool's floor).
     ToolRelabel { tool: String, current_floor: ConfLevel },
