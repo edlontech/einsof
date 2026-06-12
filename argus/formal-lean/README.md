@@ -39,7 +39,7 @@ ArgusLean/
                                     (invoke_start, return_unendorsed, sentinel_elevate_taint) also carry
                                     their slice relation + `_refines` here; the rest prove `R` directly.
       InitRefinement.lean           the initial state refines the abstract initial state
-      Bundle.lean                   `step_refines`: the 12 actions collapsed into one statement
+      Bundle.lean                   `step_refines`: the 13 actions collapsed into one statement
       Soundness.lean                `implementation_sound` (init refinement ∘ forward simulation ∘ Kav)
 ```
 
