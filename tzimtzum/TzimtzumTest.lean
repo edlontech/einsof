@@ -17,5 +17,6 @@ import Tzimtzum.CheckReturnEndorsed
 import Tzimtzum.CheckReturnUnendorsed
 import Tzimtzum.CheckSentinelElevateTaint
 import Tzimtzum.CheckSentinelRefreshBudget
+import Tzimtzum.CheckGrantOverride
 import Tzimtzum.Audit
 import Tzimtzum.Soundness

@@ -39,7 +39,8 @@ theorem audit_flow_confinement
     (hg : (invoke_start a tool inv).guard s)
     (hn : (invoke_start a tool inv).next s s') :
     flow_confinement s' := by
-  simp only [flow_confinement, invoke_start, speculative_taint] at *
+  simp only [flow_confinement, invoke_start, speculative_taint,
+    St.flow_allows, St.flow_inspects] at *
   intros A L I E hpre
   simp_all
   grind
@@ -82,7 +83,8 @@ theorem audit_override_consumed
     (hg : (invoke_start a tool inv).guard s)
     (hn : (invoke_start a tool inv).next s s') :
     override_consumed_when_sole_justification s' := by
-  simp only [override_consumed_when_sole_justification, invoke_start, speculative_taint] at *
+  simp only [override_consumed_when_sole_justification, invoke_start, speculative_taint,
+    St.flow_allows, St.flow_inspects] at *
   intros A L I E hpre
   simp_all
   grind

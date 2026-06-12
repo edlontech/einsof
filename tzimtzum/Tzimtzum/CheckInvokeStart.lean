@@ -1,7 +1,7 @@
 import Tzimtzum.OpaqueTypes
 import Kav.CheckAction
 
-set_option maxHeartbeats 4000000
+set_option maxHeartbeats 8000000
 
 namespace Tzimtzum
 
@@ -21,12 +21,25 @@ private def invsA : List (Kav.Invariant KSt) :=
 
 #kav_check_action invStart invsA
 
--- Group B: the flow/override-sensitive invariants (touch the two modified relations directly).
-private def invsB : List (Kav.Invariant KSt) :=
+-- Group B: the flow/override-sensitive invariants (touch the two modified relations
+-- directly). Split into small batches so each VC window stays cheap (batch-elaboration
+-- cost, not prover cost). The gates stay atomic via `ceilingAdmits` (see State.lean).
+private def invsB1 : List (Kav.Invariant KSt) :=
   allInvariants.filter (fun p => p.1 ∈
-    (["flow_confinement", "flow_confinement_weak", "override_consumed_when_sole_justification",
-      "in_flight_flow_compat", "in_flight_override_consumed"] : List String))
+    (["flow_confinement", "flow_confinement_weak"] : List String))
 
-#kav_check_action invStart invsB
+#kav_check_action invStart invsB1
+
+private def invsB2 : List (Kav.Invariant KSt) :=
+  allInvariants.filter (fun p => p.1 ∈
+    (["override_consumed_when_sole_justification"] : List String))
+
+#kav_check_action invStart invsB2
+
+private def invsB3 : List (Kav.Invariant KSt) :=
+  allInvariants.filter (fun p => p.1 ∈
+    (["in_flight_flow_compat", "in_flight_override_consumed"] : List String))
+
+#kav_check_action invStart invsB3
 
 end Tzimtzum
