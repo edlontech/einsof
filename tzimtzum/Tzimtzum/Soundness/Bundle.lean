@@ -1,6 +1,7 @@
 import Tzimtzum.Soundness.PresMost
 import Tzimtzum.Soundness.PresInvokeComplete
 import Tzimtzum.Soundness.PresReturnEndorsed
+import Tzimtzum.Soundness.PresGrantOverride
 
 /-! # C0 — assembly: `kav_sound` via `reachable_sound`
 
@@ -20,7 +21,7 @@ theorem hpres_bundle : ∀ na ∈ ksystem.actions, ∀ s s',
     allInv s → na.2.guard s → na.2.next s s' → allInv s' := by
   intro na hmem s s' hinv _hg hn
   simp only [ksystem, system, List.mem_cons, List.not_mem_nil, or_false] at hmem
-  rcases hmem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hmem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact pres_register_tool s s' hinv hn
   · exact pres_load_instruction s s' hinv hn
   · exact pres_delegate s s' hinv hn
@@ -33,6 +34,7 @@ theorem hpres_bundle : ∀ na ∈ ksystem.actions, ∀ s s',
   · exact pres_return_unendorsed s s' hinv hn
   · exact pres_sentinel_elevate_taint s s' hinv hn
   · exact pres_sentinel_refresh_budget s s' hinv hn
+  · exact pres_grant_override s s' hinv hn
 
 /-- **Crown of C0:** every reachable state of the TzimtzumV2 transition system satisfies
     the full invariant bundle (10 safeties + 15 strengthening invariants). -/
@@ -63,7 +65,7 @@ theorem hpres_bundleP :
       ∀ s s', allInv s → na.2.guard s → na.2.next s s' → allInv s' := by
   intro na hmem s s' hinv _hg hn
   simp only [system, List.mem_cons, List.not_mem_nil, or_false] at hmem
-  rcases hmem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hmem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact pres_register_tool s s' hinv hn
   · exact pres_load_instruction s s' hinv hn
   · exact pres_delegate s s' hinv hn
@@ -76,6 +78,7 @@ theorem hpres_bundleP :
   · exact pres_return_unendorsed s s' hinv hn
   · exact pres_sentinel_elevate_taint s s' hinv hn
   · exact pres_sentinel_refresh_budget s s' hinv hn
+  · exact pres_grant_override s s' hinv hn
 
 /-- **Sort-polymorphic crown of C0:** every reachable state of the TzimtzumV2 system — at *any* sort
     instantiation — satisfies the full invariant bundle. The refinement instantiates this at the
