@@ -107,19 +107,32 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
 
 variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId : Type}
 
+/-- Ceiling-band membership: `l` is at or below the ceiling `f e`; `none` = no level
+passes (strict default-deny, including Public). Deliberately NOT a simp lemma: the
+discharge cascades keep the flow gates ATOMIC (the fast opaque-relation proof shape of
+the pre-ceiling spec) — only the ceiling field is exposed, so frame equations close by
+congruence instead of unfolding the existential at every gate site. -/
+def ceilingAdmits (f : EgressKind → Option ConfLevel) (l : ConfLevel) (e : EgressKind) : Prop :=
+  ∃ c, f e = some c ∧ le_conf l c
+
+-- Opaque to the discharge cascades (`#kav_check_action` skips irreducible defs in its
+-- transitive unfold set); proofs that need the existential use the equation lemma
+-- explicitly (`simp [ceilingAdmits]` / `unfold ceilingAdmits`).
+attribute [irreducible] ceilingAdmits
+
 /-- Derived flow-ALLOW relation: a level flows freely iff it is at or below the egress's
-allow ceiling. `none` = no level passes (strict default-deny, including Public). -/
-def St.flow_allows
+allow ceiling. Simp-unfolds one step to a `ceilingAdmits` atom over the ceiling field. -/
+@[simp] def St.flow_allows
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (l : ConfLevel) (e : EgressKind) : Prop :=
-  ∃ c, s.egress_allow_ceiling e = some c ∧ le_conf l c
+  ceilingAdmits s.egress_allow_ceiling l e
 
 /-- Derived flow-INSPECT relation: content-gated band, levels at or below the inspect
 ceiling. An inspect ceiling below the allow ceiling is an empty inspect band — coherent. -/
-def St.flow_inspects
+@[simp] def St.flow_inspects
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (l : ConfLevel) (e : EgressKind) : Prop :=
-  ∃ c, s.egress_inspect_ceiling e = some c ∧ le_conf l c
+  ceilingAdmits s.egress_inspect_ceiling l e
 
 /-- Speculative (worst-case) taint: held taint, plus the conf-floor of every in-flight tool
 (Veil lines 348-351). -/

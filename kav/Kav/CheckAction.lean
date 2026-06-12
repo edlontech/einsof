@@ -51,7 +51,10 @@ def actionUnfoldDenylist : Std.HashSet Name :=
      ``Kav.Action, ``Kav.TransitionSystem]
 
 /-- Transitively collect delta-reducible `def` names reachable from `goalTy`, walking each
-    definition's body to a fixpoint. Skips denylisted names, inductives, axioms, ctors. -/
+    definition's body to a fixpoint. Skips denylisted names, inductives, axioms, ctors, and
+    `@[irreducible]` defs — irreducibility is the caller's way of saying "the cascade must
+    treat this as an opaque atom" (e.g. `ceilingAdmits`: unfolding it at every gate site
+    re-introduces an existential blowup that congruence closure avoids). -/
 def collectUnfoldNamesTransitive (goalTy : Expr) : MetaM (Array Name) := do
   let env ← getEnv
   let mut acc : Std.HashSet Name := {}
@@ -61,6 +64,7 @@ def collectUnfoldNamesTransitive (goalTy : Expr) : MetaM (Array Name) := do
     for c in frontier do
       if actionUnfoldDenylist.contains c then continue
       if acc.contains c then continue
+      if (← getReducibilityStatus c) matches .irreducible then continue
       match env.find? c with
       | some (.defnInfo info) =>
         acc := acc.insert c
