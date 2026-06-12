@@ -37,13 +37,20 @@ pub enum EgressKindN {
 }
 
 impl EgressKindN {
-    // Decode-only: egress appears only in the (decode-only) BackgroundTheory, never encoded back.
     pub fn into_kernel(self) -> EgressKind {
         match self {
             Self::NetworkExternal => EgressKind::NetworkExternal,
             Self::NetworkInternal => EgressKind::NetworkInternal,
             Self::FilesystemWrite => EgressKind::FilesystemWrite,
             Self::Ipc => EgressKind::Ipc,
+        }
+    }
+    pub fn from_kernel(e: EgressKind) -> Self {
+        match e {
+            EgressKind::NetworkExternal => Self::NetworkExternal,
+            EgressKind::NetworkInternal => Self::NetworkInternal,
+            EgressKind::FilesystemWrite => Self::FilesystemWrite,
+            EgressKind::Ipc => Self::Ipc,
         }
     }
 }
@@ -56,12 +63,18 @@ pub enum FlowModeN {
 }
 
 impl FlowModeN {
-    // Decode-only: flow mode appears only in the (decode-only) BackgroundTheory, never encoded back.
     pub fn into_kernel(self) -> FlowMode {
         match self {
             Self::Allow => FlowMode::Allow,
             Self::Inspect => FlowMode::Inspect,
             Self::Deny => FlowMode::Deny,
+        }
+    }
+    pub fn from_kernel(m: FlowMode) -> Self {
+        match m {
+            FlowMode::Allow => Self::Allow,
+            FlowMode::Inspect => Self::Inspect,
+            FlowMode::Deny => Self::Deny,
         }
     }
 }

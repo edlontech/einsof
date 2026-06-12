@@ -41,4 +41,13 @@ defmodule ExArgus.Native do
 
   def sentinel_elevate_taint(_s, _bg, _agent, _level, _content_gate),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  def explain_invoke(_s, _bg, _agent, _tool, _inv, _authorizer_allows, _content_gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def explain_return_unendorsed(_s, _bg, _child, _parent, _content_gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def explain_sentinel_elevate_taint(_s, _bg, _agent, _level, _content_gate),
+    do: :erlang.nif_error(:nif_not_loaded)
 end
