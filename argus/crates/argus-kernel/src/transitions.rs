@@ -1968,4 +1968,257 @@ mod tests {
         let st = KernelState::initial();
         assert!(register_tool(st, &bg, ToolId::new("evil")).is_err());
     }
+
+    // --- grant_override ---
+
+    #[test]
+    fn grant_override_requires_cap() {
+        // Non-root agent without GrantOverride cap.
+        let granter = AgentId::new("g");
+        let target = AgentId::new("t");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(granter.clone());
+        st.agent_active.insert(target.clone());
+        // Deliberately give it some caps, just not GrantOverride.
+        st.agent_cap.insert(granter.clone(), VecSet::from([CapKind::FilesystemRead]));
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let result =
+            grant_override(st, &bg, granter, target, ToolId::new("t"), ConfLevel::Sensitive);
+        assert_eq!(result.unwrap_err(), KernelError::CapabilityMissing);
+    }
+
+    #[test]
+    fn grant_override_requires_granter_budget() {
+        let granter = AgentId::new("g");
+        let target = AgentId::new("t");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(granter.clone());
+        st.agent_active.insert(target.clone());
+        st.agent_cap.insert(granter.clone(), VecSet::from([CapKind::GrantOverride]));
+        st.agent_budget.insert(granter.clone(), BudgetLevel::Exhausted);
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let result =
+            grant_override(st, &bg, granter, target, ToolId::new("t"), ConfLevel::Sensitive);
+        assert_eq!(result.unwrap_err(), KernelError::BudgetExhausted);
+    }
+
+    #[test]
+    fn grant_override_debits_granter() {
+        // Root starts at L5 (full); after grant_override it should be at L4.
+        let target = AgentId::new("t");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(target.clone());
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let granter = AgentId::root();
+
+        assert_eq!(st.budget(&granter), BudgetLevel::L5);
+        let target_budget_before = st.budget(&target);
+
+        let (st, _) = grant_override(
+            st,
+            &bg,
+            granter.clone(),
+            target.clone(),
+            ToolId::new("t"),
+            ConfLevel::Sensitive,
+        )
+        .expect("grant_override should succeed");
+
+        assert_eq!(st.budget(&granter), BudgetLevel::L4, "granter debited one level");
+        assert_eq!(st.budget(&target), target_budget_before, "target budget untouched");
+    }
+
+    #[test]
+    fn grant_override_rearm_refused_while_target_in_flight() {
+        let target = AgentId::new("t");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(target.clone());
+
+        let inv = InvocationId::new("inv-1");
+        st.invocation_tool.insert(inv.clone(), ToolId::new("t"));
+        st.in_flight.insert_into(target.clone(), inv);
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let result = grant_override(
+            st,
+            &bg,
+            AgentId::root(),
+            target,
+            ToolId::new("t"),
+            ConfLevel::Sensitive,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::TargetHasInFlight);
+    }
+
+    #[test]
+    fn grant_override_rearms_consumed_override() {
+        // Scenario:
+        // 1. Arm override for (agent, send_email, Sensitive) via grant_override.
+        // 2. Consume it via sentinel_elevate_taint (DENY flow, sole justification).
+        // 3. Verify consumed; verify second sentinel raise is blocked.
+        // 4. Complete in-flight (none needed here; sentinel reuse check uses st directly).
+        // 5. Re-arm via grant_override; verify NOT consumed any more, flow passes once more.
+        let agent = AgentId::new("a");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(agent.clone());
+        st.agent_parent.insert(agent.clone(), AgentId::root());
+
+        // Arm an in-flight so sentinel_elevate_taint can bite a DENY-mode pair.
+        let inv = InvocationId::new("a-inv");
+        st.invocation_tool.insert(inv.clone(), ToolId::new("send_email"));
+        st.in_flight.insert_into(agent.clone(), inv.clone());
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("send_email"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+            },
+        );
+        let bg = builder.build();
+
+        // Root arms the override (agent has no in-flight from root's perspective — wait, the
+        // re-arm guard is on TARGET, not granter). But agent IS the target and has in-flight.
+        // We need to arm BEFORE the in-flight exists. Re-seed properly: arm first, then add flight.
+        let mut st2 = KernelState::initial();
+        st2.agent_active.insert(agent.clone());
+        st2.agent_parent.insert(agent.clone(), AgentId::root());
+
+        // Arm (no in-flight yet).
+        let (mut st2, _) = grant_override(
+            st2,
+            &bg,
+            AgentId::root(),
+            agent.clone(),
+            ToolId::new("send_email"),
+            ConfLevel::Sensitive,
+        )
+        .expect("arm should succeed when no in-flight");
+
+        // Now add the in-flight so sentinel_elevate_taint can trigger a DENY check.
+        st2.invocation_tool.insert(inv.clone(), ToolId::new("send_email"));
+        st2.in_flight.insert_into(agent.clone(), inv.clone());
+
+        // Consume via sentinel raise (Sensitive/NetworkExternal = DENY; override rescues once).
+        let (st2, _) =
+            sentinel_elevate_taint(st2, &bg, &FailAll, agent.clone(), ConfLevel::Sensitive)
+                .expect("first sentinel raise should pass via override");
+        assert!(
+            st2.override_consumed(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
+            "override should be consumed after first sentinel use"
+        );
+
+        // Second sentinel raise must be blocked.
+        let result = sentinel_elevate_taint(st2.clone(), &bg, &FailAll, agent.clone(), ConfLevel::Sensitive);
+        assert!(result.is_err(), "second sentinel raise must fail: override spent");
+
+        // Complete the in-flight so re-arm guard passes.
+        let (st2, _) = invoke_complete(st2, &bg, &ConformsAll, agent.clone(), inv)
+            .expect("invoke_complete should succeed");
+        assert!(!st2.in_flight.set_nonempty(&agent), "no more in-flight");
+
+        // Re-arm: override_consumed entry must be cleared (grant_override removes from override_used).
+        let (st2, _) = grant_override(
+            st2,
+            &bg,
+            AgentId::root(),
+            agent.clone(),
+            ToolId::new("send_email"),
+            ConfLevel::Sensitive,
+        )
+        .expect("re-arm should succeed");
+        assert!(
+            !st2.override_consumed(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
+            "re-arm must clear the consumed flag"
+        );
+        assert!(
+            st2.has_flow_override(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
+            "re-arm must restore the flow_override grant"
+        );
+
+        // Add a new in-flight and verify the override is usable exactly once more.
+        let inv2 = InvocationId::new("a-inv-2");
+        let mut st2 = st2;
+        st2.invocation_tool.insert(inv2.clone(), ToolId::new("send_email"));
+        st2.in_flight.insert_into(agent.clone(), inv2);
+
+        let (st2, _) =
+            sentinel_elevate_taint(st2, &bg, &FailAll, agent.clone(), ConfLevel::Sensitive)
+                .expect("post-rearm sentinel raise should pass");
+        assert!(
+            st2.override_consumed(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
+            "re-armed override consumed again"
+        );
+
+        let result2 =
+            sentinel_elevate_taint(st2, &bg, &FailAll, agent.clone(), ConfLevel::Sensitive);
+        assert!(result2.is_err(), "third raise must fail: re-armed override also single-use");
+    }
+
+    #[test]
+    fn grant_override_self_grant() {
+        let agent = AgentId::new("a");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(agent.clone());
+        st.agent_cap.insert(agent.clone(), VecSet::from([CapKind::GrantOverride]));
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let budget_before = st.budget(&agent);
+        let (st, _) = grant_override(
+            st,
+            &bg,
+            agent.clone(),
+            agent.clone(),
+            ToolId::new("t"),
+            ConfLevel::Sensitive,
+        )
+        .expect("self-grant should succeed with no in-flight");
+
+        assert!(
+            st.has_flow_override(&agent, &ToolId::new("t"), ConfLevel::Sensitive),
+            "override armed for granter-as-target"
+        );
+        assert_eq!(st.budget(&agent), budget_before.debit(), "granter debited");
+    }
+
+    #[test]
+    fn death_clears_override_grants() {
+        let child = AgentId::new("child");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(child.clone());
+        st.agent_parent.insert(child.clone(), AgentId::root());
+
+        let bg = BackgroundTheoryBuilder::new().build();
+
+        // Arm an override for child.
+        let (st, _) = grant_override(
+            st,
+            &bg,
+            AgentId::root(),
+            child.clone(),
+            ToolId::new("t"),
+            ConfLevel::Sensitive,
+        )
+        .expect("arm should succeed");
+        assert!(
+            st.flow_override.get(&child).is_some(),
+            "override should be armed"
+        );
+
+        // Revoke the child; clear_agent_state should clear flow_override.
+        let (st, _) = revoke(st, &bg, AgentId::root(), child.clone())
+            .expect("revoke should succeed");
+        assert!(
+            st.flow_override.get(&child).is_none(),
+            "revoke must clear flow_override for the dead agent"
+        );
+    }
 }

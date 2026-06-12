@@ -553,3 +553,102 @@ fn loaded_instructions_have_trusted_issuer() {
         }
     }
 }
+
+/// Safety: grant_override single-use is preserved across re-arm.
+/// Full kernel scenario: root grants, agent uses the override (DENY flow via sentinel), re-arm
+/// is refused while in-flight, completes, root re-grants, override is usable exactly once more.
+///
+/// After the first sentinel raise the agent carries Sensitive taint. The re-armed override is
+/// then consumed by invoke_start (CHECK 2a: new tool's egress at existing taint level hits DENY;
+/// override is the sole justification and is spent). A subsequent invoke_start with the same tool
+/// is blocked — the re-armed override is also single-use.
+#[test]
+fn grant_override_preserves_single_use_across_rearm() {
+    use argus_kernel::ConfLevel;
+
+    let mut b = BackgroundTheoryBuilder::new();
+    b.trust_issuer(IssuerId::new("trusted"));
+    b.register_tool(
+        ToolId::new("send_email"),
+        ToolMetadata {
+            capabilities: VecSet::from([CapKind::NetworkEgress]),
+            egress: VecSet::from([EgressKind::NetworkExternal]),
+            conf_floor: ConfLevel::Public,
+            output_bounded: false,
+            issuer: IssuerId::new("trusted"),
+        },
+    );
+    // Sensitive/NetworkExternal => DENY (no ALLOW ceiling).
+    b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
+    let mut k = Kernel::new(b.build(), AllowAll, PassAll, ConformsAll, NoopStore);
+
+    let agent = AgentId::new("a");
+    k.delegate(AgentId::root(), agent.clone()).unwrap();
+    for cap in CapKind::ALL {
+        let _ = k.grant_capability(AgentId::root(), agent.clone(), cap);
+    }
+    k.register_tool(ToolId::new("send_email")).unwrap();
+
+    // Arm the override via the in-band kernel path.
+    k.grant_override(
+        AgentId::root(),
+        agent.clone(),
+        ToolId::new("send_email"),
+        ConfLevel::Sensitive,
+    )
+    .expect("root can arm override");
+
+    // Start an invocation so sentinel_elevate_taint has a DENY-mode in-flight to check.
+    k.invoke_start(agent.clone(), ToolId::new("send_email"), InvocationId::new("inv-1"))
+        .unwrap();
+
+    // First sentinel raise: override rescues and is consumed.
+    k.sentinel_elevate_taint(agent.clone(), ConfLevel::Sensitive)
+        .expect("first sentinel raise passes via override");
+    assert!(
+        k.state().override_consumed(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
+        "override must be consumed after first use"
+    );
+
+    // Re-arm while in-flight must be refused.
+    let rearm_err = k.grant_override(
+        AgentId::root(),
+        agent.clone(),
+        ToolId::new("send_email"),
+        ConfLevel::Sensitive,
+    );
+    assert!(rearm_err.is_err(), "re-arm while target has in-flight must fail");
+
+    // Complete the flight; now re-arm should succeed.
+    k.invoke_complete(agent.clone(), InvocationId::new("inv-1")).unwrap();
+
+    k.grant_override(
+        AgentId::root(),
+        agent.clone(),
+        ToolId::new("send_email"),
+        ConfLevel::Sensitive,
+    )
+    .expect("re-arm after flight clears must succeed");
+
+    assert!(
+        !k.state().override_consumed(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
+        "re-arm clears the consumed flag"
+    );
+
+    // Agent now has Sensitive taint (from the sentinel raise). invoke_start on send_email triggers
+    // CHECK 2a: Sensitive/NetworkExternal = DENY; the re-armed override rescues exactly once.
+    k.invoke_start(agent.clone(), ToolId::new("send_email"), InvocationId::new("inv-2"))
+        .expect("invoke_start passes via re-armed override (CHECK 2a)");
+    assert!(
+        k.state().override_consumed(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
+        "re-armed override consumed by invoke_start"
+    );
+
+    // A second invoke_start with the same tool must be blocked: override spent.
+    let blocked = k.invoke_start(
+        agent.clone(),
+        ToolId::new("send_email"),
+        InvocationId::new("inv-3"),
+    );
+    assert!(blocked.is_err(), "invoke_start must fail: re-armed override also single-use");
+}
