@@ -13,11 +13,27 @@ impl AuthorizerOracle for ConstAuth {
     }
 }
 
-struct ConstGate(bool);
-impl ContentGateOracle for ConstGate {
-    fn passes(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
-        self.0
+/// Content gate keyed by `(agent, tool)` so the agreement tests can detect explain passing the
+/// wrong tool (e.g. the new tool instead of an in-flight tool in check 2b) or the wrong agent
+/// (child vs parent in returns) to the gate -- a tool-independent constant gate is blind to both.
+#[derive(Debug)]
+struct KeyedGate {
+    verdicts: Vec<bool>,
+}
+impl ContentGateOracle for KeyedGate {
+    fn passes(&self, agent: &AgentId, tool: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        let ai = AGENTS.iter().position(|a| agent.0 == *a);
+        let ti = TOOLS.iter().position(|t| tool.0 == *t);
+        match (ai, ti) {
+            (Some(ai), Some(ti)) => self.verdicts[ai * TOOLS.len() + ti],
+            _ => false,
+        }
     }
+}
+
+fn arb_gate() -> impl Strategy<Value = KeyedGate> {
+    prop::collection::vec(any::<bool>(), AGENTS.len() * TOOLS.len())
+        .prop_map(|verdicts| KeyedGate { verdicts })
 }
 
 const AGENTS: [&str; 3] = ["root", "a1", "a2"];
@@ -150,21 +166,24 @@ fn check_verdict<T>(
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(512))]
+    // 4096, not the default 256/512: the returns agent-misroute mutant needs a valid parent
+    // edge + child taint + a bound parent flight + INSPECT mode + differing per-agent verdicts
+    // to surface, which 512 cases miss (measured: caught reliably from ~2048).
+    #![proptest_config(ProptestConfig::with_cases(4096))]
 
     #[test]
     fn invoke_agrees(
         st in arb_state(), bg in arb_background(),
         agent in prop::sample::select(AGENTS.to_vec()),
         tool in prop::sample::select(TOOLS.to_vec()),
-        auth in any::<bool>(), gate in any::<bool>(),
+        auth in any::<bool>(), gate in arb_gate(),
     ) {
         let report = explain_invoke(
-            &st, &bg, &ConstAuth(auth), &ConstGate(gate),
+            &st, &bg, &ConstAuth(auth), &gate,
             &AgentId::new(agent), &ToolId::new(tool), &InvocationId::new("fresh"),
         );
         let real = transitions::invoke_start(
-            st.clone(), &bg, &ConstAuth(auth), &ConstGate(gate),
+            st.clone(), &bg, &ConstAuth(auth), &gate,
             AgentId::new(agent), ToolId::new(tool), InvocationId::new("fresh"),
         );
         check_verdict(&report.verdict, &real);
@@ -175,13 +194,13 @@ proptest! {
         st in arb_state(), bg in arb_background(),
         child in prop::sample::select(AGENTS.to_vec()),
         parent in prop::sample::select(AGENTS.to_vec()),
-        gate in any::<bool>(),
+        gate in arb_gate(),
     ) {
         let report = explain_return_unendorsed(
-            &st, &bg, &ConstGate(gate), &AgentId::new(child), &AgentId::new(parent),
+            &st, &bg, &gate, &AgentId::new(child), &AgentId::new(parent),
         );
         let real = transitions::return_unendorsed(
-            st.clone(), &bg, &ConstGate(gate), AgentId::new(child), AgentId::new(parent),
+            st.clone(), &bg, &gate, AgentId::new(child), AgentId::new(parent),
         );
         check_verdict(&report.verdict, &real);
     }
@@ -190,13 +209,13 @@ proptest! {
     fn sentinel_agrees(
         st in arb_state(), bg in arb_background(),
         agent in prop::sample::select(AGENTS.to_vec()),
-        level in conf_level(), gate in any::<bool>(),
+        level in conf_level(), gate in arb_gate(),
     ) {
         let report = explain_sentinel_elevate_taint(
-            &st, &bg, &ConstGate(gate), &AgentId::new(agent), level,
+            &st, &bg, &gate, &AgentId::new(agent), level,
         );
         let real = transitions::sentinel_elevate_taint(
-            st.clone(), &bg, &ConstGate(gate), AgentId::new(agent), level,
+            st.clone(), &bg, &gate, AgentId::new(agent), level,
         );
         check_verdict(&report.verdict, &real);
     }
