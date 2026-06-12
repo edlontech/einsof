@@ -39,7 +39,7 @@ fn flow_decision(
             }
         }
         FlowMode::Deny => {
-            if bg.has_flow_override(agent, tool, level)
+            if st.has_flow_override(agent, tool, level)
                 && !st.override_consumed(agent, tool, level)
             {
                 FlowDecision::ConsumedOverride
@@ -57,6 +57,7 @@ fn clear_agent_state(st: &mut KernelState, agent: &AgentId) {
     st.gh_taint_received.remove(agent);
     st.agent_instruction.remove(agent);
     st.override_used.remove(agent);
+    st.flow_override.remove(agent);
     st.agent_budget.remove(agent);
 }
 
@@ -598,6 +599,48 @@ pub fn sentinel_refresh_budget(
     Ok((st, KernelAction::SentinelRefreshBudget { agent }))
 }
 
+/// Capability-gated arming (or re-arming) of a single-use flow override for
+/// `(target, tool, level)`, debited to the GRANTER's declassification budget. The re-arm
+/// guard (target has no in-flight invocations) is what keeps single-use sound across
+/// re-arms: no in-flight flow can be retroactively justified by the fresh grant.
+/// Self-grant (granter == target) is legal; the guard then binds the granter.
+pub fn grant_override(
+    mut st: KernelState,
+    _bg: &BackgroundTheory,
+    granter: AgentId,
+    target: AgentId,
+    tool: ToolId,
+    level: ConfLevel,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    if !st.agent_active.contains(&granter) {
+        return Err(KernelError::AgentInactive);
+    }
+    if !st.agent_active.contains(&target) {
+        return Err(KernelError::AgentInactive);
+    }
+    if !st.agent_cap.set_contains(&granter, &CapKind::GrantOverride) {
+        return Err(KernelError::CapabilityMissing);
+    }
+    if st.budget_exhausted(&granter) {
+        return Err(KernelError::BudgetExhausted);
+    }
+    if st.in_flight.set_nonempty(&target) {
+        return Err(KernelError::TargetHasInFlight);
+    }
+
+    st.flow_override.insert_into(
+        target.clone(),
+        OverrideKey { tool: tool.clone(), level },
+    );
+    st.override_used.remove_from(
+        &target,
+        &OverrideKey { tool: tool.clone(), level },
+    );
+    st.debit_budget(&granter);
+
+    Ok((st, KernelAction::GrantOverride { granter, target, tool, level }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,11 +728,7 @@ mod tests {
                 issuer: IssuerId::new("trusted"),
             },
         );
-        b.set_flow(
-            ConfLevel::Public,
-            EgressKind::NetworkExternal,
-            FlowMode::Allow,
-        );
+        b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
         b.build()
     }
 
@@ -1521,6 +1560,11 @@ mod tests {
         st
             .taint_levels
             .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+        // Override for Sensitive level (check 2a passes via override) -- seeded into state
+        st.flow_override.insert_into(
+            AgentId::new("a1"),
+            OverrideKey { tool: ToolId::new("send_email"), level: ConfLevel::Sensitive },
+        );
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
@@ -1534,17 +1578,7 @@ mod tests {
             },
         );
         // Public egress is ALLOW (self-flow check 2c passes)
-        builder.set_flow(
-            ConfLevel::Public,
-            EgressKind::NetworkExternal,
-            FlowMode::Allow,
-        );
-        // Override for Sensitive level (check 2a passes via override)
-        builder.add_override(
-            AgentId::new("a1"),
-            ToolId::new("send_email"),
-            ConfLevel::Sensitive,
-        );
+        builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
         let bg = builder.build();
 
         assert!(
@@ -1567,6 +1601,11 @@ mod tests {
         st
             .taint_levels
             .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+        // Override for Sensitive level -- seeded into state
+        st.flow_override.insert_into(
+            AgentId::new("a1"),
+            OverrideKey { tool: ToolId::new("send_email"), level: ConfLevel::Sensitive },
+        );
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
@@ -1580,16 +1619,7 @@ mod tests {
             },
         );
         // Public egress is ALLOW (2c passes); Sensitive/NetworkExternal stays DENY (2a needs override).
-        builder.set_flow(
-            ConfLevel::Public,
-            EgressKind::NetworkExternal,
-            FlowMode::Allow,
-        );
-        builder.add_override(
-            AgentId::new("a1"),
-            ToolId::new("send_email"),
-            ConfLevel::Sensitive,
-        );
+        builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
         let bg = builder.build();
 
         // First invocation: rescued by the override at 2a.
@@ -1644,6 +1674,11 @@ mod tests {
         st
             .taint_levels
             .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+        // Override seeded into state, but ALLOW should prevent it from being consumed.
+        st.flow_override.insert_into(
+            AgentId::new("a1"),
+            OverrideKey { tool: ToolId::new("send_email"), level: ConfLevel::Sensitive },
+        );
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
         builder.register_tool(
@@ -1656,22 +1691,8 @@ mod tests {
                 issuer: IssuerId::new("trusted"),
             },
         );
-        // Both relevant pairs ALLOW -> the override is never the operative justification.
-        builder.set_flow(
-            ConfLevel::Public,
-            EgressKind::NetworkExternal,
-            FlowMode::Allow,
-        );
-        builder.set_flow(
-            ConfLevel::Sensitive,
-            EgressKind::NetworkExternal,
-            FlowMode::Allow,
-        );
-        builder.add_override(
-            AgentId::new("a1"),
-            ToolId::new("send_email"),
-            ConfLevel::Sensitive,
-        );
+        // Both relevant pairs ALLOW (ceiling at Sensitive) -> the override is never the operative justification.
+        builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Sensitive), None);
         let bg = builder.build();
 
         let (st, _) = invoke_start(
@@ -1746,10 +1767,10 @@ mod tests {
             },
         );
         // Sensitive/NetworkExternal defaults to DENY; rescue only via the parent's override.
-        builder.add_override(
+        // Override seeded into state.
+        st.flow_override.insert_into(
             parent.clone(),
-            ToolId::new("send_email"),
-            ConfLevel::Sensitive,
+            OverrideKey { tool: ToolId::new("send_email"), level: ConfLevel::Sensitive },
         );
         let bg = builder.build();
 
@@ -1795,8 +1816,11 @@ mod tests {
             },
         );
         // Raising taint to Sensitive makes (Sensitive, NetworkExternal)=DENY bite the in-flight
-        // send_email; only the override rescues it -- and spends it.
-        builder.add_override(agent.clone(), ToolId::new("send_email"), ConfLevel::Sensitive);
+        // send_email; only the override rescues it -- and spends it. Override seeded into state.
+        st.flow_override.insert_into(
+            agent.clone(),
+            OverrideKey { tool: ToolId::new("send_email"), level: ConfLevel::Sensitive },
+        );
         let bg = builder.build();
 
         let (st, _) =

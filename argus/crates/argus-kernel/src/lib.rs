@@ -19,7 +19,9 @@ mod traits;
 pub mod transitions;
 mod types;
 
-pub use background::{BackgroundTheory, BackgroundTheoryBuilder, FlowMode, ToolMetadata};
+pub use background::{
+    BackgroundTheory, BackgroundTheoryBuilder, FlowMatrixError, FlowMode, ToolMetadata,
+};
 pub use capability::{CapKind, DomainPort, NetScope, Scope};
 pub use collections::{VecMap, VecSet};
 pub use error::KernelError;
@@ -28,6 +30,6 @@ pub use kernel::Kernel;
 pub use state::KernelState;
 pub use traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle, EventStore};
 pub use types::{
-    AgentId, BudgetLevel, ConfLevel, EgressKind, FlowKey, InstructionId, InvocationId, IssuerId,
-    OverrideEntry, OverrideKey, ToolId,
+    AgentId, BudgetLevel, ConfLevel, EgressKind, InstructionId, InvocationId, IssuerId,
+    OverrideKey, ToolId,
 };

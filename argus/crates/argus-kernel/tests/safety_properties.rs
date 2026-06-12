@@ -59,11 +59,7 @@ fn test_kernel() -> Kernel<AllowAll, PassAll, ConformsAll, NoopStore> {
             issuer: IssuerId::new("trusted"),
         },
     );
-    b.set_flow(
-        ConfLevel::Public,
-        EgressKind::NetworkExternal,
-        FlowMode::Allow,
-    );
+    b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
     Kernel::new(b.build(), AllowAll, PassAll, ConformsAll, NoopStore)
 }
 
@@ -374,11 +370,7 @@ fn test_kernel_with_deny_flow() -> Kernel<AllowAll, PassAll, ConformsAll, NoopSt
             issuer: IssuerId::new("trusted"),
         },
     );
-    b.set_flow(
-        ConfLevel::Public,
-        EgressKind::NetworkExternal,
-        FlowMode::Allow,
-    );
+    b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
     Kernel::new(b.build(), AllowAll, PassAll, ConformsAll, NoopStore)
 }
 

@@ -197,12 +197,29 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
             agent,
         ))
     }
+
+    pub fn grant_override(
+        &mut self,
+        granter: AgentId,
+        target: AgentId,
+        tool: ToolId,
+        level: ConfLevel,
+    ) -> Result<KernelEvent, KernelError> {
+        self.apply(transitions::grant_override(
+            self.state.clone(),
+            &self.background,
+            granter,
+            target,
+            tool,
+            level,
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::background::{BackgroundTheory, BackgroundTheoryBuilder, FlowMode, ToolMetadata};
+    use crate::background::{BackgroundTheory, BackgroundTheoryBuilder, ToolMetadata};
     use crate::types::{ConfLevel, EgressKind, IssuerId};
     use std::cell::RefCell;
     use crate::collections::VecSet;
@@ -252,11 +269,7 @@ mod tests {
                 issuer: IssuerId::new("trusted"),
             },
         );
-        builder.set_flow(
-            ConfLevel::Public,
-            EgressKind::NetworkExternal,
-            FlowMode::Allow,
-        );
+        builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
         let bg = builder.build();
 
         let store = VecStore::new();

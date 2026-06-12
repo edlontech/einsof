@@ -34,6 +34,8 @@ pub enum KernelError {
     NotInFlight,
     /// The child still has in-flight invocations.
     ChildHasInFlight,
+    /// The grant target still has in-flight invocations (re-arm guard).
+    TargetHasInFlight,
     /// A flow-policy gate blocked the (level, egress) pair.
     FlowGateBlocked,
     /// The authorizer denied the (agent, tool) pair.

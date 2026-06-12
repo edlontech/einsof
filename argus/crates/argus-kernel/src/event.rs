@@ -51,6 +51,12 @@ pub enum KernelAction {
         agent: AgentId,
         instr: InstructionId,
     },
+    GrantOverride {
+        granter: AgentId,
+        target: AgentId,
+        tool: ToolId,
+        level: ConfLevel,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,8 +126,14 @@ mod tests {
                 agent: AgentId::new("a"),
                 instr: InstructionId::new("i"),
             },
+            KernelAction::GrantOverride {
+                granter: AgentId::root(),
+                target: AgentId::new("a"),
+                tool: ToolId::new("t"),
+                level: ConfLevel::Sensitive,
+            },
         ];
-        assert_eq!(actions.len(), 12);
+        assert_eq!(actions.len(), 13);
     }
 
     #[test]

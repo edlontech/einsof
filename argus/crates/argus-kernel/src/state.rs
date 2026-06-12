@@ -19,6 +19,10 @@ pub struct KernelState {
     /// grants an agent has already spent, so each immutable grant rescues at most one
     /// flow. Write-only on the hot path; cleared per-agent by `clear_agent_state`.
     pub override_used: VecMap<AgentId, VecSet<OverrideKey>>,
+    /// Live single-use flow-override grants, armed exclusively by `grant_override`
+    /// (no background seeding). Exact `override_used` shape; cleared per-agent by
+    /// `clear_agent_state`.
+    pub flow_override: VecMap<AgentId, VecSet<OverrideKey>>,
     /// Per-agent declassification budget (TzimtzumV2 `agent_budget`). Absence == full (`L5`):
     /// a fresh or budget-refreshed agent has no entry. Debited on each endorsement; `Exhausted`
     /// forces the fail-closed full-taint path. Reset to full by `clear_agent_state`.
@@ -53,6 +57,7 @@ impl KernelState {
             gh_taint_received: VecMap::new(),
             agent_instruction: VecMap::new(),
             override_used: VecMap::new(),
+            flow_override: VecMap::new(),
             agent_budget: VecMap::new(),
         }
     }
@@ -62,6 +67,15 @@ impl KernelState {
     pub fn override_consumed(&self, agent: &AgentId, tool: &ToolId, level: ConfLevel) -> bool {
         match self.override_used.get(agent) {
             Some(used) => used.contains(&OverrideKey { tool: tool.clone(), level }),
+            None => false,
+        }
+    }
+
+    /// True if `agent` holds an (armed or consumed) `flow_override` grant for
+    /// `(tool, level)`. Consumption is tracked separately in `override_used`.
+    pub fn has_flow_override(&self, agent: &AgentId, tool: &ToolId, level: ConfLevel) -> bool {
+        match self.flow_override.get(agent) {
+            Some(grants) => grants.contains(&OverrideKey { tool: tool.clone(), level }),
             None => false,
         }
     }
@@ -223,5 +237,18 @@ mod tests {
     fn initial_state_has_no_agent_instructions() {
         let state = KernelState::initial();
         assert!(state.agent_instruction.is_empty());
+    }
+
+    #[test]
+    fn flow_override_lookup() {
+        let mut st = KernelState::initial();
+        let agent = AgentId::new("a1");
+        st.flow_override.insert_into(
+            agent.clone(),
+            OverrideKey { tool: ToolId::new("t"), level: ConfLevel::Sensitive },
+        );
+        assert!(st.has_flow_override(&agent, &ToolId::new("t"), ConfLevel::Sensitive));
+        assert!(!st.has_flow_override(&agent, &ToolId::new("t"), ConfLevel::Public));
+        assert!(!st.has_flow_override(&AgentId::new("b"), &ToolId::new("t"), ConfLevel::Sensitive));
     }
 }

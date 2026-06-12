@@ -124,23 +124,6 @@ pub struct OverrideKey {
     pub level: ConfLevel,
 }
 
-/// Flow-policy key (the `(level, egress)` pair the policy table maps to a `FlowMode`). Named
-/// struct rather than a tuple key, for the same extraction reason as `OverrideKey`.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct FlowKey {
-    pub level: ConfLevel,
-    pub egress: EgressKind,
-}
-
-/// A flow-override grant in the background theory (the `(agent, tool, level)` triple that licenses
-/// a single DENY-mode flow). Named struct rather than a tuple element.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct OverrideEntry {
-    pub agent: AgentId,
-    pub tool: ToolId,
-    pub level: ConfLevel,
-}
-
 impl fmt::Display for ConfLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
