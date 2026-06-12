@@ -50,4 +50,37 @@ defmodule ExArgus.Native do
 
   def explain_sentinel_elevate_taint(_s, _bg, _agent, _level, _content_gate),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_new(_bg), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_state(_h), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_seq(_h), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_register_tool(_h, _tool), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_load_instruction(_h, _agent, _instr), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_delegate(_h, _grantor, _grantee), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_grant_capability(_h, _parent, _child, _cap), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_revoke(_h, _parent, _target), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_cascade_revoke(_h, _child, _parent), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_return_endorsed(_h, _child, _parent), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_sentinel_refresh_budget(_h, _agent), do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_invoke_start(_h, _agent, _tool, _inv, _auth, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_invoke_complete(_h, _agent, _inv, _conf),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_return_unendorsed(_h, _child, _parent, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_sentinel_elevate_taint(_h, _agent, _level, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_explain_invoke(_h, _agent, _tool, _inv, _auth, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_explain_return_unendorsed(_h, _child, _parent, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def instance_explain_sentinel_elevate_taint(_h, _agent, _level, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
 end

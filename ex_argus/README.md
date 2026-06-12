@@ -15,11 +15,11 @@ conformance oracles.
       trusted_issuers: ["trusted"], instruction_issuer: %{}
     }
 
-    state = ExArgus.Kernel.initial_state()
-    {:ok, state, _action} = ExArgus.Kernel.register_tool(state, bg, "read_file")
+    state = ExArgus.Offline.initial_state()
+    {:ok, state, _action} = ExArgus.Offline.register_tool(state, bg, "read_file")
 
 Transitions return `{:ok, state, action}` or `{:error, reason}`, where `reason` is one
-of the closed `ExArgus.Kernel.error_reason/0` atoms (mirroring `argus-kernel`'s
+of the closed `ExArgus.Offline.error_reason/0` atoms (mirroring `argus-kernel`'s
 `KernelError`).
 
 ## Diagnostics: explain, telemetry, shadow, replay
@@ -38,6 +38,18 @@ On a denial, pass the report to `ExArgus.Telemetry.emit_denied/2`
 and diffs the decision. `ExArgus.Replay.run/2` + `diff/3` replay a recorded
 `{fun, args}` log (with recorded oracle verdicts) against alternative backgrounds for
 trajectory-level evidence.
+
+## Live vs offline
+
+- `ExArgus.Instance` is the **live** authorization API. `Instance.new(bg)` returns an
+  opaque handle holding the only mutable copy of the kernel state inside the verified NIF
+  resource; transitions return `{:ok, seq, action} | {:error, reason}`. State only exports
+  via `Instance.state/1`; it can never be imported back, so out-of-reachable-space state is
+  unrepresentable on the live path. Restart recovery is `Instance.recover(bg, log)` (strict
+  event-sourced replay of a `{fun, args}` log).
+- `ExArgus.Offline` is the state-passing API for **offline use only** (replay, shadow,
+  property tests, explain on snapshots) -- never live authorization. `ExArgus.Replay` and
+  `ExArgus.Shadow` build on it.
 
 ## Snapshot wire version
 

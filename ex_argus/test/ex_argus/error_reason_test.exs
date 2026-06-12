@@ -1,7 +1,7 @@
 defmodule ExArgus.ErrorReasonTest do
   @moduledoc """
   Locks the deny-atom contract: the documented closed set must match
-  `ExArgus.Kernel.error_reason/0`, and the atoms the NIF actually emits on the wire must
+  `ExArgus.Offline.error_reason/0`, and the atoms the NIF actually emits on the wire must
   be members of it.
   """
   use ExUnit.Case, async: true
@@ -60,7 +60,7 @@ defmodule ExArgus.ErrorReasonTest do
       assert length(Enum.uniq(@error_reasons)) == 20
     end
 
-    test "ExArgus.Kernel.error_reason/0 declares exactly the documented closed set" do
+    test "ExArgus.Offline.error_reason/0 declares exactly the documented closed set" do
       assert declared_error_reasons() == Enum.sort(@error_reasons)
     end
   end
@@ -198,7 +198,7 @@ defmodule ExArgus.ErrorReasonTest do
   # The atom literals in the `@type error_reason :: ...` union, read back from the compiled
   # module so the test fails if the declared type drifts from the documented closed set.
   defp declared_error_reasons do
-    {:ok, types} = Code.Typespec.fetch_types(ExArgus.Kernel)
+    {:ok, types} = Code.Typespec.fetch_types(ExArgus.Offline)
 
     {:type, {:error_reason, definition, []}} =
       Enum.find(types, fn {:type, {name, _def, _args}} -> name == :error_reason end)

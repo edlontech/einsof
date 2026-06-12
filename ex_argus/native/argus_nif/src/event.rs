@@ -111,6 +111,14 @@ pub enum Outcome {
     Error(KernelErrorN),
 }
 
+// Instance-transition return: the live state stays in the resource, so on success we hand
+// back only the monotone seq (for the adapter's gap/reorder detection) and the action.
+#[derive(Debug, NifTaggedEnum)]
+pub enum InstanceOutcome {
+    Ok(u64, ActionN),
+    Error(KernelErrorN),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,13 +1,19 @@
-defmodule ExArgus.Kernel do
+defmodule ExArgus.Offline do
   @moduledoc """
-  Pure functional interface to the verified argus-kernel.
+  Pure functional, state-passing interface to the verified argus-kernel.
 
-  The caller owns the state, the event log, and the oracle implementations. Each function
-  returns `{:ok, new_state, action}` or `{:error, reason}`. Oracle verdicts for the three
-  oracle-consuming transitions are passed in: `invoke_start` and `invoke_complete` take a
-  boolean authorizer/conformance verdict, and the gate-consuming transitions take a
-  `%{tool => boolean}` content-gate decision map. Use `content_gate_targets/2` or
-  `content_gate_map/3` to compute exactly which tools need a verdict.
+  **Offline use only** -- replay, shadow evaluation, property tests, and `explain` over a
+  state snapshot. NEVER use this for live authorization: live callers must use
+  `ExArgus.Instance`, which keeps the only mutable copy of the state inside the verified
+  NIF resource. The caller here owns the state term, which makes out-of-reachable-space
+  state construction representable -- exactly the hazard `ExArgus.Instance` removes.
+
+  Each function returns `{:ok, new_state, action}` or `{:error, reason}`. Oracle verdicts
+  for the three oracle-consuming transitions are passed in: `invoke_start` and
+  `invoke_complete` take a boolean authorizer/conformance verdict, and the gate-consuming
+  transitions take a `%{tool => boolean}` content-gate decision map. Use
+  `content_gate_targets/2` or `content_gate_map/3` to compute exactly which tools need a
+  verdict.
   """
 
   alias ExArgus.Kernel.State

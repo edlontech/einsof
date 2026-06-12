@@ -4,7 +4,7 @@ defmodule ExArgus.Explain do
   for every denied (level, egress) pair, the counterfactual rescues that would flip it
   (override grant, policy change, tool relabel, content-gate pass).
 
-  The `verdict` field is the exact `ExArgus.Kernel.error_reason/0` the real transition
+  The `verdict` field is the exact `ExArgus.Offline.error_reason/0` the real transition
   returns (`nil` = it would succeed) -- the agreement is enforced by a property suite in
   `argus-explain`. Reports are diagnostics from an UNVERIFIED crate: feed them to
   telemetry and the policy review loop, never back into authorization decisions.
@@ -13,7 +13,7 @@ defmodule ExArgus.Explain do
   alias ExArgus.Native
 
   @type report :: %{
-          verdict: ExArgus.Kernel.error_reason() | nil,
+          verdict: ExArgus.Offline.error_reason() | nil,
           missing_caps: [atom],
           findings: [map],
           authorizer_denied: boolean

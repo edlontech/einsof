@@ -2,7 +2,7 @@ defmodule ExArgus.ConformanceTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias ExArgus.Kernel
+  alias ExArgus.Offline
   alias ExArgus.Kernel.Background
   alias ExArgus.Kernel.State
 
@@ -52,16 +52,16 @@ defmodule ExArgus.ConformanceTest do
     ])
   end
 
-  defp apply_action(state, bg, {:register_tool, t}), do: Kernel.register_tool(state, bg, t)
-  defp apply_action(state, bg, {:delegate, g, c}), do: Kernel.delegate(state, bg, g, c)
+  defp apply_action(state, bg, {:register_tool, t}), do: Offline.register_tool(state, bg, t)
+  defp apply_action(state, bg, {:delegate, g, c}), do: Offline.delegate(state, bg, g, c)
 
   defp apply_action(state, bg, {:invoke_start, a, t, i}),
-    do: Kernel.invoke_start(state, bg, a, t, i, true, %{t => true})
+    do: Offline.invoke_start(state, bg, a, t, i, true, %{t => true})
 
   defp apply_action(state, bg, {:invoke_complete, a, i}),
-    do: Kernel.invoke_complete(state, bg, a, i, true)
+    do: Offline.invoke_complete(state, bg, a, i, true)
 
-  defp apply_action(state, bg, {:revoke, p, t}), do: Kernel.revoke(state, bg, p, t)
+  defp apply_action(state, bg, {:revoke, p, t}), do: Offline.revoke(state, bg, p, t)
 
   defp step(state, bg, action) do
     case apply_action(state, bg, action) do
@@ -98,7 +98,7 @@ defmodule ExArgus.ConformanceTest do
     bg = bg()
 
     check all(actions <- StreamData.list_of(gen_action(), max_length: 25)) do
-      final = Enum.reduce(actions, Kernel.initial_state(), &step(&2, bg, &1))
+      final = Enum.reduce(actions, Offline.initial_state(), &step(&2, bg, &1))
       assert_invariants(final)
     end
   end
@@ -107,7 +107,7 @@ defmodule ExArgus.ConformanceTest do
     bg = bg()
 
     check all(action <- gen_action()) do
-      case apply_action(Kernel.initial_state(), bg, action) do
+      case apply_action(Offline.initial_state(), bg, action) do
         {:ok, %State{}, tuple} -> assert is_tuple(tuple)
         {:error, reason} -> assert is_atom(reason)
       end

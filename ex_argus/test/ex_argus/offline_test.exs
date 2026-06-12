@@ -1,7 +1,7 @@
-defmodule ExArgus.KernelTest do
+defmodule ExArgus.OfflineTest do
   use ExUnit.Case, async: true
 
-  alias ExArgus.Kernel
+  alias ExArgus.Offline
   alias ExArgus.Kernel.State
 
   test "content_gate_targets for invoke_start includes the new tool plus in-flight tools" do
@@ -11,7 +11,7 @@ defmodule ExArgus.KernelTest do
     }
 
     assert {"a1", tools} =
-             Kernel.content_gate_targets(s, {:invoke_start, "a1", "new_tool", "inv-1"})
+             Offline.content_gate_targets(s, {:invoke_start, "a1", "new_tool", "inv-1"})
 
     assert Enum.sort(tools) == ["new_tool", "old_tool"]
   end
@@ -23,19 +23,19 @@ defmodule ExArgus.KernelTest do
     }
 
     assert {"parent", ["p_tool"]} =
-             Kernel.content_gate_targets(s, {:return_unendorsed, "child", "parent"})
+             Offline.content_gate_targets(s, {:return_unendorsed, "child", "parent"})
   end
 
   test "content_gate_map evaluates the function over the targets" do
     s = %State{in_flight: %{"a1" => []}, invocation_tool: %{}}
 
     map =
-      Kernel.content_gate_map(s, {:invoke_start, "a1", "t", "i"}, fn _agent, _tool -> true end)
+      Offline.content_gate_map(s, {:invoke_start, "a1", "t", "i"}, fn _agent, _tool -> true end)
 
     assert map == %{"t" => true}
   end
 
   test "initial_state delegates to the NIF" do
-    assert "root" in Kernel.initial_state().agent_active
+    assert "root" in Offline.initial_state().agent_active
   end
 end

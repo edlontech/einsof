@@ -1,7 +1,7 @@
 defmodule ExArgus.ExplainTest do
   use ExUnit.Case, async: true
 
-  alias ExArgus.{Explain, Kernel}
+  alias ExArgus.{Explain, Offline}
   alias ExArgus.Kernel.Background
 
   @bg %Background{
@@ -21,11 +21,11 @@ defmodule ExArgus.ExplainTest do
   }
 
   defp tainted_state do
-    state = Kernel.initial_state()
-    {:ok, state, _} = Kernel.register_tool(state, @bg, "send_email")
-    {:ok, state, _} = Kernel.delegate(state, @bg, "root", "a1")
-    {:ok, state, _} = Kernel.grant_capability(state, @bg, "root", "a1", :network_egress)
-    {:ok, state, _} = Kernel.sentinel_elevate_taint(state, @bg, "a1", :sensitive, %{})
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.register_tool(state, @bg, "send_email")
+    {:ok, state, _} = Offline.delegate(state, @bg, "root", "a1")
+    {:ok, state, _} = Offline.grant_capability(state, @bg, "root", "a1", :network_egress)
+    {:ok, state, _} = Offline.sentinel_elevate_taint(state, @bg, "a1", :sensitive, %{})
     state
   end
 
@@ -33,7 +33,7 @@ defmodule ExArgus.ExplainTest do
     state = tainted_state()
 
     assert {:error, :flow_gate_blocked} =
-             Kernel.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{})
+             Offline.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{})
 
     report = Explain.explain_invoke(state, @bg, "a1", "send_email", "i1", true, %{})
     assert report.verdict == :flow_gate_blocked
@@ -48,12 +48,12 @@ defmodule ExArgus.ExplainTest do
   end
 
   test "explain_invoke agrees on success" do
-    state = Kernel.initial_state()
-    {:ok, state, _} = Kernel.register_tool(state, @bg, "send_email")
-    {:ok, state, _} = Kernel.delegate(state, @bg, "root", "a1")
-    {:ok, state, _} = Kernel.grant_capability(state, @bg, "root", "a1", :network_egress)
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.register_tool(state, @bg, "send_email")
+    {:ok, state, _} = Offline.delegate(state, @bg, "root", "a1")
+    {:ok, state, _} = Offline.grant_capability(state, @bg, "root", "a1", :network_egress)
 
-    assert {:ok, _, _} = Kernel.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{})
+    assert {:ok, _, _} = Offline.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{})
 
     report = Explain.explain_invoke(state, @bg, "a1", "send_email", "i1", true, %{})
     assert report.verdict == nil

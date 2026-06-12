@@ -1,7 +1,7 @@
 defmodule ExArgus.ShadowTest do
   use ExUnit.Case, async: true
 
-  alias ExArgus.{Kernel, Shadow}
+  alias ExArgus.{Offline, Shadow}
   alias ExArgus.Kernel.Background
 
   defp bg(flow_policy) do
@@ -23,11 +23,11 @@ defmodule ExArgus.ShadowTest do
   end
 
   defp tainted_state(bg) do
-    state = Kernel.initial_state()
-    {:ok, state, _} = Kernel.register_tool(state, bg, "send_email")
-    {:ok, state, _} = Kernel.delegate(state, bg, "root", "a1")
-    {:ok, state, _} = Kernel.grant_capability(state, bg, "root", "a1", :network_egress)
-    {:ok, state, _} = Kernel.sentinel_elevate_taint(state, bg, "a1", :sensitive, %{})
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.register_tool(state, bg, "send_email")
+    {:ok, state, _} = Offline.delegate(state, bg, "root", "a1")
+    {:ok, state, _} = Offline.grant_capability(state, bg, "root", "a1", :network_egress)
+    {:ok, state, _} = Offline.sentinel_elevate_taint(state, bg, "a1", :sensitive, %{})
     state
   end
 
@@ -44,7 +44,7 @@ defmodule ExArgus.ShadowTest do
 
     result =
       Shadow.compare(live_bg, candidate_bg, fn b ->
-        Kernel.invoke_start(state, b, "a1", "send_email", "i1", true, %{})
+        Offline.invoke_start(state, b, "a1", "send_email", "i1", true, %{})
       end)
 
     assert {:error, :flow_gate_blocked} = result.live
@@ -58,7 +58,7 @@ defmodule ExArgus.ShadowTest do
 
     result =
       Shadow.compare(live_bg, live_bg, fn b ->
-        Kernel.invoke_start(state, b, "a1", "send_email", "i1", true, %{})
+        Offline.invoke_start(state, b, "a1", "send_email", "i1", true, %{})
       end)
 
     assert result.decision == :same

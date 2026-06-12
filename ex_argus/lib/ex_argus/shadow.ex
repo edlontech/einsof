@@ -11,11 +11,11 @@ defmodule ExArgus.Shadow do
   `ExArgus.Replay` over a recorded log.
   """
 
-  alias ExArgus.Kernel
+  alias ExArgus.Offline
 
   @type comparison :: %{
-          live: Kernel.outcome(),
-          candidate: Kernel.outcome(),
+          live: Offline.outcome(),
+          candidate: Offline.outcome(),
           decision: :same | :diverged
         }
 
@@ -23,13 +23,13 @@ defmodule ExArgus.Shadow do
   Run `fun` (a one-argument closure over a background) against both backgrounds.
 
       Shadow.compare(live_bg, candidate_bg, fn bg ->
-        Kernel.invoke_start(state, bg, agent, tool, inv, auth, gate_map)
+        Offline.invoke_start(state, bg, agent, tool, inv, auth, gate_map)
       end)
   """
   @spec compare(
-          Kernel.background(),
-          Kernel.background(),
-          (Kernel.background() -> Kernel.outcome())
+          Offline.background(),
+          Offline.background(),
+          (Offline.background() -> Offline.outcome())
         ) :: comparison
   def compare(live_bg, candidate_bg, fun) when is_function(fun, 1) do
     live = fun.(live_bg)

@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use argus_explain::{CheckOutcome, ExplainReport, GateCheck, GateFinding, Rescue};
 use argus_kernel::{AgentId, InvocationId, ToolId};
-use rustler::{NifMap, NifTaggedEnum, NifUnitEnum};
+use rustler::{NifMap, NifTaggedEnum, NifUnitEnum, ResourceArc};
 
 use crate::enums::{CapKindN, ConfLevelN, EgressKindN, FlowModeN};
 use crate::event::KernelErrorN;
+use crate::instance::KernelInstance;
 use crate::oracles::{ConstAuthorizer, MapContentGate};
 use crate::state::{BackgroundN, StateN};
 
@@ -63,12 +64,14 @@ impl RescueN {
             Rescue::OverrideGrant { agent, tool, level } => {
                 Self::OverrideGrant(agent, tool, ConfLevelN::from_kernel(level))
             }
-            Rescue::PolicyAllow { level, egress } => {
-                Self::PolicyAllow(ConfLevelN::from_kernel(level), EgressKindN::from_kernel(egress))
-            }
-            Rescue::ToolRelabel { tool, current_floor } => {
-                Self::ToolRelabel(tool, ConfLevelN::from_kernel(current_floor))
-            }
+            Rescue::PolicyAllow { level, egress } => Self::PolicyAllow(
+                ConfLevelN::from_kernel(level),
+                EgressKindN::from_kernel(egress),
+            ),
+            Rescue::ToolRelabel {
+                tool,
+                current_floor,
+            } => Self::ToolRelabel(tool, ConfLevelN::from_kernel(current_floor)),
             Rescue::ContentGatePass { tool } => Self::ContentGatePass(tool),
         }
     }
@@ -111,8 +114,16 @@ impl ExplainReportN {
     fn from_explain(r: ExplainReport) -> Self {
         Self {
             verdict: r.verdict.map(KernelErrorN::from_kernel),
-            missing_caps: r.missing_caps.into_iter().map(CapKindN::from_kernel).collect(),
-            findings: r.findings.into_iter().map(GateFindingN::from_explain).collect(),
+            missing_caps: r
+                .missing_caps
+                .into_iter()
+                .map(CapKindN::from_kernel)
+                .collect(),
+            findings: r
+                .findings
+                .into_iter()
+                .map(GateFindingN::from_explain)
+                .collect(),
             authorizer_denied: r.authorizer_denied,
         }
     }
@@ -167,6 +178,61 @@ pub fn explain_sentinel_elevate_taint(
     ExplainReportN::from_explain(argus_explain::explain_sentinel_elevate_taint(
         &state.into_kernel(),
         &bg.into_kernel(),
+        &MapContentGate(content_gate),
+        &AgentId(agent),
+        level.into_kernel(),
+    ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+pub fn instance_explain_invoke(
+    handle: ResourceArc<KernelInstance>,
+    agent: String,
+    tool: String,
+    inv: String,
+    authorizer_allows: bool,
+    content_gate: HashMap<String, bool>,
+) -> ExplainReportN {
+    let inner = handle.inner.lock().unwrap();
+    ExplainReportN::from_explain(argus_explain::explain_invoke(
+        &inner.state,
+        &handle.bg,
+        &ConstAuthorizer(authorizer_allows),
+        &MapContentGate(content_gate),
+        &AgentId(agent),
+        &ToolId(tool),
+        &InvocationId(inv),
+    ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+pub fn instance_explain_return_unendorsed(
+    handle: ResourceArc<KernelInstance>,
+    child: String,
+    parent: String,
+    content_gate: HashMap<String, bool>,
+) -> ExplainReportN {
+    let inner = handle.inner.lock().unwrap();
+    ExplainReportN::from_explain(argus_explain::explain_return_unendorsed(
+        &inner.state,
+        &handle.bg,
+        &MapContentGate(content_gate),
+        &AgentId(child),
+        &AgentId(parent),
+    ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+pub fn instance_explain_sentinel_elevate_taint(
+    handle: ResourceArc<KernelInstance>,
+    agent: String,
+    level: ConfLevelN,
+    content_gate: HashMap<String, bool>,
+) -> ExplainReportN {
+    let inner = handle.inner.lock().unwrap();
+    ExplainReportN::from_explain(argus_explain::explain_sentinel_elevate_taint(
+        &inner.state,
+        &handle.bg,
         &MapContentGate(content_gate),
         &AgentId(agent),
         level.into_kernel(),
