@@ -22,6 +22,12 @@ The generic driver
 `Kernel<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventStore>` is fully
 monomorphized (no `Arc<dyn Trait>`).
 
+## argus-explain
+
+- `crates/argus-explain` -- read-only DENY diagnostics (gate findings + rescue
+  counterfactuals) mirroring the kernel's gated transitions; agreement is
+  property-tested. NOT part of the Charon/Aeneas extraction and NOT verified.
+
 ## Formal Verification
 
 The protocol is verified in Lean 4 (see [`tzimtzum/`](../tzimtzum/) on the [Kav](../kav/)
