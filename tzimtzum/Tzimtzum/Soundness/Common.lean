@@ -67,7 +67,7 @@ macro "kav_discharge" head:ident : tactic => `(tactic| (
   (try refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
       ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩);
   all_goals_fresh (
-    (try simp only [$head:ident, allInv,
+    (try simp only [$head:ident, allInv, St.flow_allows, St.flow_inspects,
         root_always_active, default_deny, flow_confinement, flow_confinement_weak,
         capability_subsumption, revocation_clean, taint_integrity, tool_attestation_intact,
         instruction_attestation_intact, override_consumed_when_sole_justification,

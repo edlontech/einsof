@@ -84,6 +84,7 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   gh_taint_invoked    : AgentId → ConfLevel → Prop
   gh_taint_received   : AgentId → ConfLevel → Prop
   override_used       : AgentId → ToolId → ConfLevel → Prop
+  flow_override       : AgentId → ToolId → ConfLevel → Prop
   -- Immutable background — relations (Prop-valued) and functions (Veil lines 150-214, 245)
   tool_cap            : ToolId → CapKind → Prop
   tool_egress         : ToolId → EgressKind → Prop
@@ -93,9 +94,8 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   trusted_issuer      : IssuerId → Prop
   output_conforms     : AgentId → ToolId → Prop
   instruction_issuer  : InstructionId → IssuerId
-  flow_allows         : ConfLevel → EgressKind → Prop
-  flow_inspects       : ConfLevel → EgressKind → Prop
-  flow_override       : AgentId → ToolId → ConfLevel → Prop
+  egress_allow_ceiling   : EgressKind → Option ConfLevel
+  egress_inspect_ceiling : EgressKind → Option ConfLevel
   authorizer_allows   : AgentId → ToolId → Prop
   content_gate_passes : AgentId → ToolId → Prop
   invocation_tool     : InvocationId → ToolId
@@ -103,8 +103,23 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   root_agent          : AgentId
   cap_declassify      : CapKind
   cap_refresh_budget  : CapKind
+  cap_grant_override  : CapKind
 
 variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId : Type}
+
+/-- Derived flow-ALLOW relation: a level flows freely iff it is at or below the egress's
+allow ceiling. `none` = no level passes (strict default-deny, including Public). -/
+def St.flow_allows
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (l : ConfLevel) (e : EgressKind) : Prop :=
+  ∃ c, s.egress_allow_ceiling e = some c ∧ le_conf l c
+
+/-- Derived flow-INSPECT relation: content-gated band, levels at or below the inspect
+ceiling. An inspect ceiling below the allow ceiling is an empty inspect band — coherent. -/
+def St.flow_inspects
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (l : ConfLevel) (e : EgressKind) : Prop :=
+  ∃ c, s.egress_inspect_ceiling e = some c ∧ le_conf l c
 
 /-- Speculative (worst-case) taint: held taint, plus the conf-floor of every in-flight tool
 (Veil lines 348-351). -/
@@ -128,6 +143,7 @@ def initial
   (∀ (T : ToolId), ¬ s.tool_registered T) ∧
   (∀ (A : AgentId) (L : ConfLevel), ¬ s.gh_taint_invoked A L) ∧
   (∀ (A : AgentId) (L : ConfLevel), ¬ s.gh_taint_received A L) ∧
-  (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.override_used A T L)
+  (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.override_used A T L) ∧
+  (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.flow_override A T L)
 
 end Tzimtzum

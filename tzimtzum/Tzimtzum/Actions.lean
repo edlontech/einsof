@@ -48,6 +48,7 @@ kav_action delegate (grantor grantee : AgentId) :
   gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∧ A ≠ grantee
   gh_taint_received := fun A L => s.gh_taint_received A L ∧ A ≠ grantee
   override_used := fun A T L => s.override_used A T L ∧ A ≠ grantee
+  flow_override := fun A T L => s.flow_override A T L ∧ A ≠ grantee
 
 -- grant_capability (Veil lines 450-456).
 kav_action grant_capability (prnt child : AgentId) (cap : CapKind) :
@@ -75,6 +76,7 @@ kav_action revoke (prnt target : AgentId) :
   gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∧ A ≠ target
   gh_taint_received := fun A L => s.gh_taint_received A L ∧ A ≠ target
   override_used := fun A T L => s.override_used A T L ∧ A ≠ target
+  flow_override := fun A T L => s.flow_override A T L ∧ A ≠ target
 
 -- cascade_revoke (Veil lines 505-520).
 kav_action cascade_revoke (child prnt : AgentId) :
@@ -93,6 +95,7 @@ kav_action cascade_revoke (child prnt : AgentId) :
   gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∧ A ≠ child
   gh_taint_received := fun A L => s.gh_taint_received A L ∧ A ≠ child
   override_used := fun A T L => s.override_used A T L ∧ A ≠ child
+  flow_override := fun A T L => s.flow_override A T L ∧ A ≠ child
 
 -- invoke_start (Veil lines 550-606). THE BIG ONE: CHECK 1 + 2a + 2b + 2c + 3,
 -- override_used full-redefinition (clauses 2a/2c/2b), and the in_flight point-set.
@@ -262,7 +265,32 @@ kav_action sentinel_refresh_budget (a : AgentId) :
   require s.agent_cap a s.cap_refresh_budget
   agent_budget := fun A L => (A = a ∧ L = BudgetLevel.bl5) ∨ (A ≠ a ∧ s.agent_budget A L)
 
-/-! ## Full 12-action transition system -/
+-- grant_override (Campaign A, 13th action). Capability-gated, granter-budget-debited
+-- arming/re-arming of a single-use flow override for (target, tool, lvl). The re-arm
+-- guard (target has no in-flight invocations) makes both single-use invariants vacuous
+-- for the target at grant time. Self-grant (granter = target) is legal — the guard then
+-- binds the granter.
+kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : ConfLevel) :
+    St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
+  require s.agent_active granter
+  require s.agent_active target
+  require s.agent_cap granter s.cap_grant_override
+  require ¬ s.agent_budget granter BudgetLevel.bl_exhausted
+  require ∀ (I : InvocationId), ¬ s.in_flight target I
+  flow_override := fun A T L =>
+    s.flow_override A T L ∨ (A = target ∧ T = tool ∧ L = lvl)
+  override_used := fun A T L =>
+    s.override_used A T L ∧ ¬ (A = target ∧ T = tool ∧ L = lvl)
+  agent_budget := fun A L =>
+    (A = granter
+      ∧ ( (s.agent_budget granter BudgetLevel.bl5 ∧ L = BudgetLevel.bl4)
+       ∨ (s.agent_budget granter BudgetLevel.bl4 ∧ L = BudgetLevel.bl3)
+       ∨ (s.agent_budget granter BudgetLevel.bl3 ∧ L = BudgetLevel.bl2)
+       ∨ (s.agent_budget granter BudgetLevel.bl2 ∧ L = BudgetLevel.bl1)
+       ∨ (s.agent_budget granter BudgetLevel.bl1 ∧ L = BudgetLevel.bl_exhausted) ))
+    ∨ (A ≠ granter ∧ s.agent_budget A L)
+
+/-! ## Full 13-action transition system -/
 
 def system : Kav.TransitionSystem
     (St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) :=
@@ -279,6 +307,7 @@ def system : Kav.TransitionSystem
       , ("return_endorsed",        Kav.close2 return_endorsed)
       , ("return_unendorsed",      Kav.close2 return_unendorsed)
       , ("sentinel_elevate_taint", Kav.close2 sentinel_elevate_taint)
-      , ("sentinel_refresh_budget", Kav.close1 sentinel_refresh_budget) ] }
+      , ("sentinel_refresh_budget", Kav.close1 sentinel_refresh_budget)
+      , ("grant_override",         Kav.close4 grant_override) ] }
 
 end Tzimtzum
