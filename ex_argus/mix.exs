@@ -28,7 +28,8 @@ defmodule ExArgus.MixProject do
       {:mix_audit, ">= 0.0.0", only: [:dev, :test], runtime: false},
       {:rustler, "~> 0.38.0", runtime: false},
       {:rustler_precompiled, "~> 0.9"},
-      {:stream_data, "~> 1.1", only: [:dev, :test]}
+      {:stream_data, "~> 1.1", only: [:dev, :test]},
+      {:telemetry, "~> 1.3"}
     ]
   end
 end

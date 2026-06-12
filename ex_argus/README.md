@@ -22,6 +22,23 @@ Transitions return `{:ok, state, action}` or `{:error, reason}`, where `reason` 
 of the closed `ExArgus.Kernel.error_reason/0` atoms (mirroring `argus-kernel`'s
 `KernelError`).
 
+## Diagnostics: explain, telemetry, shadow, replay
+
+`ExArgus.Explain` mirrors the gate-consuming transitions read-only: it returns the exact
+error the transition would return plus, per denied (level, egress) pair, the
+counterfactual rescues (override grant / policy change / tool relabel / content-gate
+pass). Agreement with the kernel is property-tested in `argus-explain`. Reports are
+diagnostics from an unverified crate -- feed them to telemetry and policy review, never
+back into authorization decisions.
+
+On a denial, pass the report to `ExArgus.Telemetry.emit_denied/2`
+(`[:ex_argus, :flow, :denied]`); aggregate downstream into a periodic policy review.
+
+`ExArgus.Shadow.compare/3` runs one transition against a live and a candidate background
+and diffs the decision. `ExArgus.Replay.run/2` + `diff/3` replay a recorded
+`{fun, args}` log (with recorded oracle verdicts) against alternative backgrounds for
+trajectory-level evidence.
+
 ## Snapshot wire version
 
 `ExArgus.state_version/0` stamps the wire shape of `ExArgus.Kernel.State`. Callers that
