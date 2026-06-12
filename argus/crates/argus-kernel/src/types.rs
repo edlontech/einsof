@@ -96,6 +96,11 @@ impl ConfLevel {
             Self::Restricted => 3,
         }
     }
+
+    /// Total-order compare via rank (extraction-friendly: no trait dispatch).
+    pub fn le(self, other: Self) -> bool {
+        self.rank() <= other.rank()
+    }
 }
 
 impl Ord for ConfLevel {
@@ -202,6 +207,13 @@ impl fmt::Display for EgressKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conf_level_le() {
+        assert!(ConfLevel::Public.le(ConfLevel::Public));
+        assert!(ConfLevel::Public.le(ConfLevel::Restricted));
+        assert!(!ConfLevel::Restricted.le(ConfLevel::Sensitive));
+    }
 
     #[test]
     fn conf_level_ordering() {
