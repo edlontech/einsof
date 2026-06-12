@@ -140,6 +140,25 @@ pub fn instance_sentinel_refresh_budget(
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
+pub fn instance_grant_override(
+    handle: ResourceArc<KernelInstance>,
+    granter: String,
+    target: String,
+    tool: String,
+    level: ConfLevelN,
+) -> InstanceOutcome {
+    instance_finish!(handle, s =>
+        transitions::grant_override(
+            s,
+            &handle.bg,
+            AgentId(granter),
+            AgentId(target),
+            ToolId(tool),
+            level.into_kernel()
+        ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
 pub fn instance_invoke_start(
     handle: ResourceArc<KernelInstance>,
     agent: String,

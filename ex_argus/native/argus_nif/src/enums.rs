@@ -63,6 +63,7 @@ pub enum FlowModeN {
 }
 
 impl FlowModeN {
+    #[allow(dead_code)]
     pub fn into_kernel(self) -> FlowMode {
         match self {
             Self::Allow => FlowMode::Allow,
@@ -131,6 +132,7 @@ pub enum CapKindN {
     Ipc,
     Declassify,
     RefreshBudget,
+    GrantOverride,
 }
 
 impl CapKindN {
@@ -153,6 +155,7 @@ impl CapKindN {
             Self::Ipc => CapKind::Ipc,
             Self::Declassify => CapKind::Declassify,
             Self::RefreshBudget => CapKind::RefreshBudget,
+            Self::GrantOverride => CapKind::GrantOverride,
         }
     }
     pub fn from_kernel(c: CapKind) -> Self {
@@ -174,6 +177,7 @@ impl CapKindN {
             CapKind::Ipc => Self::Ipc,
             CapKind::Declassify => Self::Declassify,
             CapKind::RefreshBudget => Self::RefreshBudget,
+            CapKind::GrantOverride => Self::GrantOverride,
         }
     }
 }
@@ -209,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn cap_kind_roundtrips_all_17() {
+    fn cap_kind_roundtrips_all_18() {
         for c in CapKind::ALL {
             assert_eq!(CapKindN::from_kernel(c).into_kernel(), c);
         }

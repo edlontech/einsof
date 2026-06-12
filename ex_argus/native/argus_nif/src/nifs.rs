@@ -107,6 +107,25 @@ pub fn sentinel_refresh_budget(state: StateN, bg: BackgroundN, agent: String) ->
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
+pub fn grant_override(
+    state: StateN,
+    bg: BackgroundN,
+    granter: String,
+    target: String,
+    tool: String,
+    level: ConfLevelN,
+) -> Outcome {
+    finish!(transitions::grant_override(
+        state.into_kernel(),
+        &bg.into_kernel(),
+        AgentId(granter),
+        AgentId(target),
+        ToolId(tool),
+        level.into_kernel()
+    ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
 pub fn invoke_start(
     state: StateN,
     bg: BackgroundN,

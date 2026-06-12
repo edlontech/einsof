@@ -18,6 +18,7 @@ pub enum ActionN {
     ReturnUnendorsed(String, String),
     SentinelElevateTaint(String, ConfLevelN),
     SentinelRefreshBudget(String),
+    GrantOverride(String, String, String, ConfLevelN),
 }
 
 impl ActionN {
@@ -47,6 +48,9 @@ impl ActionN {
                 Self::SentinelElevateTaint(agent.0, ConfLevelN::from_kernel(level))
             }
             KernelAction::SentinelRefreshBudget { agent } => Self::SentinelRefreshBudget(agent.0),
+            KernelAction::GrantOverride { granter, target, tool, level } => {
+                Self::GrantOverride(granter.0, target.0, tool.0, ConfLevelN::from_kernel(level))
+            }
         }
     }
 }
@@ -68,6 +72,7 @@ pub enum KernelErrorN {
     InvocationInFlight,
     NotInFlight,
     ChildHasInFlight,
+    TargetHasInFlight,
     FlowGateBlocked,
     AuthorizerDenied,
     BudgetExhausted,
@@ -93,6 +98,7 @@ impl KernelErrorN {
             KernelError::InvocationInFlight => Self::InvocationInFlight,
             KernelError::NotInFlight => Self::NotInFlight,
             KernelError::ChildHasInFlight => Self::ChildHasInFlight,
+            KernelError::TargetHasInFlight => Self::TargetHasInFlight,
             KernelError::FlowGateBlocked => Self::FlowGateBlocked,
             KernelError::AuthorizerDenied => Self::AuthorizerDenied,
             KernelError::BudgetExhausted => Self::BudgetExhausted,

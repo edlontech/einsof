@@ -4,7 +4,7 @@ defmodule ExArgus.ShadowTest do
   alias ExArgus.{Offline, Shadow}
   alias ExArgus.Kernel.Background
 
-  defp bg(flow_policy) do
+  defp bg(allow_ceiling) do
     %Background{
       tools: %{
         "send_email" => %{
@@ -15,8 +15,8 @@ defmodule ExArgus.ShadowTest do
           issuer: "trusted"
         }
       },
-      flow_policy: flow_policy,
-      flow_overrides: [],
+      allow_ceiling: allow_ceiling,
+      inspect_ceiling: %{},
       trusted_issuers: ["trusted"],
       instruction_issuer: %{}
     }
@@ -32,13 +32,9 @@ defmodule ExArgus.ShadowTest do
   end
 
   test "diverging candidate policy is reported" do
-    live_bg = bg(%{{:public, :network_external} => :allow})
+    live_bg = bg(%{network_external: :public})
 
-    candidate_bg =
-      bg(%{
-        {:public, :network_external} => :allow,
-        {:sensitive, :network_external} => :allow
-      })
+    candidate_bg = bg(%{network_external: :sensitive})
 
     state = tainted_state(live_bg)
 
@@ -53,7 +49,7 @@ defmodule ExArgus.ShadowTest do
   end
 
   test "identical policies agree" do
-    live_bg = bg(%{{:public, :network_external} => :allow})
+    live_bg = bg(%{network_external: :public})
     state = tainted_state(live_bg)
 
     result =

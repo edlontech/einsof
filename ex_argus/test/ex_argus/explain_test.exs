@@ -14,8 +14,8 @@ defmodule ExArgus.ExplainTest do
         issuer: "trusted"
       }
     },
-    flow_policy: %{{:public, :network_external} => :allow},
-    flow_overrides: [],
+    allow_ceiling: %{network_external: :public},
+    inspect_ceiling: %{},
     trusted_issuers: ["trusted"],
     instruction_issuer: %{}
   }
@@ -44,7 +44,7 @@ defmodule ExArgus.ExplainTest do
     assert finding.check == :spec_taint_vs_new_egress
     assert finding.level == :sensitive
     assert {:override_grant, "a1", "send_email", :sensitive} in finding.rescues
-    assert {:policy_allow, :sensitive, :network_external} in finding.rescues
+    assert {:ceiling_raise, :network_external, :sensitive} in finding.rescues
   end
 
   test "explain_invoke agrees on success" do

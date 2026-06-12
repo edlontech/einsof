@@ -26,7 +26,7 @@ defmodule ExArgus.Instance do
 
   @recoverable_transitions ~w(
     register_tool load_instruction delegate grant_capability revoke cascade_revoke
-    return_endorsed sentinel_refresh_budget invoke_start invoke_complete
+    return_endorsed sentinel_refresh_budget grant_override invoke_start invoke_complete
     return_unendorsed sentinel_elevate_taint
   )a
 
@@ -54,7 +54,7 @@ defmodule ExArgus.Instance do
   state, audit completeness -- is hash-chain / mesh territory.) For the lenient
   skip-and-continue mode, use offline `ExArgus.Replay.run/2`.
 
-  An entry whose `fun` is not one of the 12 kernel transitions aborts immediately with
+  An entry whose `fun` is not one of the 13 kernel transitions aborts immediately with
   `reason: :unknown_transition`; no `apply` is attempted.
   """
   @spec recover(background, [entry]) :: {:ok, t} | {:error, recovery_error}
@@ -104,6 +104,10 @@ defmodule ExArgus.Instance do
   defdelegate sentinel_refresh_budget(handle, agent),
     to: Native,
     as: :instance_sentinel_refresh_budget
+
+  defdelegate grant_override(handle, granter, target, tool, level),
+    to: Native,
+    as: :instance_grant_override
 
   defdelegate invoke_start(handle, agent, tool, inv, authorizer_allows, content_gate),
     to: Native,

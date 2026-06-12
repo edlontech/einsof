@@ -35,8 +35,8 @@ defmodule ExArgus.InstanceTest do
           issuer: "trusted"
         }
       },
-      flow_policy: %{{:public, :network_external} => :allow},
-      flow_overrides: [],
+      allow_ceiling: %{network_external: :public},
+      inspect_ceiling: %{},
       trusted_issuers: ["trusted"],
       instruction_issuer: %{}
     }
@@ -191,6 +191,96 @@ defmodule ExArgus.InstanceTest do
 
       assert offline_final == Instance.state(handle)
     end
+  end
+
+  defp flow_bg do
+    %Background{
+      tools: %{
+        "send_email" => %{
+          capabilities: [:network_egress],
+          egress: [:network_external],
+          conf_floor: :public,
+          output_bounded: false,
+          issuer: "trusted"
+        }
+      },
+      allow_ceiling: %{network_external: :public},
+      inspect_ceiling: %{},
+      trusted_issuers: ["trusted"],
+      instruction_issuer: %{}
+    }
+  end
+
+  test "grant_override arms a flow override that rescues one denied invocation" do
+    h = Instance.new(flow_bg())
+    {:ok, _, _} = Instance.register_tool(h, "send_email")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :network_egress)
+    {:ok, _, _} = Instance.sentinel_elevate_taint(h, "a1", :sensitive, %{})
+
+    {:ok, _, _} = Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
+
+    assert {:ok, _, {:invoke_start, "a1", "send_email", _}} =
+             Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"send_email" => true})
+
+    {:ok, _, _} = Instance.invoke_complete(h, "a1", "inv-1", true)
+
+    assert {:error, :flow_gate_blocked} =
+             Instance.invoke_start(h, "a1", "send_email", "inv-2", true, %{"send_email" => true})
+  end
+
+  test "grant_override re-arm refused while target has in-flight invocation" do
+    h = Instance.new(flow_bg())
+    {:ok, _, _} = Instance.register_tool(h, "send_email")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :network_egress)
+    {:ok, _, _} = Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
+    {:ok, _, _} = Instance.sentinel_elevate_taint(h, "a1", :sensitive, %{})
+
+    {:ok, _, _} =
+      Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"send_email" => true})
+
+    assert {:error, :target_has_in_flight} =
+             Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
+  end
+
+  test "grant_override re-arm works after invoke_complete clears the flight" do
+    h = Instance.new(flow_bg())
+    {:ok, _, _} = Instance.register_tool(h, "send_email")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :network_egress)
+    {:ok, _, _} = Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
+    {:ok, _, _} = Instance.sentinel_elevate_taint(h, "a1", :sensitive, %{})
+
+    {:ok, _, _} =
+      Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"send_email" => true})
+
+    {:ok, _, _} = Instance.invoke_complete(h, "a1", "inv-1", true)
+
+    {:ok, _, _} = Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
+
+    assert {:ok, _, {:invoke_start, "a1", "send_email", _}} =
+             Instance.invoke_start(h, "a1", "send_email", "inv-2", true, %{"send_email" => true})
+  end
+
+  test "recovery replays a log containing grant_override and reproduces state" do
+    recovery_log = [
+      {:register_tool, ["send_email"]},
+      {:delegate, ["root", "a1"]},
+      {:grant_capability, ["root", "a1", :network_egress]},
+      {:grant_override, ["root", "a1", "send_email", :sensitive]}
+    ]
+
+    {:ok, h} = Instance.recover(flow_bg(), recovery_log)
+    assert Instance.seq(h) == length(recovery_log)
+
+    live = Instance.new(flow_bg())
+
+    Enum.each(recovery_log, fn {fun, args} ->
+      {:ok, _seq, _action} = apply(Instance, fun, [live | args])
+    end)
+
+    assert Instance.state(h) == Instance.state(live)
   end
 
   test "concurrent transitions against one instance serialize: dense seq, no torn state" do

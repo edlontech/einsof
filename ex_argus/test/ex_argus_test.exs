@@ -18,7 +18,7 @@ defmodule ExArgusTest do
     @golden_fields ~w(
       agent_active agent_budget agent_cap agent_instruction agent_parent
       gh_taint_invoked gh_taint_received in_flight invocation_tool
-      override_used taint_levels tool_registered
+      flow_override override_used taint_levels tool_registered
     )a
 
     test "State has exactly the golden fields for the current version" do

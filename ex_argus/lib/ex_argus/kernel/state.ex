@@ -21,6 +21,7 @@ defmodule ExArgus.Kernel.State do
             gh_taint_received: %{},
             agent_instruction: %{},
             override_used: %{},
+            flow_override: %{},
             agent_budget: %{}
 
   @type t :: %__MODULE__{
@@ -35,6 +36,7 @@ defmodule ExArgus.Kernel.State do
           gh_taint_received: %{optional(Types.agent_id()) => [Types.conf_level()]},
           agent_instruction: %{optional(Types.agent_id()) => [Types.instruction_id()]},
           override_used: %{optional(Types.agent_id()) => [{Types.tool_id(), Types.conf_level()}]},
+          flow_override: %{optional(Types.agent_id()) => [{Types.tool_id(), Types.conf_level()}]},
           agent_budget: %{optional(Types.agent_id()) => Types.budget_level()}
         }
 end

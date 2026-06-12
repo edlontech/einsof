@@ -15,8 +15,8 @@ defmodule ExArgus.LifecycleTest do
           issuer: "trusted"
         }
       },
-      flow_policy: %{{:public, :network_external} => :allow},
-      flow_overrides: [],
+      allow_ceiling: %{network_external: :public},
+      inspect_ceiling: %{},
       trusted_issuers: ["trusted"],
       instruction_issuer: %{}
     }

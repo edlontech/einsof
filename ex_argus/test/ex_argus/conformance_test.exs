@@ -17,8 +17,8 @@ defmodule ExArgus.ConformanceTest do
           issuer: "trusted"
         }
       },
-      flow_policy: %{},
-      flow_overrides: [],
+      allow_ceiling: %{},
+      inspect_ceiling: %{},
       trusted_issuers: ["trusted"],
       instruction_issuer: %{}
     }

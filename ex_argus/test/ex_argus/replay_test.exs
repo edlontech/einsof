@@ -4,7 +4,7 @@ defmodule ExArgus.ReplayTest do
   alias ExArgus.Replay
   alias ExArgus.Kernel.Background
 
-  defp bg(flow_policy) do
+  defp bg(allow_ceiling) do
     %Background{
       tools: %{
         "send_email" => %{
@@ -15,8 +15,8 @@ defmodule ExArgus.ReplayTest do
           issuer: "trusted"
         }
       },
-      flow_policy: flow_policy,
-      flow_overrides: [],
+      allow_ceiling: allow_ceiling,
+      inspect_ceiling: %{},
       trusted_issuers: ["trusted"],
       instruction_issuer: %{}
     }
@@ -31,7 +31,7 @@ defmodule ExArgus.ReplayTest do
   ]
 
   test "run returns one outcome per entry and threads state through" do
-    outcomes = Replay.run(@log, bg(%{{:public, :network_external} => :allow}))
+    outcomes = Replay.run(@log, bg(%{network_external: :public}))
     assert length(outcomes) == 5
 
     assert [{:ok, _, _}, {:ok, _, _}, {:ok, _, _}, {:ok, _, _}, {:error, :flow_gate_blocked}] =
@@ -40,19 +40,14 @@ defmodule ExArgus.ReplayTest do
 
   test "errors do not halt the replay" do
     log = [{:register_tool, ["send_email"]} | @log]
-    outcomes = Replay.run(log, bg(%{{:public, :network_external} => :allow}))
+    outcomes = Replay.run(log, bg(%{network_external: :public}))
     assert [{:ok, _, _}, {:error, :tool_already_registered} | _] = outcomes
     assert length(outcomes) == 6
   end
 
   test "diff pinpoints the diverging entries" do
-    live = bg(%{{:public, :network_external} => :allow})
-
-    candidate =
-      bg(%{
-        {:public, :network_external} => :allow,
-        {:sensitive, :network_external} => :allow
-      })
+    live = bg(%{network_external: :public})
+    candidate = bg(%{network_external: :sensitive})
 
     divergences = Replay.diff(@log, live, candidate)
 
@@ -67,7 +62,7 @@ defmodule ExArgus.ReplayTest do
   end
 
   test "identical backgrounds produce no divergences" do
-    live = bg(%{{:public, :network_external} => :allow})
+    live = bg(%{network_external: :public})
     assert Replay.diff(@log, live, live) == []
   end
 end

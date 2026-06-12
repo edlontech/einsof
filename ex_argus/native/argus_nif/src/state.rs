@@ -6,7 +6,7 @@ use argus_kernel::{
 };
 use rustler::{NifMap, NifStruct};
 
-use crate::enums::{BudgetLevelN, CapKindN, ConfLevelN, EgressKindN, FlowModeN};
+use crate::enums::{BudgetLevelN, CapKindN, ConfLevelN, EgressKindN};
 
 #[derive(Debug, Clone, NifMap)]
 pub struct ToolMetadataN {
@@ -33,8 +33,8 @@ impl ToolMetadataN {
 #[module = "ExArgus.Kernel.Background"]
 pub struct BackgroundN {
     pub tools: HashMap<String, ToolMetadataN>,
-    pub flow_policy: HashMap<(ConfLevelN, EgressKindN), FlowModeN>,
-    pub flow_overrides: Vec<(String, String, ConfLevelN)>,
+    pub allow_ceiling: HashMap<EgressKindN, ConfLevelN>,
+    pub inspect_ceiling: HashMap<EgressKindN, ConfLevelN>,
     pub trusted_issuers: Vec<String>,
     pub instruction_issuer: HashMap<String, String>,
 }
@@ -48,11 +48,23 @@ impl BackgroundN {
         for (tool, meta) in self.tools {
             b.register_tool(ToolId(tool), meta.into_kernel());
         }
-        for ((level, egress), mode) in self.flow_policy {
-            b.set_flow(level.into_kernel(), egress.into_kernel(), mode.into_kernel());
+        // Merge both ceiling maps per egress: collect all egress keys, then call
+        // set_egress_ceilings once per egress with both values.
+        let mut egress_keys: Vec<EgressKindN> = Vec::new();
+        for k in self.allow_ceiling.keys() {
+            if !egress_keys.contains(k) {
+                egress_keys.push(*k);
+            }
         }
-        for (agent, tool, level) in self.flow_overrides {
-            b.add_override(AgentId(agent), ToolId(tool), level.into_kernel());
+        for k in self.inspect_ceiling.keys() {
+            if !egress_keys.contains(k) {
+                egress_keys.push(*k);
+            }
+        }
+        for egress in egress_keys {
+            let allow = self.allow_ceiling.get(&egress).map(|l| l.into_kernel());
+            let inspect = self.inspect_ceiling.get(&egress).map(|l| l.into_kernel());
+            b.set_egress_ceilings(egress.into_kernel(), allow, inspect);
         }
         for (instr, issuer) in self.instruction_issuer {
             b.register_instruction(InstructionId(instr), IssuerId(issuer));
@@ -75,6 +87,7 @@ pub struct StateN {
     pub gh_taint_received: HashMap<String, Vec<ConfLevelN>>,
     pub agent_instruction: HashMap<String, Vec<String>>,
     pub override_used: HashMap<String, Vec<(String, ConfLevelN)>>,
+    pub flow_override: HashMap<String, Vec<(String, ConfLevelN)>>,
     pub agent_budget: HashMap<String, BudgetLevelN>,
 }
 
@@ -123,6 +136,10 @@ impl StateN {
                 tool: ToolId(t),
                 level: l.into_kernel(),
             }),
+            flow_override: into_set_map(self.flow_override, |(t, l)| OverrideKey {
+                tool: ToolId(t),
+                level: l.into_kernel(),
+            }),
             agent_budget: self
                 .agent_budget
                 .into_iter()
@@ -162,6 +179,9 @@ impl StateN {
             override_used: from_set_map(&ks.override_used, |k: &OverrideKey| {
                 (k.tool.0.clone(), ConfLevelN::from_kernel(k.level))
             }),
+            flow_override: from_set_map(&ks.flow_override, |k: &OverrideKey| {
+                (k.tool.0.clone(), ConfLevelN::from_kernel(k.level))
+            }),
             agent_budget: ks
                 .agent_budget
                 .iter()
@@ -180,7 +200,21 @@ mod tests {
         let ks = KernelState::initial();
         let back = StateN::from_kernel(&ks).into_kernel();
         assert!(back.agent_active.contains(&AgentId::root()));
-        assert_eq!(back.agent_cap.get(&AgentId::root()).unwrap().len(), 17);
+        assert_eq!(back.agent_cap.get(&AgentId::root()).unwrap().len(), 18);
+        assert_eq!(back, ks);
+    }
+
+    #[test]
+    fn flow_override_roundtrips() {
+        let mut ks = KernelState::initial();
+        let agent = AgentId::new("a1");
+        ks.flow_override.insert_into(
+            agent.clone(),
+            OverrideKey { tool: ToolId::new("t"), level: ConfLevel::Sensitive },
+        );
+        let back = StateN::from_kernel(&ks).into_kernel();
+        assert!(back.has_flow_override(&agent, &ToolId::new("t"), ConfLevel::Sensitive));
+        assert!(!back.has_flow_override(&agent, &ToolId::new("t"), ConfLevel::Public));
         assert_eq!(back, ks);
     }
 

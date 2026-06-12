@@ -17,7 +17,7 @@ defmodule ExArgus.ErrorReasonTest do
     agent_inactive agent_already_active root_not_allowed
     not_direct_child parent_still_active
     capability_missing
-    invocation_exists invocation_in_flight not_in_flight child_has_in_flight
+    invocation_exists invocation_in_flight not_in_flight child_has_in_flight target_has_in_flight
     flow_gate_blocked authorizer_denied budget_exhausted
     missing_tool_binding event_store
   )a
@@ -47,17 +47,17 @@ defmodule ExArgus.ErrorReasonTest do
           issuer: "untrusted"
         }
       },
-      flow_policy: %{{:public, :network_external} => :allow},
-      flow_overrides: [],
+      allow_ceiling: %{network_external: :public},
+      inspect_ceiling: %{},
       trusted_issuers: ["trusted"],
       instruction_issuer: %{}
     }
   end
 
   describe "the error_reason contract" do
-    test "documents exactly 20 denial atoms" do
-      assert length(@error_reasons) == 20
-      assert length(Enum.uniq(@error_reasons)) == 20
+    test "documents exactly 21 denial atoms" do
+      assert length(@error_reasons) == 21
+      assert length(Enum.uniq(@error_reasons)) == 21
     end
 
     test "ExArgus.Offline.error_reason/0 declares exactly the documented closed set" do

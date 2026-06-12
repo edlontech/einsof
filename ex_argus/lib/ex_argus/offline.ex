@@ -49,6 +49,7 @@ defmodule ExArgus.Offline do
   | `:invocation_in_flight` | The invocation is already in-flight. |
   | `:not_in_flight` | The invocation is not in-flight for the agent. |
   | `:child_has_in_flight` | The child still has in-flight invocations. |
+  | `:target_has_in_flight` | The grant target still has in-flight invocations (re-arm guard). |
   | `:flow_gate_blocked` | A flow-policy gate blocked the (level, egress) pair. |
   | `:authorizer_denied` | The authorizer denied the (agent, tool) pair. |
   | `:budget_exhausted` | The declassification budget is exhausted. |
@@ -71,6 +72,7 @@ defmodule ExArgus.Offline do
           | :invocation_in_flight
           | :not_in_flight
           | :child_has_in_flight
+          | :target_has_in_flight
           | :flow_gate_blocked
           | :authorizer_denied
           | :budget_exhausted
@@ -88,6 +90,7 @@ defmodule ExArgus.Offline do
   defdelegate cascade_revoke(state, bg, child, parent), to: Native
   defdelegate return_endorsed(state, bg, child, parent), to: Native
   defdelegate sentinel_refresh_budget(state, bg, agent), to: Native
+  defdelegate grant_override(state, bg, granter, target, tool, level), to: Native
 
   defdelegate invoke_start(state, bg, agent, tool, inv, authorizer_allows, content_gate),
     to: Native

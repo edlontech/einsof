@@ -15,8 +15,8 @@ defmodule ExArgus.NativeBasicTest do
           issuer: "trusted"
         }
       },
-      flow_policy: %{},
-      flow_overrides: [],
+      allow_ceiling: %{},
+      inspect_ceiling: %{},
       trusted_issuers: ["trusted"],
       instruction_issuer: %{}
     }
@@ -25,7 +25,7 @@ defmodule ExArgus.NativeBasicTest do
   test "initial_state has root active with a full cap set" do
     s = Native.initial_state()
     assert "root" in s.agent_active
-    assert length(Map.fetch!(s.agent_cap, "root")) == 17
+    assert length(Map.fetch!(s.agent_cap, "root")) == 18
     assert :declassify in Map.fetch!(s.agent_cap, "root")
   end
 

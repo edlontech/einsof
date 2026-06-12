@@ -53,7 +53,7 @@ impl CheckOutcomeN {
 #[derive(Debug, NifTaggedEnum)]
 pub enum RescueN {
     OverrideGrant(String, String, ConfLevelN),
-    PolicyAllow(ConfLevelN, EgressKindN),
+    CeilingRaise(EgressKindN, ConfLevelN),
     ToolRelabel(String, ConfLevelN),
     ContentGatePass(String),
 }
@@ -64,14 +64,12 @@ impl RescueN {
             Rescue::OverrideGrant { agent, tool, level } => {
                 Self::OverrideGrant(agent, tool, ConfLevelN::from_kernel(level))
             }
-            Rescue::PolicyAllow { level, egress } => Self::PolicyAllow(
-                ConfLevelN::from_kernel(level),
-                EgressKindN::from_kernel(egress),
-            ),
-            Rescue::ToolRelabel {
-                tool,
-                current_floor,
-            } => Self::ToolRelabel(tool, ConfLevelN::from_kernel(current_floor)),
+            Rescue::CeilingRaise { egress, to_level } => {
+                Self::CeilingRaise(EgressKindN::from_kernel(egress), ConfLevelN::from_kernel(to_level))
+            }
+            Rescue::ToolRelabel { tool, current_floor } => {
+                Self::ToolRelabel(tool, ConfLevelN::from_kernel(current_floor))
+            }
             Rescue::ContentGatePass { tool } => Self::ContentGatePass(tool),
         }
     }

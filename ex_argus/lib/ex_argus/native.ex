@@ -29,6 +29,7 @@ defmodule ExArgus.Native do
   def cascade_revoke(_state, _bg, _child, _parent), do: :erlang.nif_error(:nif_not_loaded)
   def return_endorsed(_state, _bg, _child, _parent), do: :erlang.nif_error(:nif_not_loaded)
   def sentinel_refresh_budget(_state, _bg, _agent), do: :erlang.nif_error(:nif_not_loaded)
+  def grant_override(_state, _bg, _granter, _target, _tool, _level), do: :erlang.nif_error(:nif_not_loaded)
 
   def invoke_start(_s, _bg, _agent, _tool, _inv, _authorizer_allows, _content_gate),
     do: :erlang.nif_error(:nif_not_loaded)
@@ -62,6 +63,7 @@ defmodule ExArgus.Native do
   def instance_cascade_revoke(_h, _child, _parent), do: :erlang.nif_error(:nif_not_loaded)
   def instance_return_endorsed(_h, _child, _parent), do: :erlang.nif_error(:nif_not_loaded)
   def instance_sentinel_refresh_budget(_h, _agent), do: :erlang.nif_error(:nif_not_loaded)
+  def instance_grant_override(_h, _granter, _target, _tool, _level), do: :erlang.nif_error(:nif_not_loaded)
 
   def instance_invoke_start(_h, _agent, _tool, _inv, _auth, _gate),
     do: :erlang.nif_error(:nif_not_loaded)
