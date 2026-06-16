@@ -6,8 +6,8 @@ spec `tzimtzum/TzimtzumV2.lean` into the Kav framework (pure Lean, mathlib-free)
 
 Encoding decisions (locked):
 - Relations are **Prop-valued** fields of the state structure `St`.
-- `ConfLevel` and `BudgetLevel` are **concrete inductives** with computable order/aux
-  functions (this deletes Veil's ~30 ordering axioms).
+- `ConfLevel` is a **concrete inductive** with computable order/aux functions (this deletes
+  Veil's ~30 ordering axioms); the declassification budget is a bounded `Nat` meter.
 - The remaining uninterpreted sorts (`AgentId`, `ToolId`, `InvocationId`, `CapKind`,
   `EgressKind`, `IssuerId`, `InstructionId`) are **type variables** carried as the
   parameters of `St`.
@@ -27,10 +27,6 @@ inductive ConfLevel where
   | «public» | «internal» | sensitive | restricted
   deriving DecidableEq, Repr
 
-inductive BudgetLevel where
-  | bl_exhausted | bl1 | bl2 | bl3 | bl4 | bl5
-  deriving DecidableEq, Repr
-
 /-- Numeric rank for the confidentiality total order: public < internal < sensitive < restricted. -/
 def confRank : ConfLevel → Nat
   | .«public»    => 0
@@ -43,28 +39,15 @@ def le_conf (a b : ConfLevel) : Prop := confRank a ≤ confRank b
 
 instance (a b : ConfLevel) : Decidable (le_conf a b) := inferInstanceAs (Decidable (_ ≤ _))
 
-/-- Numeric rank for the budget total order: bl_exhausted < bl1 < bl2 < bl3 < bl4 < bl5. -/
-def budgetRank : BudgetLevel → Nat
-  | .bl_exhausted => 0
-  | .bl1          => 1
-  | .bl2          => 2
-  | .bl3          => 3
-  | .bl4          => 4
-  | .bl5          => 5
+/-- Protocol budget capacity (fixed; NOT operator-configurable). -/
+def budget_capacity : Nat := 16
 
-/-- The budget total order (replaces Veil's `le_budget` relation + ordering axioms). -/
-def le_budget (a b : BudgetLevel) : Prop := budgetRank a ≤ budgetRank b
-
-instance (a b : BudgetLevel) : Decidable (le_budget a b) := inferInstanceAs (Decidable (_ ≤ _))
-
-/-- Saturating one-step debit of a budget level (replaces Veil's `budget_debit` function). -/
-def budget_debit : BudgetLevel → BudgetLevel
-  | .bl5          => .bl4
-  | .bl4          => .bl3
-  | .bl3          => .bl2
-  | .bl2          => .bl1
-  | .bl1          => .bl_exhausted
-  | .bl_exhausted => .bl_exhausted
+/-- Sensitivity-weighted declassification cost. Public flows are free; Restricted is the dearest. -/
+def declass_weight : ConfLevel → Nat
+  | .«public»    => 0
+  | .«internal»  => 1
+  | .sensitive   => 2
+  | .restricted  => 4
 
 /-! ## State structure
 
@@ -78,7 +61,7 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   agent_cap           : AgentId → CapKind → Prop
   agent_instruction   : AgentId → InstructionId → Prop
   taint_levels        : AgentId → ConfLevel → Prop
-  agent_budget        : AgentId → BudgetLevel → Prop
+  agent_budget        : AgentId → Nat → Prop
   in_flight           : AgentId → InvocationId → Prop
   tool_registered     : ToolId → Prop
   gh_taint_invoked    : AgentId → ConfLevel → Prop
@@ -134,6 +117,13 @@ ceiling. An inspect ceiling below the allow ceiling is an empty inspect band —
     (l : ConfLevel) (e : EgressKind) : Prop :=
   ceilingAdmits s.egress_inspect_ceiling l e
 
+/-- Affordability: the agent holds a budget `b` covering the weighted cost `w`. With
+`budget_unique` that `b` is the agent's unique level, so this is exactly "cost ≤ budget". -/
+def St.affordable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId}
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (a : AgentId) (w : Nat) : Prop :=
+  ∃ b, s.agent_budget a b ∧ w ≤ b
+
 /-- Speculative (worst-case) taint: held taint, plus the conf-floor of every in-flight tool
 (Veil lines 348-351). -/
 def speculative_taint
@@ -150,8 +140,8 @@ def initial
   (∀ (A : AgentId) (C : CapKind), s.agent_cap A C ↔ A = s.root_agent) ∧
   (∀ (A : AgentId) (I : InstructionId), ¬ s.agent_instruction A I) ∧
   (∀ (A : AgentId) (L : ConfLevel), ¬ s.taint_levels A L) ∧
-  (∀ (A : AgentId) (L : BudgetLevel),
-      s.agent_budget A L ↔ (A = s.root_agent ∧ L = BudgetLevel.bl5)) ∧
+  (∀ (A : AgentId) (L : Nat),
+      s.agent_budget A L ↔ (A = s.root_agent ∧ L = budget_capacity)) ∧
   (∀ (A : AgentId) (I : InvocationId), ¬ s.in_flight A I) ∧
   (∀ (T : ToolId), ¬ s.tool_registered T) ∧
   (∀ (A : AgentId) (L : ConfLevel), ¬ s.gh_taint_invoked A L) ∧
