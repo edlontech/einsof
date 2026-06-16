@@ -28,56 +28,43 @@ private def invsA : List (Kav.Invariant KSt) :=
 private def invsB : List (Kav.Invariant KSt) :=
   allInvariants.filter (fun p => p.1 ∈
     (["flow_confinement", "flow_confinement_weak",
-      "override_consumed_when_sole_justification", "budget_unique",
+      "override_consumed_when_sole_justification", "budget_unique", "budget_bounded",
       "in_flight_flow_compat", "in_flight_override_consumed"] : List String))
 
 #kav_check_action grantOverride invsB
 
 -- Manual proof of the one resistant VC: `active_has_budget` under `grant_override`.
--- Same shape as `return_endorsed_pres_active_has_budget`: the granter's 5-way budget
--- debit needs an existential witness the cascade can't reconstruct; the
--- `¬ bl_exhausted` precondition pins the granter to a level with a debit target.
+-- Same shape as `return_endorsed_pres_active_has_budget`: the granter's flat-1 debit post
+-- (`∀ b, agent_budget granter b → L = b - 1`) needs a witness the cascade can't reconstruct;
+-- we witness `L - 1` and use `budget_unique` to pin every `b` to the `active_has_budget`
+-- level `L`.
 theorem grant_override_pres_active_has_budget
     (granter target : KAgent) (tool : KTool) (lvl : ConfLevel) (s s' : KSt)
     (hahb : active_has_budget s)
+    (hbu : budget_unique s)
     (hg : (grantOverride granter target tool lvl).guard s)
     (hn : (grantOverride granter target tool lvl).next s s') :
     active_has_budget s' := by
-  unfold active_has_budget grantOverride grant_override Kav.Action.guard Kav.Action.next at *
+  unfold active_has_budget budget_unique grantOverride grant_override Kav.Action.guard
+    Kav.Action.next at *
   intro A hactive
   have hactiveS : s.agent_active A := by
     have hfa : s'.agent_active = s.agent_active := by grind
     rw [hfa] at hactive; exact hactive
+  have hbeq : ∀ X Y, s'.agent_budget X Y =
+      ((X = granter ∧ ∀ b, s.agent_budget granter b → Y = b - 1)
+      ∨ (X ≠ granter ∧ s.agent_budget X Y)) := by grind
   by_cases hAg : A = granter
   · subst hAg
     obtain ⟨L, hL⟩ := hahb A hactiveS
-    have hne : ¬ s.agent_budget A BudgetLevel.bl_exhausted := by grind
-    have hbeq : ∀ X Y, s'.agent_budget X Y =
-        ((X = A ∧
-          ( (s.agent_budget A BudgetLevel.bl5 ∧ Y = BudgetLevel.bl4)
-          ∨ (s.agent_budget A BudgetLevel.bl4 ∧ Y = BudgetLevel.bl3)
-          ∨ (s.agent_budget A BudgetLevel.bl3 ∧ Y = BudgetLevel.bl2)
-          ∨ (s.agent_budget A BudgetLevel.bl2 ∧ Y = BudgetLevel.bl1)
-          ∨ (s.agent_budget A BudgetLevel.bl1 ∧ Y = BudgetLevel.bl_exhausted) ))
-        ∨ (X ≠ A ∧ s.agent_budget X Y)) := by grind
-    cases L with
-    | bl_exhausted => exact absurd hL hne
-    | bl5 => exact ⟨BudgetLevel.bl4, by rw [hbeq]; left; exact ⟨rfl, Or.inl ⟨hL, rfl⟩⟩⟩
-    | bl4 => exact ⟨BudgetLevel.bl3, by rw [hbeq]; left; exact ⟨rfl, Or.inr (Or.inl ⟨hL, rfl⟩)⟩⟩
-    | bl3 => exact ⟨BudgetLevel.bl2, by rw [hbeq]; left; exact ⟨rfl, Or.inr (Or.inr (Or.inl ⟨hL, rfl⟩))⟩⟩
-    | bl2 => exact ⟨BudgetLevel.bl1, by rw [hbeq]; left; exact ⟨rfl, Or.inr (Or.inr (Or.inr (Or.inl ⟨hL, rfl⟩)))⟩⟩
-    | bl1 => exact ⟨BudgetLevel.bl_exhausted, by rw [hbeq]; left; exact ⟨rfl, Or.inr (Or.inr (Or.inr (Or.inr ⟨hL, rfl⟩)))⟩⟩
+    refine ⟨L - 1, ?_⟩
+    rw [hbeq]; left
+    refine ⟨rfl, ?_⟩
+    intro b hb
+    have hLb : L = b := hbu A L b ⟨hactiveS, hL, hb⟩
+    rw [hLb]
   · obtain ⟨L, hL⟩ := hahb A hactiveS
-    refine ⟨L, ?_⟩
-    have hbeq : ∀ X Y, s'.agent_budget X Y =
-        ((X = granter ∧
-          ( (s.agent_budget granter BudgetLevel.bl5 ∧ Y = BudgetLevel.bl4)
-          ∨ (s.agent_budget granter BudgetLevel.bl4 ∧ Y = BudgetLevel.bl3)
-          ∨ (s.agent_budget granter BudgetLevel.bl3 ∧ Y = BudgetLevel.bl2)
-          ∨ (s.agent_budget granter BudgetLevel.bl2 ∧ Y = BudgetLevel.bl1)
-          ∨ (s.agent_budget granter BudgetLevel.bl1 ∧ Y = BudgetLevel.bl_exhausted) ))
-        ∨ (X ≠ granter ∧ s.agent_budget X Y)) := by grind
-    rw [hbeq]; right; exact ⟨hAg, hL⟩
+    exact ⟨L, by rw [hbeq]; right; exact ⟨hAg, hL⟩⟩
 
 -- Axiom audit: must depend only on [propext, Classical.choice, Quot.sound].
 #print axioms grant_override_pres_active_has_budget

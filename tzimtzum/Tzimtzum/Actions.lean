@@ -267,7 +267,7 @@ kav_action sentinel_credit_budget (a : AgentId) (n : Nat) :
   require s.agent_active a
   require s.agent_cap a s.cap_credit_budget
   agent_budget := fun A L =>
-    (A = a ∧ ∀ b, s.agent_budget a b → L = min budget_capacity (b + n))
+    (A = a ∧ ∀ b, s.agent_budget a b → L = budget_saturating_credit b n)
     ∨ (A ≠ a ∧ s.agent_budget A L)
 
 -- grant_override (Campaign A, 13th action). Capability-gated, granter-budget-debited

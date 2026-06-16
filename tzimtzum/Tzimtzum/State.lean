@@ -49,6 +49,15 @@ def declass_weight : ConfLevel → Nat
   | .sensitive   => 2
   | .restricted  => 4
 
+/-- Saturating budget credit: add `n`, clamped at capacity. Deliberately NOT a simp lemma and
+made irreducible (like `ceilingAdmits`): the `min` blows up the transitive-unfold discharge
+cascade (`simp only [<unfolds>] at *` corrupts even budget-independent VCs). Proofs that need
+its value use the equation lemma explicitly (`simp [budget_saturating_credit]`); its only
+properties used are `≤ budget_capacity` (`Nat.min_le_left`) and functionality. -/
+def budget_saturating_credit (b n : Nat) : Nat := min budget_capacity (b + n)
+
+attribute [irreducible] budget_saturating_credit
+
 /-! ## State structure
 
 The remaining uninterpreted sorts are the type parameters. Mutable relations, immutable
@@ -120,8 +129,7 @@ ceiling. An inspect ceiling below the allow ceiling is an empty inspect band —
 
 /-- Affordability: the agent holds a budget `b` covering the weighted cost `w`. With
 `budget_unique` that `b` is the agent's unique level, so this is exactly "cost ≤ budget". -/
-def St.affordable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId}
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+def St.affordable (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (a : AgentId) (w : Nat) : Prop :=
   ∃ b, s.agent_budget a b ∧ w ≤ b
 

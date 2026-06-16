@@ -1,10 +1,10 @@
 import Tzimtzum.Soundness.Common
 
-/-! # C0 — initiation + the ten cascade-discharged actions
+/-! # C0 — initiation + the nine cascade-discharged actions
 
-Every action whose 25 preservation VCs the `kav_discharge` cascade closes outright
-(no budget-debit existential to reconstruct). The two budget actions
-(`invoke_complete`, `return_endorsed`) live in their own modules. -/
+Every action whose preservation VCs the `kav_discharge` cascade closes outright (no budget
+witness to reconstruct). The four budget actions (`invoke_complete`, `return_endorsed`,
+`grant_override`, `sentinel_credit_budget`) live in their own modules. -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true
@@ -85,12 +85,5 @@ theorem pres_sentinel_elevate_taint (s s' : St AgentId ToolId InvocationId CapKi
   simp only [Kav.close2] at hn
   obtain ⟨a, l, hg, hn⟩ := hn
   kav_discharge sentinel_elevate_taint
-
-theorem pres_sentinel_refresh_budget (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
-    (hinv : allInv s)
-    (hn : (Kav.close1 sentinel_refresh_budget).next s s') : allInv s' := by
-  simp only [Kav.close1] at hn
-  obtain ⟨a, hg, hn⟩ := hn
-  kav_discharge sentinel_refresh_budget
 
 end Tzimtzum

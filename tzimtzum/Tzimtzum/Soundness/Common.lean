@@ -12,12 +12,12 @@ modules and no longer force the other ten to recompile).
 
 This module holds the pieces every preservation module shares:
 
-* `allInv` — the 25-conjunct invariant bundle (10 safeties + 15 strengthening), in
+* `allInv` — the 26-conjunct invariant bundle (10 safeties + 16 strengthening), in
   `allInvariants` order.
 * `all_goals_fresh` — run a tactic on each goal under a FRESH heartbeat budget
   (`Core.withCurrHeartbeats`), mirroring the per-VC freshness that makes
   `#kav_check_action` succeed where one shared budget starves.
-* `kav_discharge` — split the bundle goal into its 25 conjuncts and discharge each
+* `kav_discharge` — split the bundle goal into its 26 conjuncts and discharge each
   under that fresh budget with the kernel-checked cascade.
 * `ksystem` — the TzimtzumV2 system monomorphised at the opaque `KSt` sorts. -/
 
@@ -42,8 +42,9 @@ def allInv (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId Instr
   ∧ override_consumed_when_sole_justification s
   ∧ parent_implies_active s ∧ single_parent s ∧ no_self_parent s ∧ root_no_parent s
   ∧ in_flight_active s ∧ in_flight_registered s ∧ in_flight_unique s ∧ root_all_caps s
-  ∧ root_no_in_flight s ∧ budget_unique s ∧ active_has_budget s ∧ ghost_invoked_sound s
-  ∧ ghost_received_sound s ∧ in_flight_flow_compat s ∧ in_flight_override_consumed s
+  ∧ root_no_in_flight s ∧ budget_unique s ∧ active_has_budget s ∧ budget_bounded s
+  ∧ ghost_invoked_sound s ∧ ghost_received_sound s ∧ in_flight_flow_compat s
+  ∧ in_flight_override_consumed s
 
 open Lean Lean.Elab.Tactic in
 /-- Run `tac` on every current goal, each under a FRESH heartbeat budget
@@ -58,14 +59,14 @@ elab "all_goals_fresh " tac:tacticSeq : tactic => do
       acc := acc ++ (← getGoals).toArray
   setGoals acc.toList
 
-/-- Split the bundle goal into its 25 atomic conjuncts, then discharge each under a fresh
+/-- Split the bundle goal into its 26 atomic conjuncts, then discharge each under a fresh
     heartbeat budget. `$head` is the action `def` (or `initial` for the init VCs); its
     field equations are exposed inside each per-goal window where they cost what one
     `#kav_check_action` VC costs. -/
 macro "kav_discharge" head:ident : tactic => `(tactic| (
   (try unfold allInv) <;>
   (try refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩);
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩);
   all_goals_fresh (
     (try simp only [$head:ident, allInv, St.flow_allows, St.flow_inspects,
         root_always_active, default_deny, flow_confinement, flow_confinement_weak,
@@ -73,7 +74,7 @@ macro "kav_discharge" head:ident : tactic => `(tactic| (
         instruction_attestation_intact, override_consumed_when_sole_justification,
         parent_implies_active, single_parent, no_self_parent, root_no_parent,
         in_flight_active, in_flight_registered, in_flight_unique, root_all_caps,
-        root_no_in_flight, budget_unique, active_has_budget, ghost_invoked_sound,
+        root_no_in_flight, budget_unique, active_has_budget, budget_bounded, ghost_invoked_sound,
         ghost_received_sound, in_flight_flow_compat, in_flight_override_consumed,
         Tzimtzum.speculative_taint, Kav.Action.guard, Kav.Action.next] at *) <;>
       (first | trivial | grind | (simp_all <;> grind) | auto | duper [*]))))

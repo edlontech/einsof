@@ -12,11 +12,13 @@ analog of the retired Rocq `invariants_inductive` bundle; the soundness conclusi
 Phase C (C3) consumes it.
 
 The proof is split across `Tzimtzum/Soundness/`:
-* `Common`              — `allInv`, `all_goals_fresh`, `kav_discharge`, `ksystem`.
-* `PresMost`            — initiation + the ten cascade-discharged actions.
-* `PresInvokeComplete`  — `invoke_complete` (budget VCs slotted manually).
-* `PresReturnEndorsed`  — `return_endorsed` (budget VC slotted manually).
-* `Bundle`              — `kav_sound` via `reachable_sound`.
+* `Common`                   — `allInv`, `all_goals_fresh`, `kav_discharge`, `ksystem`.
+* `PresMost`                 — initiation + the nine cascade-discharged actions.
+* `PresInvokeComplete`       — `invoke_complete` (budget VCs slotted manually).
+* `PresReturnEndorsed`       — `return_endorsed` (budget VCs slotted manually).
+* `PresGrantOverride`        — `grant_override` (budget VCs slotted manually).
+* `PresSentinelCreditBudget` — `sentinel_credit_budget` (budget VCs slotted manually).
+* `Bundle`                   — `kav_sound` via `reachable_sound`.
 
 ## Trust base
 

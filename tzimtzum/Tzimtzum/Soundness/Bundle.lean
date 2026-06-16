@@ -2,6 +2,7 @@ import Tzimtzum.Soundness.PresMost
 import Tzimtzum.Soundness.PresInvokeComplete
 import Tzimtzum.Soundness.PresReturnEndorsed
 import Tzimtzum.Soundness.PresGrantOverride
+import Tzimtzum.Soundness.PresSentinelCreditBudget
 
 /-! # C0 — assembly: `kav_sound` via `reachable_sound`
 
@@ -33,11 +34,11 @@ theorem hpres_bundle : ∀ na ∈ ksystem.actions, ∀ s s',
   · exact pres_return_endorsed s s' hinv hn
   · exact pres_return_unendorsed s s' hinv hn
   · exact pres_sentinel_elevate_taint s s' hinv hn
-  · exact pres_sentinel_refresh_budget s s' hinv hn
+  · exact pres_sentinel_credit_budget s s' hinv hn
   · exact pres_grant_override s s' hinv hn
 
 /-- **Crown of C0:** every reachable state of the TzimtzumV2 transition system satisfies
-    the full invariant bundle (10 safeties + 15 strengthening invariants). -/
+    the full invariant bundle (10 safeties + 16 strengthening invariants). -/
 theorem kav_sound (s : KSt) (h : Kav.Reachable ksystem s) : allInv s :=
   Kav.reachable_sound hinit_bundle hpres_bundle h
 
@@ -77,7 +78,7 @@ theorem hpres_bundleP :
   · exact pres_return_endorsed s s' hinv hn
   · exact pres_return_unendorsed s s' hinv hn
   · exact pres_sentinel_elevate_taint s s' hinv hn
-  · exact pres_sentinel_refresh_budget s s' hinv hn
+  · exact pres_sentinel_credit_budget s s' hinv hn
   · exact pres_grant_override s s' hinv hn
 
 /-- **Sort-polymorphic crown of C0:** every reachable state of the TzimtzumV2 system — at *any* sort
