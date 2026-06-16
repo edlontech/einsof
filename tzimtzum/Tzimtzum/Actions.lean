@@ -155,7 +155,13 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
   in_flight := fun A I => s.in_flight A I ∨ (A = a ∧ I = inv)
 
 -- invoke_complete (Veil lines 619-654). Removes in_flight (point-clear), conditionally adds
--- taint, and self-debits the per-level budget on the endorsed (zero-taint) path.
+-- taint, and self-debits the weighted budget on the endorsed (zero-taint) path. The endorsed
+-- predicate (inlined at each site, no `let` in action bodies) is the 4-conjunct
+--   `endorsed := output_bounded ∧ output_conforms ∧ affordable (declass_weight floor)
+--                ∧ ¬ already-tainted-at-floor`
+-- where `floor = s.tool_conf_floor (s.invocation_tool inv)`. An agent already tainted at
+-- `floor` takes the `¬ endorsed` branch: idempotent taint insert, ZERO debit (the
+-- wasted-budget fix).
 kav_action invoke_complete (a : AgentId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.in_flight a inv
@@ -166,28 +172,29 @@ kav_action invoke_complete (a : AgentId) (inv : InvocationId) :
     ∨ (A = a
         ∧ ¬ (s.tool_output_bounded (s.invocation_tool inv)
                 ∧ s.output_conforms a (s.invocation_tool inv)
-                ∧ ¬ s.agent_budget a BudgetLevel.bl_exhausted)
+                ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
+                ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
         ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
   gh_taint_invoked := fun A L =>
     s.gh_taint_invoked A L
     ∨ (A = a
         ∧ ¬ (s.tool_output_bounded (s.invocation_tool inv)
                 ∧ s.output_conforms a (s.invocation_tool inv)
-                ∧ ¬ s.agent_budget a BudgetLevel.bl_exhausted)
+                ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
+                ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
         ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
   agent_budget := fun A L =>
     (A = a ∧
       ( ( (s.tool_output_bounded (s.invocation_tool inv)
            ∧ s.output_conforms a (s.invocation_tool inv)
-           ∧ ¬ s.agent_budget a BudgetLevel.bl_exhausted)
-          ∧ ( (s.agent_budget a BudgetLevel.bl5 ∧ L = BudgetLevel.bl4)
-            ∨ (s.agent_budget a BudgetLevel.bl4 ∧ L = BudgetLevel.bl3)
-            ∨ (s.agent_budget a BudgetLevel.bl3 ∧ L = BudgetLevel.bl2)
-            ∨ (s.agent_budget a BudgetLevel.bl2 ∧ L = BudgetLevel.bl1)
-            ∨ (s.agent_budget a BudgetLevel.bl1 ∧ L = BudgetLevel.bl_exhausted) ) )
+           ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
+           ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
+          ∧ ∀ b, s.agent_budget a b →
+              L = b - declass_weight (s.tool_conf_floor (s.invocation_tool inv)) )
         ∨ ( ¬ (s.tool_output_bounded (s.invocation_tool inv)
                ∧ s.output_conforms a (s.invocation_tool inv)
-               ∧ ¬ s.agent_budget a BudgetLevel.bl_exhausted)
+               ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
+               ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
             ∧ s.agent_budget a L ) ))
     ∨ (A ≠ a ∧ s.agent_budget A L)
 
