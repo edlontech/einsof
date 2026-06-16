@@ -153,13 +153,18 @@ def root_no_in_flight
 /-- **budget_unique**: every active agent has exactly one declassification budget level. -/
 def budget_unique
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L1 L2 : BudgetLevel),
+  ∀ (A : AgentId) (L1 L2 : Nat),
     s.agent_active A ∧ s.agent_budget A L1 ∧ s.agent_budget A L2 → L1 = L2
 
 /-- **active_has_budget**: every active agent has a declassification budget level. -/
 def active_has_budget
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId), s.agent_active A → ∃ (L : BudgetLevel), s.agent_budget A L
+  ∀ (A : AgentId), s.agent_active A → ∃ (L : Nat), s.agent_budget A L
+
+/-- **budget_bounded**: every recorded budget is within capacity (keeps the state space finite). -/
+def budget_bounded
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : Nat), s.agent_budget A L → L ≤ budget_capacity
 
 /-- **ghost_invoked_sound**: the `gh_taint_invoked` ghost relation stays in sync with taint. -/
 def ghost_invoked_sound
@@ -227,6 +232,7 @@ def allInvariants :
   , ("root_no_in_flight", root_no_in_flight)
   , ("budget_unique", budget_unique)
   , ("active_has_budget", active_has_budget)
+  , ("budget_bounded", budget_bounded)
   , ("ghost_invoked_sound", ghost_invoked_sound)
   , ("ghost_received_sound", ghost_received_sound)
   , ("in_flight_flow_compat", in_flight_flow_compat)
