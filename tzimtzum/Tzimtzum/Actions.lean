@@ -207,15 +207,10 @@ kav_action return_endorsed (child prnt : AgentId) :
   require s.agent_active prnt
   require ∀ I, ¬ s.in_flight child I
   require s.agent_cap child s.cap_declassify
-  require True
-  require ¬ s.agent_budget prnt BudgetLevel.bl_exhausted
+  require s.return_conforms child prnt
+  require s.affordable prnt 2
   agent_budget := fun A L =>
-    (A = prnt
-      ∧ ( (s.agent_budget prnt BudgetLevel.bl5 ∧ L = BudgetLevel.bl4)
-       ∨ (s.agent_budget prnt BudgetLevel.bl4 ∧ L = BudgetLevel.bl3)
-       ∨ (s.agent_budget prnt BudgetLevel.bl3 ∧ L = BudgetLevel.bl2)
-       ∨ (s.agent_budget prnt BudgetLevel.bl2 ∧ L = BudgetLevel.bl1)
-       ∨ (s.agent_budget prnt BudgetLevel.bl1 ∧ L = BudgetLevel.bl_exhausted) ))
+    (A = prnt ∧ ∀ b, s.agent_budget prnt b → L = b - 2)
     ∨ (A ≠ prnt ∧ s.agent_budget A L)
 
 -- return_unendorsed (Veil lines 708-732). Parent inherits child's taint set; flow-gated

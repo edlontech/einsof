@@ -76,6 +76,7 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   tool_issuer         : ToolId → IssuerId
   trusted_issuer      : IssuerId → Prop
   output_conforms     : AgentId → ToolId → Prop
+  return_conforms     : AgentId → AgentId → Prop
   instruction_issuer  : InstructionId → IssuerId
   egress_allow_ceiling   : EgressKind → Option ConfLevel
   egress_inspect_ceiling : EgressKind → Option ConfLevel
