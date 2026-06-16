@@ -86,7 +86,7 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   -- Named individuals
   root_agent          : AgentId
   cap_declassify      : CapKind
-  cap_refresh_budget  : CapKind
+  cap_credit_budget   : CapKind
   cap_grant_override  : CapKind
 
 variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId : Type}

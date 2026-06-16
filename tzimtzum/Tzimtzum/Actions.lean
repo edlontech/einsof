@@ -43,7 +43,7 @@ kav_action delegate (grantor grantee : AgentId) :
   agent_instruction := fun A I => s.agent_instruction A I ∧ A ≠ grantee
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ grantee
   agent_budget := fun G L =>
-    (G = grantee ∧ L = BudgetLevel.bl5) ∨ (s.agent_budget G L ∧ G ≠ grantee)
+    (G = grantee ∧ L = budget_capacity) ∨ (s.agent_budget G L ∧ G ≠ grantee)
   in_flight := fun A I => s.in_flight A I ∧ A ≠ grantee
   gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∧ A ≠ grantee
   gh_taint_received := fun A L => s.gh_taint_received A L ∧ A ≠ grantee
@@ -260,12 +260,15 @@ kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
   taint_levels := fun A L => s.taint_levels A L ∨ (A = a ∧ L = l)
   gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∨ (A = a ∧ L = l)
 
--- sentinel_refresh_budget (Veil lines 780-784). Capability-gated budget reset to full.
-kav_action sentinel_refresh_budget (a : AgentId) :
+-- sentinel_credit_budget (Veil lines 780-784). Capability-gated budget credit of `n`,
+-- saturating at capacity (a full refresh = credit `budget_capacity`).
+kav_action sentinel_credit_budget (a : AgentId) (n : Nat) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active a
-  require s.agent_cap a s.cap_refresh_budget
-  agent_budget := fun A L => (A = a ∧ L = BudgetLevel.bl5) ∨ (A ≠ a ∧ s.agent_budget A L)
+  require s.agent_cap a s.cap_credit_budget
+  agent_budget := fun A L =>
+    (A = a ∧ ∀ b, s.agent_budget a b → L = min budget_capacity (b + n))
+    ∨ (A ≠ a ∧ s.agent_budget A L)
 
 -- grant_override (Campaign A, 13th action). Capability-gated, granter-budget-debited
 -- arming/re-arming of a single-use flow override for (target, tool, lvl). The re-arm
@@ -277,19 +280,14 @@ kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : Conf
   require s.agent_active granter
   require s.agent_active target
   require s.agent_cap granter s.cap_grant_override
-  require ¬ s.agent_budget granter BudgetLevel.bl_exhausted
+  require s.affordable granter 1
   require ∀ (I : InvocationId), ¬ s.in_flight target I
   flow_override := fun A T L =>
     s.flow_override A T L ∨ (A = target ∧ T = tool ∧ L = lvl)
   override_used := fun A T L =>
     s.override_used A T L ∧ ¬ (A = target ∧ T = tool ∧ L = lvl)
   agent_budget := fun A L =>
-    (A = granter
-      ∧ ( (s.agent_budget granter BudgetLevel.bl5 ∧ L = BudgetLevel.bl4)
-       ∨ (s.agent_budget granter BudgetLevel.bl4 ∧ L = BudgetLevel.bl3)
-       ∨ (s.agent_budget granter BudgetLevel.bl3 ∧ L = BudgetLevel.bl2)
-       ∨ (s.agent_budget granter BudgetLevel.bl2 ∧ L = BudgetLevel.bl1)
-       ∨ (s.agent_budget granter BudgetLevel.bl1 ∧ L = BudgetLevel.bl_exhausted) ))
+    (A = granter ∧ ∀ b, s.agent_budget granter b → L = b - 1)
     ∨ (A ≠ granter ∧ s.agent_budget A L)
 
 /-! ## Full 13-action transition system -/
@@ -309,7 +307,7 @@ def system : Kav.TransitionSystem
       , ("return_endorsed",        Kav.close2 return_endorsed)
       , ("return_unendorsed",      Kav.close2 return_unendorsed)
       , ("sentinel_elevate_taint", Kav.close2 sentinel_elevate_taint)
-      , ("sentinel_refresh_budget", Kav.close1 sentinel_refresh_budget)
+      , ("sentinel_credit_budget", Kav.close2 sentinel_credit_budget)
       , ("grant_override",         Kav.close4 grant_override) ] }
 
 end Tzimtzum
