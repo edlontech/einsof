@@ -19,6 +19,16 @@ impl ConformanceOracle for ConstConformance {
     fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
         self.0
     }
+
+    fn return_conforms(
+        &self,
+        _: &AgentId,
+        _: &AgentId,
+        _: &KernelState,
+        _: &BackgroundTheory,
+    ) -> bool {
+        self.0
+    }
 }
 
 /// Content gate backed by a precomputed per-tool decision map. The kernel only ever queries the

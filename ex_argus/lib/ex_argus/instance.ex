@@ -26,7 +26,7 @@ defmodule ExArgus.Instance do
 
   @recoverable_transitions ~w(
     register_tool load_instruction delegate grant_capability revoke cascade_revoke
-    return_endorsed sentinel_refresh_budget grant_override invoke_start invoke_complete
+    return_endorsed sentinel_credit_budget grant_override invoke_start invoke_complete
     return_unendorsed sentinel_elevate_taint
   )a
 
@@ -99,11 +99,14 @@ defmodule ExArgus.Instance do
 
   defdelegate revoke(handle, parent, target), to: Native, as: :instance_revoke
   defdelegate cascade_revoke(handle, child, parent), to: Native, as: :instance_cascade_revoke
-  defdelegate return_endorsed(handle, child, parent), to: Native, as: :instance_return_endorsed
 
-  defdelegate sentinel_refresh_budget(handle, agent),
+  defdelegate return_endorsed(handle, child, parent, return_conforms),
     to: Native,
-    as: :instance_sentinel_refresh_budget
+    as: :instance_return_endorsed
+
+  defdelegate sentinel_credit_budget(handle, agent, amount),
+    to: Native,
+    as: :instance_sentinel_credit_budget
 
   defdelegate grant_override(handle, granter, target, tool, level),
     to: Native,

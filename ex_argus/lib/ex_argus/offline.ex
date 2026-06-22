@@ -9,11 +9,11 @@ defmodule ExArgus.Offline do
   state construction representable -- exactly the hazard `ExArgus.Instance` removes.
 
   Each function returns `{:ok, new_state, action}` or `{:error, reason}`. Oracle verdicts
-  for the three oracle-consuming transitions are passed in: `invoke_start` and
-  `invoke_complete` take a boolean authorizer/conformance verdict, and the gate-consuming
-  transitions take a `%{tool => boolean}` content-gate decision map. Use
-  `content_gate_targets/2` or `content_gate_map/3` to compute exactly which tools need a
-  verdict.
+  for the oracle-consuming transitions are passed in: `invoke_start` takes a boolean
+  authorizer verdict, `invoke_complete` and `return_endorsed` take a boolean conformance
+  verdict, and the gate-consuming transitions take a `%{tool => boolean}` content-gate
+  decision map. Use `content_gate_targets/2` or `content_gate_map/3` to compute exactly
+  which tools need a verdict.
   """
 
   alias ExArgus.Kernel.State
@@ -44,7 +44,7 @@ defmodule ExArgus.Offline do
   | `:root_not_allowed` | The operation may not target / be performed by the root agent. |
   | `:not_direct_child` | The agent is not a direct child of the named parent. |
   | `:parent_still_active` | Parent is still active (use `revoke`, not `cascade_revoke`). |
-  | `:capability_missing` | A required capability is missing (required tool cap / declassify / refresh-budget). |
+  | `:capability_missing` | A required capability is missing (required tool cap / declassify / credit-budget). |
   | `:invocation_exists` | An invocation with this id already exists. |
   | `:invocation_in_flight` | The invocation is already in-flight. |
   | `:not_in_flight` | The invocation is not in-flight for the agent. |
@@ -52,6 +52,7 @@ defmodule ExArgus.Offline do
   | `:target_has_in_flight` | The grant target still has in-flight invocations (re-arm guard). |
   | `:flow_gate_blocked` | A flow-policy gate blocked the (level, egress) pair. |
   | `:authorizer_denied` | The authorizer denied the (agent, tool) pair. |
+  | `:not_conforming` | A cross-boundary endorsed return failed the runtime conformance oracle. |
   | `:budget_exhausted` | The declassification budget is exhausted. |
   | `:missing_tool_binding` | An in-flight invocation has no tool binding. |
   | `:event_store` | The event store failed to persist an event. |
@@ -75,6 +76,7 @@ defmodule ExArgus.Offline do
           | :target_has_in_flight
           | :flow_gate_blocked
           | :authorizer_denied
+          | :not_conforming
           | :budget_exhausted
           | :missing_tool_binding
           | :event_store
@@ -88,8 +90,8 @@ defmodule ExArgus.Offline do
   defdelegate grant_capability(state, bg, parent, child, cap), to: Native
   defdelegate revoke(state, bg, parent, target), to: Native
   defdelegate cascade_revoke(state, bg, child, parent), to: Native
-  defdelegate return_endorsed(state, bg, child, parent), to: Native
-  defdelegate sentinel_refresh_budget(state, bg, agent), to: Native
+  defdelegate return_endorsed(state, bg, child, parent, return_conforms), to: Native
+  defdelegate sentinel_credit_budget(state, bg, agent, amount), to: Native
   defdelegate grant_override(state, bg, granter, target, tool, level), to: Native
 
   defdelegate invoke_start(state, bg, agent, tool, inv, authorizer_allows, content_gate),

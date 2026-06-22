@@ -125,18 +125,20 @@ pub fn instance_return_endorsed(
     handle: ResourceArc<KernelInstance>,
     child: String,
     parent: String,
+    return_conforms: bool,
 ) -> InstanceOutcome {
     instance_finish!(handle, s =>
-        transitions::return_endorsed(s, &handle.bg, AgentId(child), AgentId(parent)))
+        transitions::return_endorsed(s, &handle.bg, &ConstConformance(return_conforms), AgentId(child), AgentId(parent)))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-pub fn instance_sentinel_refresh_budget(
+pub fn instance_sentinel_credit_budget(
     handle: ResourceArc<KernelInstance>,
     agent: String,
+    amount: u8,
 ) -> InstanceOutcome {
     instance_finish!(handle, s =>
-        transitions::sentinel_refresh_budget(s, &handle.bg, AgentId(agent)))
+        transitions::sentinel_credit_budget(s, &handle.bg, AgentId(agent), amount))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]

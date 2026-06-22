@@ -88,21 +88,34 @@ pub fn cascade_revoke(state: StateN, bg: BackgroundN, child: String, parent: Str
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-pub fn return_endorsed(state: StateN, bg: BackgroundN, child: String, parent: String) -> Outcome {
+pub fn return_endorsed(
+    state: StateN,
+    bg: BackgroundN,
+    child: String,
+    parent: String,
+    return_conforms: bool,
+) -> Outcome {
     finish!(transitions::return_endorsed(
         state.into_kernel(),
         &bg.into_kernel(),
+        &ConstConformance(return_conforms),
         AgentId(child),
         AgentId(parent)
     ))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-pub fn sentinel_refresh_budget(state: StateN, bg: BackgroundN, agent: String) -> Outcome {
-    finish!(transitions::sentinel_refresh_budget(
+pub fn sentinel_credit_budget(
+    state: StateN,
+    bg: BackgroundN,
+    agent: String,
+    amount: u8,
+) -> Outcome {
+    finish!(transitions::sentinel_credit_budget(
         state.into_kernel(),
         &bg.into_kernel(),
-        AgentId(agent)
+        AgentId(agent),
+        amount
     ))
 }
 

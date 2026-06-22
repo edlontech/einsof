@@ -17,7 +17,7 @@ pub enum ActionN {
     ReturnEndorsed(String, String),
     ReturnUnendorsed(String, String),
     SentinelElevateTaint(String, ConfLevelN),
-    SentinelRefreshBudget(String),
+    SentinelCreditBudget(String, u8),
     GrantOverride(String, String, String, ConfLevelN),
 }
 
@@ -47,7 +47,9 @@ impl ActionN {
             KernelAction::SentinelElevateTaint { agent, level } => {
                 Self::SentinelElevateTaint(agent.0, ConfLevelN::from_kernel(level))
             }
-            KernelAction::SentinelRefreshBudget { agent } => Self::SentinelRefreshBudget(agent.0),
+            KernelAction::SentinelCreditBudget { agent, amount } => {
+                Self::SentinelCreditBudget(agent.0, amount)
+            }
             KernelAction::GrantOverride { granter, target, tool, level } => {
                 Self::GrantOverride(granter.0, target.0, tool.0, ConfLevelN::from_kernel(level))
             }
@@ -75,6 +77,7 @@ pub enum KernelErrorN {
     TargetHasInFlight,
     FlowGateBlocked,
     AuthorizerDenied,
+    NotConforming,
     BudgetExhausted,
     MissingToolBinding,
     EventStore,
@@ -101,6 +104,7 @@ impl KernelErrorN {
             KernelError::TargetHasInFlight => Self::TargetHasInFlight,
             KernelError::FlowGateBlocked => Self::FlowGateBlocked,
             KernelError::AuthorizerDenied => Self::AuthorizerDenied,
+            KernelError::NotConforming => Self::NotConforming,
             KernelError::BudgetExhausted => Self::BudgetExhausted,
             KernelError::MissingToolBinding => Self::MissingToolBinding,
             KernelError::EventStore => Self::EventStore,
