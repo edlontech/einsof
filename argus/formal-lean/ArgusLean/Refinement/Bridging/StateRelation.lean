@@ -174,6 +174,39 @@ def budgetReadC (vm : collections.VecMap types.AgentId Std.U8) (G : types.AgentI
 @[simp] theorem budgetCapacity_val : (types.BUDGET_CAPACITY).val = Tzimtzum.budget_capacity := by
   simp [types.BUDGET_CAPACITY, Tzimtzum.budget_capacity]
 
+/-- The `Nat` value of a saturating `u8` subtraction is the (clamped-at-0) `Nat` subtraction. The
+    numeric bridge that lets the abstract `b - w` (`Nat`) debit match the kernel's `saturating_sub`
+    over the `u8` budget cell; `omega` then collapses the abstract/concrete budget posts. -/
+@[simp] theorem saturatingSub_val (x w : Std.U8) :
+    (core.num.U8.saturating_sub x w).val = x.val - w.val := by
+  have hx : x.bv.toNat < 256 := x.bv.isLt
+  show (BitVec.ofNat (UScalarTy.U8.numBits) (max 0 (x.bv.toNat - w.bv.toNat))).toNat = x.bv.toNat - w.bv.toNat
+  rw [BitVec.toNat_ofNat]
+  have hlt : (max 0 (x.bv.toNat - w.bv.toNat)) < 2 ^ 8 := by omega
+  rw [show (2 : Nat) ^ (UScalarTy.U8.numBits) = 2 ^ 8 from rfl, Nat.mod_eq_of_lt hlt]
+  omega
+
+/-- The `Nat` value of a `u8` `saturating_add` then `min BUDGET_CAPACITY` is the saturating credit
+    `min budget_capacity (x.val + n.val)`. Bridges the kernel's `credit_budget` write to the abstract
+    `budget_saturating_credit`. -/
+@[simp] theorem saturatingAddMin_val (x n : Std.U8) :
+    (core.cmp.impls.OrdU8.min (core.num.U8.saturating_add x n) types.BUDGET_CAPACITY).val
+      = min Tzimtzum.budget_capacity (x.val + n.val) := by
+  have hx : x.bv.toNat < 256 := x.bv.isLt
+  have hn : n.bv.toNat < 256 := n.bv.isLt
+  have hmax : (UScalar.max UScalarTy.U8) = 255 := by
+    rw [UScalar.max_UScalarTy_U8_eq, U8.max_eq]
+  have hadd : (core.num.U8.saturating_add x n).val = min (x.val + n.val) 255 := by
+    show (BitVec.ofNat (UScalarTy.U8.numBits)
+        (min (UScalar.max UScalarTy.U8) (x.bv.toNat + n.bv.toNat))).toNat = min (x.val + n.val) 255
+    rw [BitVec.toNat_ofNat, hmax]
+    have hb : min 255 (x.bv.toNat + n.bv.toNat) < 2 ^ 8 := by omega
+    rw [show (2 : Nat) ^ (UScalarTy.U8.numBits) = 2 ^ 8 from rfl, Nat.mod_eq_of_lt hb]
+    show min 255 (x.bv.toNat + n.bv.toNat) = min (x.bv.toNat + n.bv.toNat) 255
+    omega
+  rw [core.cmp.impls.OrdU8.min_val, hadd, budgetCapacity_val, Tzimtzum.budget_capacity]
+  omega
+
 /-- `KernelState.budget` computes the get-style read `budgetReadC`. -/
 theorem budget_spec (st : state.KernelState) (agent : types.AgentId) :
     state.KernelState.budget st agent ⦃ b => b = budgetReadC st.agent_budget agent ⦄ := by

@@ -41,7 +41,7 @@ theorem grant_override_inv_full
       vsMem st.agent_active granter ∧
       vsMem st.agent_active target ∧
       vmsMem st.agent_cap granter capability.CapKind.GrantOverride ∧
-      budgetReadC st.agent_budget granter ≠ types.BudgetLevel.Exhausted ∧
+      (1#u8 : Std.U8) ≤ budgetReadC st.agent_budget granter ∧
       (∀ inv, ¬ vmsMemLast st.in_flight target inv) ∧
       (∀ k v, vmsMemLast vmFo k v ↔
         vmsMemLast st.flow_override k v ∨ (k = target ∧ v = { tool := tool, level := level })) ∧
@@ -49,7 +49,7 @@ theorem grant_override_inv_full
         vmsMemLast st.override_used k v ∧ ¬ (k = target ∧ v = { tool := tool, level := level })) ∧
       st' = { st with override_used := vmOu, flow_override := vmFo, agent_budget := vmBud } ∧
       (∀ G, budgetReadC vmBud G =
-        if G = granter then debitC (budgetReadC st.agent_budget granter)
+        if G = granter then core.num.U8.saturating_sub (budgetReadC st.agent_budget granter) 1#u8
         else budgetReadC st.agent_budget G) ∧
       (vmNodupKeys st.flow_override → vmNodupKeys vmFo) ∧
       (vmNodupKeys st.override_used → vmNodupKeys vmOu) ∧
@@ -81,14 +81,13 @@ theorem grant_override_inv_full
   simp only [bind_tc_ok] at hok
   have hb2 : b2 = true := by cases b2 with | true => rfl | false => simp at hok
   simp only [hb2, reduceIte] at hok
-  -- Gate 4: `granter` not budget-exhausted.
-  obtain ⟨b3, hb3Eq, hb3Iff⟩ := spec_imp_exists (budgetExhausted_spec st granter)
+  -- Gate 4: `granter` can afford the weight-1 debit.
+  obtain ⟨b3, hb3Eq, hb3Iff⟩ := spec_imp_exists (affordable_spec st granter 1#u8)
   rw [hb3Eq] at hok
   simp only [bind_tc_ok] at hok
-  have hb3 : b3 = false := by cases b3 with | false => rfl | true => simp at hok
-  simp only [hb3, reduceIte, Bool.false_eq_true] at hok
-  have hNotExh : budgetReadC st.agent_budget granter ≠ types.BudgetLevel.Exhausted := by
-    intro hc; have : b3 = true := hb3Iff.mpr hc; rw [hb3] at this; simp at this
+  have hb3 : b3 = true := by cases b3 with | true => rfl | false => simp at hok
+  simp only [hb3, reduceIte] at hok
+  have hAfford : (1#u8 : Std.U8) ≤ budgetReadC st.agent_budget granter := hb3Iff.mp hb3
   -- Gate 5: re-arm guard — `target` has no in-flight invocations.
   obtain ⟨b4, hb4Eq, hb4Iff⟩ := spec_imp_exists
     (vecMapKVecSetSetNonempty_spec types.AgentId.Insts.CoreCloneClone
@@ -139,11 +138,11 @@ theorem grant_override_inv_full
   simp only [bind_tc_ok] at hok
   -- Write 3: debit `granter`'s budget on the intermediate state.
   obtain ⟨st1, hst1Eq, vmBud, hStruct, hBud, hBudNd⟩ := spec_imp_exists
-    (debitBudget_full { st with override_used := vmOu, flow_override := vmFo } granter hcapBud)
+    (debitBudget_full { st with override_used := vmOu, flow_override := vmFo } granter 1#u8 hcapBud)
   rw [hst1Eq] at hok
   simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
   obtain ⟨hStateEq, _hEventEq⟩ := hok
-  refine ⟨vmFo, vmOu, vmBud, hbIff.mp hb, hb1Iff.mp hb1, hb2Imp hb2, hNotExh, hNoFlight,
+  refine ⟨vmFo, vmOu, vmBud, hbIff.mp hb, hb1Iff.mp hb1, hb2Imp hb2, hAfford, hNoFlight,
     hvmFoMem, hvmOuMem, ?_, ?_, ?_, hOuEq ▸ hvmOuNd, hBudNd⟩
   · rw [← hStateEq, hStruct]
   · -- `budgetReadC vmBud` debits `granter`; the intermediate's budget is `st.agent_budget`
@@ -162,7 +161,7 @@ theorem grant_override_preservesR
     (hok : transitions.grant_override st bg granter target tool level = .ok (.Ok (st', ev))) :
     ∃ a', (Tzimtzum.grant_override granter target tool (confA level)).guard a ∧
           (Tzimtzum.grant_override granter target tool (confA level)).next a a' ∧ R st' bg a' := by
-  obtain ⟨vmFo, vmOu, vmBud, hGranterActive, hTargetActive, hGranterCap, hNotExh, hNoFlight,
+  obtain ⟨vmFo, vmOu, vmBud, hGranterActive, hTargetActive, hGranterCap, hAfford, hNoFlight,
       hFoMem, hOuMem, rfl, hBud, hFoNd, hOuNd, hBudNd⟩ :=
     grant_override_inv_full st bg granter target tool level hcapFoE hcapFoS hcapBud st' ev hok
   have hGranterActiveA : a.agent_active granter := (hR.active granter).mpr hGranterActive
@@ -172,12 +171,7 @@ theorem grant_override_preservesR
       override_used := fun A T L =>
         a.override_used A T L ∧ ¬ (A = target ∧ T = tool ∧ L = confA level)
       agent_budget := fun A L =>
-        (A = granter
-          ∧ ((a.agent_budget granter Tzimtzum.BudgetLevel.bl5 ∧ L = Tzimtzum.BudgetLevel.bl4)
-           ∨ (a.agent_budget granter Tzimtzum.BudgetLevel.bl4 ∧ L = Tzimtzum.BudgetLevel.bl3)
-           ∨ (a.agent_budget granter Tzimtzum.BudgetLevel.bl3 ∧ L = Tzimtzum.BudgetLevel.bl2)
-           ∨ (a.agent_budget granter Tzimtzum.BudgetLevel.bl2 ∧ L = Tzimtzum.BudgetLevel.bl1)
-           ∨ (a.agent_budget granter Tzimtzum.BudgetLevel.bl1 ∧ L = Tzimtzum.BudgetLevel.bl_exhausted)))
+        (A = granter ∧ ∀ b, a.agent_budget granter b → L = b - 1)
         ∨ (A ≠ granter ∧ a.agent_budget A L) }, ?_, ?_, ?_⟩
   · -- guard
     simp only [Tzimtzum.grant_override]
@@ -186,8 +180,11 @@ theorem grant_override_preservesR
       exact (hR.cap granter capability.CapKind.GrantOverride).mpr
         ((vmsMem_iff_vmsMemLast st.agent_cap hR.ndCap granter capability.CapKind.GrantOverride).mp
           hGranterCap)
-    · intro hc
-      exact hNotExh ((hR.budget granter Tzimtzum.BudgetLevel.bl_exhausted hGranterActiveA).mp hc)
+    · -- affordable granter 1: the abstract budget covers weight 1
+      refine ⟨(budgetReadC st.agent_budget granter).val,
+        (hR.budget granter _ hGranterActiveA).mpr rfl, ?_⟩
+      have : (1#u8 : Std.U8).val ≤ (budgetReadC st.agent_budget granter).val := by scalar_tac
+      simpa using this
     · intro I hc
       exact hNoFlight I ((hR.inflight target I).mp hc)
   · -- next
@@ -210,17 +207,23 @@ theorem grant_override_preservesR
       show (a.override_used ag t L ∧ ¬ (ag = target ∧ t = tool ∧ L = confA level)) ↔
         vmsMemLast vmOu ag { tool := t, level := confC L }
       rw [hOuMem ag { tool := t, level := confC L }, hR.override ag t L, hkey]
-    · -- budget (granter debit, the `return_endorsed` walk)
+    · -- budget (granter debit by weight 1; numeric Nat subtraction collapse)
       intro G L hactiveG
-      show ((G = granter ∧ _) ∨ (G ≠ granter ∧ a.agent_budget G L)) ↔ budgetReadC vmBud G = budgetC L
+      show ((G = granter ∧ ∀ b, a.agent_budget granter b → L = b - 1) ∨ (G ≠ granter ∧ a.agent_budget G L))
+        ↔ (budgetReadC vmBud G).val = L
       rw [hBud G]
       by_cases hG : G = granter
       · subst hG
-        simp only [true_and, ne_eq, not_true_eq_false, false_and, or_false]
-        rw [hR.budget G Tzimtzum.BudgetLevel.bl5 hactiveG, hR.budget G Tzimtzum.BudgetLevel.bl4 hactiveG,
-          hR.budget G Tzimtzum.BudgetLevel.bl3 hactiveG, hR.budget G Tzimtzum.BudgetLevel.bl2 hactiveG,
-          hR.budget G Tzimtzum.BudgetLevel.bl1 hactiveG]
-        cases hcur : budgetReadC st.agent_budget G <;> cases L <;> simp_all [debitC, budgetC]
+        simp only [true_and, ne_eq, not_true_eq_false, false_and, or_false, if_true,
+          saturatingSub_val]
+        have hone : (1#u8 : Std.U8).val = 1 := by rfl
+        rw [hone]
+        constructor
+        · intro h
+          exact (h (budgetReadC st.agent_budget G).val ((hR.budget G _ hactiveG).mpr rfl)).symm
+        · intro hread b hab
+          have : (budgetReadC st.agent_budget G).val = b := (hR.budget G b hactiveG).mp hab
+          omega
       · rw [if_neg hG]
         constructor
         · rintro (⟨hp, _⟩ | ⟨_, hab⟩)
