@@ -1053,14 +1053,14 @@ theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOrac
   simp only [Tzimtzum.return_unendorsed] at hnext
   obtain ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
       ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
-      ha_caprefresh, ha_capgrantov⟩ := hnext
+      ha_returnconf, ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root,
+      ha_capdecl, ha_caprefresh, ha_capgrantov⟩ := hnext
   refine ⟨a', hguard, ?_, ?_⟩
   · simp only [Tzimtzum.return_unendorsed]
     exact ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
       ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root, ha_capdecl,
-      ⟨ha_caprefresh, ha_capgrantov⟩⟩
+      ha_returnconf, ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root,
+      ha_capdecl, ⟨ha_caprefresh, ha_capgrantov⟩⟩
   · refine ⟨by rw [ha_root]; exact hR.root, by rw [ha_capdecl]; exact hR.cap_declass,
       by rw [ha_caprefresh]; exact hR.cap_refresh, by rw [ha_capgrantov]; exact hR.cap_grantov,
       hRact',
