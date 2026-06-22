@@ -24,7 +24,7 @@ pub enum KernelError {
     NotDirectChild,
     /// Parent is still active (use `revoke`, not `cascade_revoke`).
     ParentStillActive,
-    /// A required capability is missing (required tool cap / declassify / refresh-budget).
+    /// A required capability is missing (required tool cap / declassify / credit-budget).
     CapabilityMissing,
     /// An invocation with this id already exists.
     InvocationExists,
@@ -40,6 +40,8 @@ pub enum KernelError {
     FlowGateBlocked,
     /// The authorizer denied the (agent, tool) pair.
     AuthorizerDenied,
+    /// A cross-boundary endorsed return failed the runtime conformance oracle.
+    NotConforming,
     /// The declassification budget is exhausted.
     BudgetExhausted,
     /// An in-flight invocation has no tool binding.

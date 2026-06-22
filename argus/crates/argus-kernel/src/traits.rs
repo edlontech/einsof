@@ -37,6 +37,16 @@ pub trait ConformanceOracle {
         state: &KernelState,
         bg: &BackgroundTheory,
     ) -> bool;
+
+    /// Did the endorsed cross-boundary return from `child` to `parent` conform to the
+    /// declared contract? `return_endorsed` requires this (P2: closes the content-blind gap).
+    fn return_conforms(
+        &self,
+        child: &AgentId,
+        parent: &AgentId,
+        state: &KernelState,
+        bg: &BackgroundTheory,
+    ) -> bool;
 }
 
 pub trait EventStore {

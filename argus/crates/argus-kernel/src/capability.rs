@@ -19,7 +19,7 @@ pub enum CapKind {
     DatabaseWrite,
     Ipc,
     Declassify,
-    RefreshBudget,
+    CreditBudget,
     GrantOverride,
 }
 
@@ -42,7 +42,7 @@ impl CapKind {
         Self::DatabaseWrite,
         Self::Ipc,
         Self::Declassify,
-        Self::RefreshBudget,
+        Self::CreditBudget,
         Self::GrantOverride,
     ];
 
@@ -64,7 +64,7 @@ impl CapKind {
             Self::DatabaseWrite => "database_write",
             Self::Ipc => "ipc",
             Self::Declassify => "declassify",
-            Self::RefreshBudget => "refresh_budget",
+            Self::CreditBudget => "credit_budget",
             Self::GrantOverride => "grant_override",
         }
     }
@@ -87,7 +87,7 @@ impl CapKind {
             "database_write" => Some(Self::DatabaseWrite),
             "ipc" => Some(Self::Ipc),
             "declassify" => Some(Self::Declassify),
-            "refresh_budget" => Some(Self::RefreshBudget),
+            "credit_budget" => Some(Self::CreditBudget),
             "grant_override" => Some(Self::GrantOverride),
             _ => None,
         }
