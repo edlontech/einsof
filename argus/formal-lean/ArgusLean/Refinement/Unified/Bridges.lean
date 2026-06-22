@@ -23,42 +23,44 @@ theorem toolMetaC_of_metadata {bg : background.BackgroundTheory} {t : types.Tool
 
 set_option maxHeartbeats 1000000
 
-/-- `debit_budget` returns a record update `{ st with agent_budget := vm }` whose get-style budget read
-    debits `agent` by one level and frames every other agent, and whose key-uniqueness is preserved.
-    The structural + nodup strengthening of `debitBudget_spec` that the `return_endorsed` /
-    `invoke_complete` unified-`R` preservations need (so all non-budget fields transport definitionally
+/-- `debit_budget agent w` returns a record update `{ st with agent_budget := vm }` whose get-style
+    budget read subtracts the sensitivity weight `w` from `agent` (saturating at `0`) and frames every
+    other agent, and whose key-uniqueness is preserved. The numeric (Campaign B) strengthening of
+    `debitBudget_spec` with the `vmNodupKeys` conjunct that the `return_endorsed` / `invoke_complete` /
+    `grant_override` unified-`R` preservations need (so all non-budget fields transport definitionally
     and `R.ndBudget` re-establishes). -/
-theorem debitBudget_full (st : state.KernelState) (agent : types.AgentId)
+theorem debitBudget_full (st : state.KernelState) (agent : types.AgentId) (w : Std.U8)
     (hcap : st.agent_budget.entries.val.length < Usize.max) :
-    state.KernelState.debit_budget st agent ⦃ st1 =>
+    state.KernelState.debit_budget st agent w ⦃ st1 =>
       ∃ vm, st1 = { st with agent_budget := vm } ∧
         (∀ G, budgetReadC vm G =
-          if G = agent then debitC (budgetReadC st.agent_budget agent)
+          if G = agent then core.num.U8.saturating_sub (budgetReadC st.agent_budget agent) w
           else budgetReadC st.agent_budget G) ∧
         (vmNodupKeys st.agent_budget → vmNodupKeys vm) ⦄ := by
   unfold state.KernelState.debit_budget
   obtain ⟨bl, hblEq, hbl⟩ := spec_imp_exists (budget_spec st agent)
   rw [hblEq]
-  simp only [bind_tc_ok, budgetLevel_debit_spec, agentId_clone_spec]
+  simp only [bind_tc_ok, core.num.U8.saturating_sub, lift, agentId_clone_spec]
   obtain ⟨vm, hvmEq, hvmLast⟩ := spec_imp_exists
     (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
+      core.clone.CloneU8 st.agent_budget agent (UScalar.saturating_sub bl w) hcap)
   obtain ⟨vm2, hvm2Eq, hvm2nd⟩ := spec_imp_exists
     (vecMapInsert_nodup types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
+      core.clone.CloneU8 st.agent_budget agent (UScalar.saturating_sub bl w) hcap)
   have hvv : vm2 = vm := Result.ok.inj (hvm2Eq.symm.trans hvmEq)
   rw [hvmEq]
   simp only [bind_tc_ok, spec_ok]
   refine ⟨vm, rfl, fun G => ?_, hvv ▸ hvm2nd⟩
   show budgetReadC vm G =
-    if G = agent then debitC (budgetReadC st.agent_budget agent) else budgetReadC st.agent_budget G
+    if G = agent then core.num.U8.saturating_sub (budgetReadC st.agent_budget agent) w
+    else budgetReadC st.agent_budget G
   by_cases hG : G = agent
   · rw [if_pos hG]
-    have hvr : budgetReadC vm G = debitC bl := by
+    have hvr : budgetReadC vm G = UScalar.saturating_sub bl w := by
       unfold budgetReadC; rw [hvmLast G, if_pos hG]
-    rw [hvr, hbl]
+    rw [hvr, hbl]; rfl
   · rw [if_neg hG]
     unfold budgetReadC; rw [hvmLast G, if_neg hG]
 

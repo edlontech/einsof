@@ -84,42 +84,4 @@ theorem capMem_iff_vmsMemLast
   · rintro ⟨vs, hlast, hC⟩
     exact ⟨(N, vs), hlast, hC⟩
 
-/-! ## raw budget membership ↔ `budgetReadC` (key-uniqueness coincidence) -/
-
-/-- Under unique budget keys, the raw-membership budget clause (used by delegate/cascade/refresh:
-    "`(G, budgetC L)` is an entry, or `G` is absent and `L = bl5`") coincides with the get-style read
-    `budgetReadC` the kernel computes (`return_endorsed`/`invoke_complete`). Uses `budgetC` injectivity
-    to pin the level. The reconciliation of the two budget views the unified `R` needs. -/
-theorem budgetRaw_iff_budgetReadC (vm : collections.VecMap types.AgentId types.BudgetLevel)
-    (hnd : vmNodupKeys vm) (G : types.AgentId) (L : Tzimtzum.BudgetLevel) :
-    (((G, budgetC L) ∈ vm.entries.val) ∨
-      ((∀ bl, (G, bl) ∉ vm.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5))
-    ↔ budgetReadC vm G = budgetC L := by
-  unfold budgetReadC
-  cases hlast : vmLastEntry vm.entries.val G with
-  | none =>
-    have habsent : ∀ w, (G, w) ∉ vm.entries.val := (vmLastEntry_none_iff _ _).mp hlast
-    simp only []
-    constructor
-    · rintro (hmem | ⟨_, hL5⟩)
-      · exact absurd hmem (habsent _)
-      · subst hL5; rfl
-    · intro h
-      have hh : budgetC Tzimtzum.BudgetLevel.bl5 = budgetC L := h
-      exact Or.inr ⟨habsent, (budgetC_injective hh).symm⟩
-  | some p =>
-    obtain ⟨k, v⟩ := p
-    have hk : k = G := vmLastEntry_key _ _ _ hlast
-    subst k
-    have hmem : (G, v) ∈ vm.entries.val := vmLastEntry_mem _ _ _ hlast
-    show (((G, budgetC L) ∈ vm.entries.val) ∨
-        ((∀ bl, (G, bl) ∉ vm.entries.val) ∧ L = Tzimtzum.BudgetLevel.bl5)) ↔ v = budgetC L
-    constructor
-    · rintro (hmemL | ⟨habs, _⟩)
-      · have hL := (vmLastEntry_nodup vm.entries.val G (budgetC L) hnd).mpr hmemL
-        rw [hlast, Option.some_inj, Prod.mk.injEq] at hL
-        exact hL.2
-      · exact absurd hmem (habs v)
-    · intro h; rw [h] at hmem; exact Or.inl hmem
-
 end ArgusLean.Refinement

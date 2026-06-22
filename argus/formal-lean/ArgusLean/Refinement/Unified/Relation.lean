@@ -74,7 +74,7 @@ theorem ceilingAdmits_mapA_iff (m : collections.VecMap types.EgressKind types.Co
 structure R (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState) : Prop where
   root          : types.AgentId.root = .ok a.root_agent
   cap_declass   : a.cap_declassify = capability.CapKind.Declassify
-  cap_refresh   : a.cap_refresh_budget = capability.CapKind.RefreshBudget
+  cap_refresh   : a.cap_credit_budget = capability.CapKind.CreditBudget
   cap_grantov   : a.cap_grant_override = capability.CapKind.GrantOverride
   -- mutable fields (canonical last-match / get-style views)
   active        : ∀ x, a.agent_active x ↔ vsMem st.agent_active x
@@ -88,8 +88,8 @@ structure R (st : state.KernelState) (bg : background.BackgroundTheory) (a : Abs
   ghReceived    : ∀ ag L, a.gh_taint_received ag L ↔ vmsMemLast st.gh_taint_received ag (confC L)
   override      : ∀ ag t L, a.override_used ag t L ↔
                     vmsMemLast st.override_used ag { tool := t, level := confC L }
-  budget        : ∀ G L, a.agent_active G →
-                    (a.agent_budget G L ↔ budgetReadC st.agent_budget G = budgetC L)
+  budget        : ∀ G (L : Nat), a.agent_active G →
+                    (a.agent_budget G L ↔ (budgetReadC st.agent_budget G).val = L)
   -- immutable background relations / functions (relate to `bg`)
   toolCap       : ∀ t tmeta C, toolMetaC bg t = some tmeta →
                     (a.tool_cap t C ↔ C ∈ tmeta.capabilities.items.val)
@@ -144,5 +144,14 @@ def CfAgree {F : Type} (cfInst : traits.ConformanceOracle F) (conformance : F)
     (bg : background.BackgroundTheory) (a : AbsState) : Prop :=
   ∀ ag t, ∃ b : Bool, (∀ s, cfInst.conforms conformance ag t s bg = .ok b) ∧
     (b = true ↔ a.output_conforms ag t)
+
+/-- Return-conformance oracle agreement (Campaign B P2). The kernel's `ConformanceOracle.return_conforms`
+    is the second verdict in the same trait, keyed `child parent`; like `conforms` it is modelled
+    state-independent (`∀ s`), agreeing with the abstract `return_conforms` field. `return_endorsed`'s
+    preservation takes this as a hypothesis; threading it into the `OracleFidelity` bundle is Task 16. -/
+def RcAgree {F : Type} (cfInst : traits.ConformanceOracle F) (conformance : F)
+    (bg : background.BackgroundTheory) (a : AbsState) : Prop :=
+  ∀ c p, ∃ b : Bool, (∀ s, cfInst.return_conforms conformance c p s bg = .ok b) ∧
+    (b = true ↔ a.return_conforms c p)
 
 end ArgusLean.Refinement
