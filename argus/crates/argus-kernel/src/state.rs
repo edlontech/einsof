@@ -1,7 +1,7 @@
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
 use crate::collections::{VecMap, VecSet};
-use crate::types::{AgentId, BudgetLevel, ConfLevel, InstructionId, InvocationId, OverrideKey, ToolId};
+use crate::types::{AgentId, BUDGET_CAPACITY, ConfLevel, InstructionId, InvocationId, OverrideKey, ToolId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelState {
@@ -23,10 +23,11 @@ pub struct KernelState {
     /// (no background seeding). Exact `override_used` shape; cleared per-agent by
     /// `clear_agent_state`.
     pub flow_override: VecMap<AgentId, VecSet<OverrideKey>>,
-    /// Per-agent declassification budget (TzimtzumV2 `agent_budget`). Absence == full (`L5`):
-    /// a fresh or budget-refreshed agent has no entry. Debited on each endorsement; `Exhausted`
-    /// forces the fail-closed full-taint path. Reset to full by `clear_agent_state`.
-    pub agent_budget: VecMap<AgentId, BudgetLevel>,
+    /// Per-agent declassification budget (TzimtzumV2 `agent_budget`). Absence == capacity
+    /// (`BUDGET_CAPACITY`): a fresh or budget-credited agent has no entry. Debited by the
+    /// sensitivity weight on each endorsement; an unaffordable debit forces the fail-closed
+    /// full-taint / refusal path. Reset to capacity by `clear_agent_state`.
+    pub agent_budget: VecMap<AgentId, u8>,
 }
 
 impl KernelState {
@@ -80,22 +81,28 @@ impl KernelState {
         }
     }
 
-    /// Current declassification budget for `agent` (absence == full, `L5`).
-    pub fn budget(&self, agent: &AgentId) -> BudgetLevel {
+    /// Current declassification budget for `agent` (absence == capacity).
+    pub fn budget(&self, agent: &AgentId) -> u8 {
         match self.agent_budget.get(agent) {
             Some(b) => *b,
-            None => BudgetLevel::full(),
+            None => BUDGET_CAPACITY,
         }
     }
 
-    /// True if `agent`'s declassification budget is exhausted (blocks the zero-taint path).
-    pub fn budget_exhausted(&self, agent: &AgentId) -> bool {
-        self.budget(agent) == BudgetLevel::Exhausted
+    /// True if `agent` can pay a debit of weight `w`.
+    pub fn affordable(&self, agent: &AgentId, w: u8) -> bool {
+        self.budget(agent) >= w
     }
 
-    /// Debit `agent`'s budget one level (saturating). Materialises the entry on first debit.
-    pub fn debit_budget(&mut self, agent: &AgentId) {
-        let next = self.budget(agent).debit();
+    /// Debit `agent`'s budget by weight `w` (saturating at 0). Materialises the entry.
+    pub fn debit_budget(&mut self, agent: &AgentId, w: u8) {
+        let next = self.budget(agent).saturating_sub(w);
+        self.agent_budget.insert(agent.clone(), next);
+    }
+
+    /// Credit `agent`'s budget by `n` (saturating at capacity). Materialises the entry.
+    pub fn credit_budget(&mut self, agent: &AgentId, n: u8) {
+        let next = self.budget(agent).saturating_add(n).min(BUDGET_CAPACITY);
         self.agent_budget.insert(agent.clone(), next);
     }
 
