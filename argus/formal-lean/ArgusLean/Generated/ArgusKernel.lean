@@ -52,7 +52,7 @@ axiom alloc.string.String.Insts.CoreCmpPartialEqString.eq
 axiom alloc.string.String.Insts.CoreCloneClone.clone : String → Result String
 
 /-- [argus_kernel::types::EgressKind]
-    Source: 'crates/argus-kernel/src/types.rs', lines 172:0-177:1
+    Source: 'crates/argus-kernel/src/types.rs', lines 152:0-157:1
     Visibility: public -/
 @[discriminant isize]
 inductive types.EgressKind where
@@ -104,7 +104,7 @@ inductive capability.CapKind where
 | DatabaseWrite : capability.CapKind
 | Ipc : capability.CapKind
 | Declassify : capability.CapKind
-| RefreshBudget : capability.CapKind
+| CreditBudget : capability.CapKind
 | GrantOverride : capability.CapKind
 
 /-- [argus_kernel::background::ToolMetadata]
@@ -118,14 +118,14 @@ structure background.ToolMetadata where
   issuer : types.IssuerId
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::EgressKind}::clone]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 171:9-171:14
+    Source: 'crates/argus-kernel/src/types.rs', lines 151:9-151:14
     Visibility: public -/
 def types.EgressKind.Insts.CoreCloneClone.clone
   (self : types.EgressKind) : Result types.EgressKind := do
   ok self
 
 /-- Trait implementation: [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::EgressKind}]
-    Source: 'crates/argus-kernel/src/types.rs', lines 171:9-171:14 -/
+    Source: 'crates/argus-kernel/src/types.rs', lines 151:9-151:14 -/
 @[reducible]
 def types.EgressKind.Insts.CoreCloneClone : core.clone.Clone types.EgressKind
   := {
@@ -349,13 +349,13 @@ def background.BackgroundTheory.tool_metadata
     background.ToolMetadata.Insts.CoreCloneClone self.tools tool
 
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 171:29-171:38
+    Source: 'crates/argus-kernel/src/types.rs', lines 151:29-151:38
     Visibility: public -/
 axiom types.EgressKind.Insts.CoreCmpPartialEqEgressKind.ne
   : types.EgressKind → types.EgressKind → Result Bool
 
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}::eq]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 171:29-171:38
+    Source: 'crates/argus-kernel/src/types.rs', lines 151:29-151:38
     Visibility: public -/
 def types.EgressKind.Insts.CoreCmpPartialEqEgressKind.eq
   (self : types.EgressKind) (other : types.EgressKind) : Result Bool := do
@@ -364,7 +364,7 @@ def types.EgressKind.Insts.CoreCmpPartialEqEgressKind.eq
   ok (self1 = other1)
 
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}]
-    Source: 'crates/argus-kernel/src/types.rs', lines 171:29-171:38 -/
+    Source: 'crates/argus-kernel/src/types.rs', lines 151:29-151:38 -/
 @[reducible]
 def types.EgressKind.Insts.CoreCmpPartialEqEgressKind : core.cmp.PartialEq
   types.EgressKind types.EgressKind := {
@@ -663,7 +663,7 @@ def capability.CapKind.ALL : Array capability.CapKind 18#usize :=
     capability.CapKind.Clipboard, capability.CapKind.BrowserNavigate,
     capability.CapKind.DatabaseRead, capability.CapKind.DatabaseWrite,
     capability.CapKind.Ipc, capability.CapKind.Declassify,
-    capability.CapKind.RefreshBudget, capability.CapKind.GrantOverride
+    capability.CapKind.CreditBudget, capability.CapKind.GrantOverride
     ]
 
 /-- [argus_kernel::collections::{argus_kernel::collections::VecMap<K, V>}::new]:
@@ -1400,7 +1400,7 @@ def collections.VecSet.at
   alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice T) self.items i
 
 /-- [argus_kernel::error::KernelError]
-    Source: 'crates/argus-kernel/src/error.rs', lines 6:0-49:1
+    Source: 'crates/argus-kernel/src/error.rs', lines 6:0-51:1
     Visibility: public -/
 @[discriminant isize]
 inductive error.KernelError where
@@ -1422,6 +1422,7 @@ inductive error.KernelError where
 | TargetHasInFlight : error.KernelError
 | FlowGateBlocked : error.KernelError
 | AuthorizerDenied : error.KernelError
+| NotConforming : error.KernelError
 | BudgetExhausted : error.KernelError
 | MissingToolBinding : error.KernelError
 | EventStore : error.KernelError
@@ -1439,7 +1440,7 @@ def types.InvocationId := String
 def types.AgentId := String
 
 /-- [argus_kernel::event::KernelAction]
-    Source: 'crates/argus-kernel/src/event.rs', lines 5:0-60:1
+    Source: 'crates/argus-kernel/src/event.rs', lines 5:0-61:1
     Visibility: public -/
 @[discriminant isize]
 inductive event.KernelAction where
@@ -1464,7 +1465,7 @@ inductive event.KernelAction where
   types.AgentId →
   types.ConfLevel →
   event.KernelAction
-| SentinelRefreshBudget : types.AgentId → event.KernelAction
+| SentinelCreditBudget : types.AgentId → Std.U8 → event.KernelAction
 | LoadInstruction :
   types.AgentId →
   types.InstructionId →
@@ -1476,18 +1477,6 @@ inductive event.KernelAction where
   types.ConfLevel →
   event.KernelAction
 
-/-- [argus_kernel::types::BudgetLevel]
-    Source: 'crates/argus-kernel/src/types.rs', lines 143:0-150:1
-    Visibility: public -/
-@[discriminant isize]
-inductive types.BudgetLevel where
-| Exhausted : types.BudgetLevel
-| L1 : types.BudgetLevel
-| L2 : types.BudgetLevel
-| L3 : types.BudgetLevel
-| L4 : types.BudgetLevel
-| L5 : types.BudgetLevel
-
 /-- [argus_kernel::types::OverrideKey]
     Source: 'crates/argus-kernel/src/types.rs', lines 122:0-125:1
     Visibility: public -/
@@ -1496,7 +1485,7 @@ structure types.OverrideKey where
   level : types.ConfLevel
 
 /-- [argus_kernel::state::KernelState]
-    Source: 'crates/argus-kernel/src/state.rs', lines 7:0-30:1
+    Source: 'crates/argus-kernel/src/state.rs', lines 7:0-31:1
     Visibility: public -/
 structure state.KernelState where
   agent_active : collections.VecSet types.AgentId
@@ -1519,22 +1508,7 @@ structure state.KernelState where
     types.OverrideKey)
   flow_override : collections.VecMap types.AgentId (collections.VecSet
     types.OverrideKey)
-  agent_budget : collections.VecMap types.AgentId types.BudgetLevel
-
-/-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::BudgetLevel}::clone]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 142:9-142:14
-    Visibility: public -/
-def types.BudgetLevel.Insts.CoreCloneClone.clone
-  (self : types.BudgetLevel) : Result types.BudgetLevel := do
-  ok self
-
-/-- Trait implementation: [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::BudgetLevel}]
-    Source: 'crates/argus-kernel/src/types.rs', lines 142:9-142:14 -/
-@[reducible]
-def types.BudgetLevel.Insts.CoreCloneClone : core.clone.Clone types.BudgetLevel
-  := {
-  clone := types.BudgetLevel.Insts.CoreCloneClone.clone
-}
+  agent_budget : collections.VecMap types.AgentId Std.U8
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::OverrideKey}::clone]:
     Source: 'crates/argus-kernel/src/types.rs', lines 121:9-121:14
@@ -1636,7 +1610,7 @@ def types.AgentId.Insts.CoreCloneClone : core.clone.Clone types.AgentId := {
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::initial]: loop body 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-40:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-41:9
     Visibility: public -/
 @[rust_loop_body]
 def state.KernelState.initial_loop.body
@@ -1657,7 +1631,7 @@ def state.KernelState.initial_loop.body
   else ok (done all_caps)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::initial]: loop 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-40:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-41:9
     Visibility: public -/
 @[rust_loop]
 def state.KernelState.initial_loop
@@ -1669,7 +1643,7 @@ def state.KernelState.initial_loop
     (all_caps, i)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::initial]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 33:4-63:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 34:4-64:5
     Visibility: public -/
 def state.KernelState.initial : Result state.KernelState := do
   let root ← types.AgentId.root
@@ -1727,8 +1701,7 @@ def state.KernelState.initial : Result state.KernelState := do
       types.OverrideKey.Insts.CoreCloneClone)
   let vm6 ←
     collections.VecMap.new types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId
-      types.BudgetLevel.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
   ok
     {
       agent_active := agent_active1,
@@ -1782,7 +1755,7 @@ def types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey : core.cmp.PartialEq
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::override_consumed]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 67:4-72:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 68:4-73:5
     Visibility: public -/
 def state.KernelState.override_consumed
   (self : state.KernelState) (agent : types.AgentId) (tool : types.ToolId)
@@ -1803,7 +1776,7 @@ def state.KernelState.override_consumed
       { tool := ti, level }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::has_flow_override]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 76:4-81:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 77:4-82:5
     Visibility: public -/
 def state.KernelState.has_flow_override
   (self : state.KernelState) (agent : types.AgentId) (tool : types.ToolId)
@@ -1823,72 +1796,65 @@ def state.KernelState.has_flow_override
       types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey grants
       { tool := ti, level }
 
-/-- [argus_kernel::types::{argus_kernel::types::BudgetLevel}::full]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 154:4-156:5
+/-- [argus_kernel::types::BUDGET_CAPACITY]
+    Source: 'crates/argus-kernel/src/types.rs', lines 139:0-139:35
     Visibility: public -/
-def types.BudgetLevel.full : Result types.BudgetLevel := do
-  ok types.BudgetLevel.L5
+@[global_simps, irreducible] def types.BUDGET_CAPACITY : Std.U8 := 16#u8
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::budget]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 84:4-89:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 85:4-90:5
     Visibility: public -/
 def state.KernelState.budget
-  (self : state.KernelState) (agent : types.AgentId) :
-  Result types.BudgetLevel
-  := do
+  (self : state.KernelState) (agent : types.AgentId) : Result Std.U8 := do
   let o ←
     collections.VecMap.get types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId
-      types.BudgetLevel.Insts.CoreCloneClone self.agent_budget agent
+      types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
+      self.agent_budget agent
   match o with
-  | none => types.BudgetLevel.full
+  | none => ok types.BUDGET_CAPACITY
   | some b => ok b
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::BudgetLevel> for argus_kernel::types::BudgetLevel}::eq]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 142:29-142:38
+/-- [argus_kernel::state::{argus_kernel::state::KernelState}::affordable]:
+    Source: 'crates/argus-kernel/src/state.rs', lines 93:4-95:5
     Visibility: public -/
-def types.BudgetLevel.Insts.CoreCmpPartialEqBudgetLevel.eq
-  (self : types.BudgetLevel) (other : types.BudgetLevel) : Result Bool := do
-  let self1 := read_discriminant self
-  let other1 := read_discriminant other
-  ok (self1 = other1)
-
-/-- [argus_kernel::state::{argus_kernel::state::KernelState}::budget_exhausted]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 92:4-94:5
-    Visibility: public -/
-def state.KernelState.budget_exhausted
-  (self : state.KernelState) (agent : types.AgentId) : Result Bool := do
-  let bl ← state.KernelState.budget self agent
-  types.BudgetLevel.Insts.CoreCmpPartialEqBudgetLevel.eq bl
-    types.BudgetLevel.Exhausted
-
-/-- [argus_kernel::types::{argus_kernel::types::BudgetLevel}::debit]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 159:4-168:5
-    Visibility: public -/
-def types.BudgetLevel.debit
-  (self : types.BudgetLevel) : Result types.BudgetLevel := do
-  match self with
-  | types.BudgetLevel.Exhausted => ok types.BudgetLevel.Exhausted
-  | types.BudgetLevel.L1 => ok types.BudgetLevel.Exhausted
-  | types.BudgetLevel.L2 => ok types.BudgetLevel.L1
-  | types.BudgetLevel.L3 => ok types.BudgetLevel.L2
-  | types.BudgetLevel.L4 => ok types.BudgetLevel.L3
-  | types.BudgetLevel.L5 => ok types.BudgetLevel.L4
+def state.KernelState.affordable
+  (self : state.KernelState) (agent : types.AgentId) (w : Std.U8) :
+  Result Bool
+  := do
+  let i ← state.KernelState.budget self agent
+  ok (i >= w)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::debit_budget]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 97:4-100:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 98:4-101:5
     Visibility: public -/
 def state.KernelState.debit_budget
-  (self : state.KernelState) (agent : types.AgentId) :
+  (self : state.KernelState) (agent : types.AgentId) (w : Std.U8) :
   Result state.KernelState
   := do
-  let bl ← state.KernelState.budget self agent
-  let next ← types.BudgetLevel.debit bl
+  let i ← state.KernelState.budget self agent
+  let next ← lift (core.num.U8.saturating_sub i w)
   let ai ← types.AgentId.Insts.CoreCloneClone.clone agent
   let vm ←
     collections.VecMap.insert types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId
-      types.BudgetLevel.Insts.CoreCloneClone self.agent_budget ai next
+      types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
+      self.agent_budget ai next
+  ok { self with agent_budget := vm }
+
+/-- [argus_kernel::state::{argus_kernel::state::KernelState}::credit_budget]:
+    Source: 'crates/argus-kernel/src/state.rs', lines 104:4-107:5
+    Visibility: public -/
+def state.KernelState.credit_budget
+  (self : state.KernelState) (agent : types.AgentId) (n : Std.U8) :
+  Result state.KernelState
+  := do
+  let i ← state.KernelState.budget self agent
+  let i1 ← lift (core.num.U8.saturating_add i n)
+  let next ← lift (core.cmp.impls.OrdU8.min i1 types.BUDGET_CAPACITY)
+  let ai ← types.AgentId.Insts.CoreCloneClone.clone agent
+  let vm ←
+    collections.VecMap.insert types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
+      self.agent_budget ai next
   ok { self with agent_budget := vm }
 
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ConfLevel> for argus_kernel::types::ConfLevel}::ne]:
@@ -1907,7 +1873,7 @@ def types.ConfLevel.Insts.CoreCmpPartialEqConfLevel : core.cmp.PartialEq
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_taint]: loop body 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 110:8-118:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 117:8-125:9
     Visibility: public -/
 @[rust_loop_body]
 def state.KernelState.speculative_taint_loop.body
@@ -1947,7 +1913,7 @@ def state.KernelState.speculative_taint_loop.body
   else ok (done taint)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_taint]: loop 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 110:8-118:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 117:8-125:9
     Visibility: public -/
 @[rust_loop]
 def state.KernelState.speculative_taint_loop
@@ -1963,7 +1929,7 @@ def state.KernelState.speculative_taint_loop
     (taint, j)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_taint]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 102:4-121:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 109:4-128:5
     Visibility: public -/
 def state.KernelState.speculative_taint
   (self : state.KernelState) (agent : types.AgentId)
@@ -2001,14 +1967,16 @@ structure traits.ContentGateOracle (Self : Type) where
     background.BackgroundTheory → Result Bool
 
 /-- Trait declaration: [argus_kernel::traits::ConformanceOracle]
-    Source: 'crates/argus-kernel/src/traits.rs', lines 32:0-40:1
+    Source: 'crates/argus-kernel/src/traits.rs', lines 32:0-50:1
     Visibility: public -/
 structure traits.ConformanceOracle (Self : Type) where
   conforms : Self → types.AgentId → types.ToolId → state.KernelState →
     background.BackgroundTheory → Result Bool
+  return_conforms : Self → types.AgentId → types.AgentId →
+    state.KernelState → background.BackgroundTheory → Result Bool
 
 /-- [argus_kernel::transitions::FlowDecision]
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 17:0-21:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 20:0-24:1 -/
 @[discriminant isize]
 inductive transitions.FlowDecision where
 | Allowed : transitions.FlowDecision
@@ -2016,7 +1984,7 @@ inductive transitions.FlowDecision where
 | Denied : transitions.FlowDecision
 
 /-- [argus_kernel::transitions::flow_decision]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 23:0-51:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 26:0-54:1 -/
 def transitions.flow_decision
   {T0 : Type} (traitsContentGateOracleInst : traits.ContentGateOracle T0)
   (bg : background.BackgroundTheory) (content_gate : T0)
@@ -2043,7 +2011,7 @@ def transitions.flow_decision
     else ok transitions.FlowDecision.Denied
 
 /-- [argus_kernel::transitions::clear_agent_state]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 53:0-62:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 56:0-65:1 -/
 def transitions.clear_agent_state
   (st : state.KernelState) (agent : types.AgentId) :
   Result state.KernelState
@@ -2085,8 +2053,8 @@ def transitions.clear_agent_state
       types.OverrideKey.Insts.CoreCloneClone) st.flow_override agent
   let vm7 ←
     collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId
-      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent
+      types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
+      st.agent_budget agent
   ok
     {
       st
@@ -2102,7 +2070,7 @@ def transitions.clear_agent_state
     }
 
 /-- [argus_kernel::transitions::agent_parent_drop_endpoint]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 73:4-80:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 76:4-83:5 -/
 @[rust_loop_body]
 def transitions.agent_parent_drop_endpoint_loop.body
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2149,7 +2117,7 @@ def transitions.agent_parent_drop_endpoint_loop.body
   else ok (done kept)
 
 /-- [argus_kernel::transitions::agent_parent_drop_endpoint]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 73:4-80:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 76:4-83:5 -/
 @[rust_loop]
 def transitions.agent_parent_drop_endpoint_loop
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2163,7 +2131,7 @@ def transitions.agent_parent_drop_endpoint_loop
     (kept, i)
 
 /-- [argus_kernel::transitions::agent_parent_drop_endpoint]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 67:0-82:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 70:0-85:1 -/
 def transitions.agent_parent_drop_endpoint
   (map : collections.VecMap types.AgentId types.AgentId)
   (dropped : types.AgentId) :
@@ -2176,7 +2144,7 @@ def transitions.agent_parent_drop_endpoint
   transitions.agent_parent_drop_endpoint_loop map dropped kept 0#usize
 
 /-- [argus_kernel::transitions::agent_parent_drop_child]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 93:4-99:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 96:4-102:5 -/
 @[rust_loop_body]
 def transitions.agent_parent_drop_child_loop.body
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2217,7 +2185,7 @@ def transitions.agent_parent_drop_child_loop.body
   else ok (done kept)
 
 /-- [argus_kernel::transitions::agent_parent_drop_child]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 93:4-99:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 96:4-102:5 -/
 @[rust_loop]
 def transitions.agent_parent_drop_child_loop
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2231,7 +2199,7 @@ def transitions.agent_parent_drop_child_loop
     (kept, i)
 
 /-- [argus_kernel::transitions::agent_parent_drop_child]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 87:0-101:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 90:0-104:1 -/
 def transitions.agent_parent_drop_child
   (map : collections.VecMap types.AgentId types.AgentId)
   (dropped : types.AgentId) :
@@ -2244,13 +2212,13 @@ def transitions.agent_parent_drop_child
   transitions.agent_parent_drop_child_loop map dropped kept 0#usize
 
 /-- [argus_kernel::transitions::GateAccum]
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 107:0-110:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 110:0-113:1 -/
 structure transitions.GateAccum where
   denied : Bool
   to_consume : collections.VecSet types.OverrideKey
 
 /-- [argus_kernel::transitions::gate_egress]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 125:4-137:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 128:4-140:5 -/
 @[rust_loop_body]
 def transitions.gate_egress_loop.body
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
@@ -2289,7 +2257,7 @@ def transitions.gate_egress_loop.body
   else ok (done acc)
 
 /-- [argus_kernel::transitions::gate_egress]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 125:4-137:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 128:4-140:5 -/
 @[rust_loop]
 def transitions.gate_egress_loop
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
@@ -2306,7 +2274,7 @@ def transitions.gate_egress_loop
     (acc, i)
 
 /-- [argus_kernel::transitions::gate_egress]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 114:0-139:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 117:0-142:1 -/
 @[reducible]
 def transitions.gate_egress
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
@@ -2320,7 +2288,7 @@ def transitions.gate_egress
     agent tool st level egress_set acc 0#usize
 
 /-- [argus_kernel::transitions::register_tool]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 141:0-160:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 144:0-163:1
     Visibility: public -/
 def transitions.register_tool
   (st : state.KernelState) (bg : background.BackgroundTheory)
@@ -2351,7 +2319,7 @@ def transitions.register_tool
     else ok (core.result.Result.Err error.KernelError.UntrustedIssuer)
 
 /-- [argus_kernel::transitions::load_instruction]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 162:0-182:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 165:0-185:1
     Visibility: public -/
 def transitions.load_instruction
   (st : state.KernelState) (bg : background.BackgroundTheory)
@@ -2388,7 +2356,7 @@ def transitions.load_instruction
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::delegate]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 184:0-207:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 187:0-210:1
     Visibility: public -/
 def transitions.delegate
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2440,7 +2408,7 @@ def transitions.delegate
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::grant_capability]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 209:0-232:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 212:0-235:1
     Visibility: public -/
 def transitions.grant_capability
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2493,7 +2461,7 @@ def transitions.grant_capability
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::revoke]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 234:0-259:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 237:0-262:1
     Visibility: public -/
 def transitions.revoke
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2550,7 +2518,7 @@ def transitions.revoke
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::cascade_revoke]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 261:0-286:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 264:0-289:1
     Visibility: public -/
 def transitions.cascade_revoke
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2606,7 +2574,7 @@ def transitions.cascade_revoke
       else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::invoke_start]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 323:4-329:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 326:4-332:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.invoke_start_loop0.body
@@ -2637,7 +2605,7 @@ def transitions.invoke_start_loop0.body
   else ok (done missing_cap)
 
 /-- [argus_kernel::transitions::invoke_start]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 323:4-329:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 326:4-332:5
     Visibility: public -/
 @[rust_loop]
 def transitions.invoke_start_loop0
@@ -2653,7 +2621,7 @@ def transitions.invoke_start_loop0
     (missing_cap, ci)
 
 /-- [argus_kernel::transitions::invoke_start]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 342:4-346:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 345:4-349:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.invoke_start_loop1.body
@@ -2674,8 +2642,7 @@ def transitions.invoke_start_loop1.body
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (tool : types.ToolId) (vs2 : collections.VecSet types.EgressKind)
   (spec_taint : collections.VecSet types.ConfLevel)
@@ -2714,7 +2681,7 @@ def transitions.invoke_start_loop1.body
   else ok (done acc)
 
 /-- [argus_kernel::transitions::invoke_start]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 342:4-346:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 345:4-349:5
     Visibility: public -/
 @[rust_loop]
 def transitions.invoke_start_loop1
@@ -2735,8 +2702,7 @@ def transitions.invoke_start_loop1
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (tool : types.ToolId) (vs2 : collections.VecSet types.EgressKind)
   (acc : transitions.GateAccum)
@@ -2750,7 +2716,7 @@ def transitions.invoke_start_loop1
     (acc, li)
 
 /-- [argus_kernel::transitions::invoke_start]: loop body 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 353:4-372:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 356:4-375:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.invoke_start_loop2.body
@@ -2771,8 +2737,7 @@ def transitions.invoke_start_loop2.body
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (conf_floor : types.ConfLevel)
   (agent_flights : collections.VecSet types.InvocationId)
@@ -2828,7 +2793,7 @@ def transitions.invoke_start_loop2.body
   else ok (done acc)
 
 /-- [argus_kernel::transitions::invoke_start]: loop 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 353:4-372:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 356:4-375:5
     Visibility: public -/
 @[rust_loop]
 def transitions.invoke_start_loop2
@@ -2849,8 +2814,7 @@ def transitions.invoke_start_loop2
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (conf_floor : types.ConfLevel) (acc : transitions.GateAccum)
   (agent_flights : collections.VecSet types.InvocationId) (fi : Std.Usize) :
@@ -2863,7 +2827,7 @@ def transitions.invoke_start_loop2
     (acc, fi)
 
 /-- [argus_kernel::transitions::invoke_start]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 288:0-393:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 291:0-396:1
     Visibility: public -/
 def transitions.invoke_start
   {A : Type} {C : Type} (traitsAuthorizerOracleInst : traits.AuthorizerOracle
@@ -3008,8 +2972,18 @@ def transitions.invoke_start
       else ok (core.result.Result.Err error.KernelError.ToolNotRegistered)
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
+/-- [argus_kernel::types::declass_weight]:
+    Source: 'crates/argus-kernel/src/types.rs', lines 142:0-149:1
+    Visibility: public -/
+def types.declass_weight (level : types.ConfLevel) : Result Std.U8 := do
+  match level with
+  | types.ConfLevel.Public => ok 0#u8
+  | types.ConfLevel.Internal => ok 1#u8
+  | types.ConfLevel.Sensitive => ok 2#u8
+  | types.ConfLevel.Restricted => ok 4#u8
+
 /-- [argus_kernel::transitions::invoke_complete]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 395:0-435:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 398:0-439:1
     Visibility: public -/
 def transitions.invoke_complete
   {F : Type} (traitsConformanceOracleInst : traits.ConformanceOracle F)
@@ -3058,6 +3032,14 @@ def transitions.invoke_complete
             event.KernelAction.InvokeComplete agent inv))
         | some p =>
           let (conf_floor, output_bounded) := p
+          let weight ← types.declass_weight conf_floor
+          let already_tainted ←
+            collections.VecMapKVecSet.set_contains
+              types.AgentId.Insts.CoreCloneClone
+              types.AgentId.Insts.CoreCmpPartialEqAgentId
+              types.ConfLevel.Insts.CoreCloneClone
+              types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.taint_levels
+              agent conf_floor
           let zero_taint ←
             if output_bounded
             then
@@ -3068,15 +3050,18 @@ def transitions.invoke_complete
               if b2
               then
                 let b3 ←
-                  state.KernelState.budget_exhausted
-                    { st with in_flight := vm } agent
-                ok (¬ b3)
+                  state.KernelState.affordable { st with in_flight := vm }
+                    agent weight
+                if b3
+                then ok (¬ already_tainted)
+                else ok false
               else ok false
             else ok false
           if zero_taint
           then
             let st1 ←
               state.KernelState.debit_budget { st with in_flight := vm } agent
+                weight
             ok (core.result.Result.Ok (st1, event.KernelAction.InvokeComplete
               agent inv))
           else
@@ -3107,10 +3092,11 @@ def transitions.invoke_complete
   else ok (core.result.Result.Err error.KernelError.NotInFlight)
 
 /-- [argus_kernel::transitions::return_endorsed]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 437:0-468:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 441:0-476:1
     Visibility: public -/
 def transitions.return_endorsed
-  (st : state.KernelState) (_bg : background.BackgroundTheory)
+  {F : Type} (traitsConformanceOracleInst : traits.ConformanceOracle F)
+  (st : state.KernelState) (bg : background.BackgroundTheory) (conformance : F)
   (child : types.AgentId) (parent : types.AgentId) :
   Result (core.result.Result (state.KernelState × event.KernelAction)
     error.KernelError)
@@ -3155,19 +3141,26 @@ def transitions.return_endorsed
               child capability.CapKind.Declassify
           if b4
           then
-            let b5 ← state.KernelState.budget_exhausted st parent
+            let b5 ←
+              traitsConformanceOracleInst.return_conforms conformance child
+                parent st bg
             if b5
-            then ok (core.result.Result.Err error.KernelError.BudgetExhausted)
-            else
-              let st1 ← state.KernelState.debit_budget st parent
-              ok (core.result.Result.Ok (st1, event.KernelAction.ReturnEndorsed
-                child parent))
+            then
+              let b6 ← state.KernelState.affordable st parent 2#u8
+              if b6
+              then
+                let st1 ← state.KernelState.debit_budget st parent 2#u8
+                ok (core.result.Result.Ok (st1,
+                  event.KernelAction.ReturnEndorsed child parent))
+              else
+                ok (core.result.Result.Err error.KernelError.BudgetExhausted)
+            else ok (core.result.Result.Err error.KernelError.NotConforming)
           else ok (core.result.Result.Err error.KernelError.CapabilityMissing)
       else ok (core.result.Result.Err error.KernelError.AgentInactive)
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 500:8-510:9
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 508:8-518:9
     Visibility: public -/
 @[rust_loop_body]
 def transitions.return_unendorsed_loop0_loop0.body
@@ -3188,8 +3181,7 @@ def transitions.return_unendorsed_loop0_loop0.body
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C)
   (parent : types.AgentId)
   (parent_flights : collections.VecSet types.InvocationId)
@@ -3245,7 +3237,7 @@ def transitions.return_unendorsed_loop0_loop0.body
   else ok (done acc)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 500:8-510:9
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 508:8-518:9
     Visibility: public -/
 @[rust_loop]
 def transitions.return_unendorsed_loop0_loop0
@@ -3266,8 +3258,7 @@ def transitions.return_unendorsed_loop0_loop0
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C)
   (parent : types.AgentId) (acc : transitions.GateAccum)
   (parent_flights : collections.VecSet types.InvocationId)
@@ -3281,7 +3272,7 @@ def transitions.return_unendorsed_loop0_loop0
     (acc, fi)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 497:4-512:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 505:4-520:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.return_unendorsed_loop0.body
@@ -3302,8 +3293,7 @@ def transitions.return_unendorsed_loop0.body
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C)
   (parent : types.AgentId) (child_taint : collections.VecSet types.ConfLevel)
   (parent_flights : collections.VecSet types.InvocationId)
@@ -3328,7 +3318,7 @@ def transitions.return_unendorsed_loop0.body
   else ok (done acc)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 497:4-512:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 505:4-520:5
     Visibility: public -/
 @[rust_loop]
 def transitions.return_unendorsed_loop0
@@ -3349,8 +3339,7 @@ def transitions.return_unendorsed_loop0
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C)
   (parent : types.AgentId) (child_taint : collections.VecSet types.ConfLevel)
   (acc : transitions.GateAccum)
@@ -3364,7 +3353,7 @@ def transitions.return_unendorsed_loop0
     (acc, li)
 
 /-- [argus_kernel::transitions::return_unendorsed]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 470:0-527:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 478:0-535:1
     Visibility: public -/
 def transitions.return_unendorsed
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
@@ -3487,7 +3476,7 @@ def transitions.return_unendorsed
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::sentinel_elevate_taint]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 547:4-562:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 555:4-570:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.sentinel_elevate_taint_loop.body
@@ -3508,8 +3497,7 @@ def transitions.sentinel_elevate_taint_loop.body
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (level : types.ConfLevel)
   (in_flight_invs : collections.VecSet types.InvocationId)
@@ -3567,7 +3555,7 @@ def transitions.sentinel_elevate_taint_loop.body
   else ok (done (acc, missing_binding))
 
 /-- [argus_kernel::transitions::sentinel_elevate_taint]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 547:4-562:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 555:4-570:5
     Visibility: public -/
 @[rust_loop]
 def transitions.sentinel_elevate_taint_loop
@@ -3588,8 +3576,7 @@ def transitions.sentinel_elevate_taint_loop
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey))
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm10 : collections.VecMap types.AgentId types.BudgetLevel)
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (level : types.ConfLevel) (acc : transitions.GateAccum)
   (missing_binding : Bool)
@@ -3604,7 +3591,7 @@ def transitions.sentinel_elevate_taint_loop
     (acc, missing_binding, fi)
 
 /-- [argus_kernel::transitions::sentinel_elevate_taint]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 529:0-578:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 537:0-586:1
     Visibility: public -/
 def transitions.sentinel_elevate_taint
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
@@ -3681,12 +3668,12 @@ def transitions.sentinel_elevate_taint
            }, event.KernelAction.SentinelElevateTaint agent level))
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
-/-- [argus_kernel::transitions::sentinel_refresh_budget]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 585:0-600:1
+/-- [argus_kernel::transitions::sentinel_credit_budget]:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 591:0-606:1
     Visibility: public -/
-def transitions.sentinel_refresh_budget
+def transitions.sentinel_credit_budget
   (st : state.KernelState) (_bg : background.BackgroundTheory)
-  (agent : types.AgentId) :
+  (agent : types.AgentId) (amount : Std.U8) :
   Result (core.result.Result (state.KernelState × event.KernelAction)
     error.KernelError)
   := do
@@ -3700,20 +3687,17 @@ def transitions.sentinel_refresh_budget
         types.AgentId.Insts.CoreCmpPartialEqAgentId
         capability.CapKind.Insts.CoreCloneClone
         capability.CapKind.Insts.CoreCmpPartialEqCapKind st.agent_cap agent
-        capability.CapKind.RefreshBudget
+        capability.CapKind.CreditBudget
     if b1
     then
-      let vm ←
-        collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
-          types.AgentId.Insts.CoreCmpPartialEqAgentId
-          types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent
-      ok (core.result.Result.Ok ({ st with agent_budget := vm },
-        event.KernelAction.SentinelRefreshBudget agent))
+      let st1 ← state.KernelState.credit_budget st agent amount
+      ok (core.result.Result.Ok (st1, event.KernelAction.SentinelCreditBudget
+        agent amount))
     else ok (core.result.Result.Err error.KernelError.CapabilityMissing)
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::grant_override]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 607:0-642:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 613:0-648:1
     Visibility: public -/
 def transitions.grant_override
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -3741,10 +3725,9 @@ def transitions.grant_override
           capability.CapKind.GrantOverride
       if b2
       then
-        let b3 ← state.KernelState.budget_exhausted st granter
+        let b3 ← state.KernelState.affordable st granter 1#u8
         if b3
-        then ok (core.result.Result.Err error.KernelError.BudgetExhausted)
-        else
+        then
           let b4 ←
             collections.VecMapKVecSet.set_nonempty
               types.AgentId.Insts.CoreCloneClone
@@ -3774,8 +3757,10 @@ def transitions.grant_override
             let st1 ←
               state.KernelState.debit_budget
                 { st with override_used := vm1, flow_override := vm } granter
+                1#u8
             ok (core.result.Result.Ok (st1, event.KernelAction.GrantOverride
               granter target tool level))
+        else ok (core.result.Result.Err error.KernelError.BudgetExhausted)
       else ok (core.result.Result.Err error.KernelError.CapabilityMissing)
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
   else ok (core.result.Result.Err error.KernelError.AgentInactive)

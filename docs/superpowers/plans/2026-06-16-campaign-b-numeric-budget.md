@@ -248,7 +248,7 @@ Each task ends with `cargo test -p argus-kernel` green. TDD: failing test first 
 **Files:**
 - Modify: `argus/crates/argus-kernel/src/types.rs`
 
-- [ ] **Step 1: Write the failing test** (replace the `budget_level_*` tests at the bottom of `types.rs`):
+- [x] **Step 1: Write the failing test** (replace the `budget_level_*` tests at the bottom of `types.rs`):
 
 ```rust
 #[test]
@@ -260,9 +260,9 @@ fn declass_weight_by_level() {
 }
 ```
 
-- [ ] **Step 2: Run it** — `cargo test -p argus-kernel declass_weight` → FAIL (`declass_weight` undefined).
+- [x] **Step 2: Run it** — `cargo test -p argus-kernel declass_weight` → FAIL (`declass_weight` undefined).
 
-- [ ] **Step 3: Delete `enum BudgetLevel` + its `impl`** (lines ~138-169) and add the free function + capacity constant:
+- [x] **Step 3: Delete `enum BudgetLevel` + its `impl`** (lines ~138-169) and add the free function + capacity constant:
 
 ```rust
 /// Protocol declassification budget capacity (fixed; not operator-configurable).
@@ -279,16 +279,16 @@ pub fn declass_weight(level: ConfLevel) -> u8 {
 }
 ```
 
-- [ ] **Step 4: Run** — `cargo test -p argus-kernel declass_weight` → PASS (other modules still break; fixed next tasks).
+- [x] **Step 4: Run** — `cargo test -p argus-kernel declass_weight` → PASS (other modules still break; fixed next tasks).
 
-- [ ] **Step 5: Commit** — `feat(argus): declass_weight + BUDGET_CAPACITY, drop BudgetLevel`
+- [x] **Step 5: Commit** — `feat(argus): declass_weight + BUDGET_CAPACITY, drop BudgetLevel`
 
 ### Task 8: state.rs — numeric budget field + helpers
 
 **Files:**
 - Modify: `argus/crates/argus-kernel/src/state.rs`
 
-- [ ] **Step 1: Swap the field + import.** `use crate::types::{… , BudgetLevel, …}` drops `BudgetLevel`; the field becomes:
+- [x] **Step 1: Swap the field + import.** `use crate::types::{… , BudgetLevel, …}` drops `BudgetLevel`; the field becomes:
 
 ```rust
     /// Per-agent declassification budget (TzimtzumV2 `agent_budget`). Absence == capacity
@@ -298,7 +298,7 @@ pub fn declass_weight(level: ConfLevel) -> u8 {
     pub agent_budget: VecMap<AgentId, u8>,
 ```
 
-- [ ] **Step 2: Replace the budget helpers** (`budget`, `budget_exhausted`, `debit_budget`) with the numeric set:
+- [x] **Step 2: Replace the budget helpers** (`budget`, `budget_exhausted`, `debit_budget`) with the numeric set:
 
 ```rust
     /// Current declassification budget for `agent` (absence == capacity).
@@ -329,23 +329,23 @@ pub fn declass_weight(level: ConfLevel) -> u8 {
 
 Add `BUDGET_CAPACITY` to the `use crate::types::{…}` import. Note `debit_budget` now takes a weight argument (callers updated in Task 10).
 
-- [ ] **Step 3:** `cargo build -p argus-kernel` — only `transitions.rs` should still reference the old API. Commit — `feat(argus): numeric agent_budget + affordable/credit helpers`
+- [x] **Step 3:** `cargo build -p argus-kernel` — only `transitions.rs` should still reference the old API. Commit — `feat(argus): numeric agent_budget + affordable/credit helpers`
 
 ### Task 9: capability.rs + error.rs + traits.rs — credit cap, NotConforming, return_conforms
 
 **Files:**
 - Modify: `argus/crates/argus-kernel/src/capability.rs`, `src/error.rs`, `src/traits.rs`
 
-- [ ] **Step 1: Rename the cap** `RefreshBudget` → `CreditBudget` in the `CapKind` enum, `ALL` array, `as_str` (`"refresh_budget"` → `"credit_budget"`), and `from_catalog_name`. Keep the 18-variant count. The roundtrip test still passes.
+- [x] **Step 1: Rename the cap** `RefreshBudget` → `CreditBudget` in the `CapKind` enum, `ALL` array, `as_str` (`"refresh_budget"` → `"credit_budget"`), and `from_catalog_name`. Keep the 18-variant count. The roundtrip test still passes.
 
-- [ ] **Step 2: Add the error variant** to `KernelError`:
+- [x] **Step 2: Add the error variant** to `KernelError`:
 
 ```rust
     /// A cross-boundary endorsed return failed the runtime conformance oracle.
     NotConforming,
 ```
 
-- [ ] **Step 3: Add the conformance method** to `ConformanceOracle` (a distinct verdict from `conforms`, which is tool-keyed; this one is child→parent):
+- [x] **Step 3: Add the conformance method** to `ConformanceOracle` (a distinct verdict from `conforms`, which is tool-keyed; this one is child→parent):
 
 ```rust
     /// Did the endorsed cross-boundary return from `child` to `parent` conform to the
@@ -362,14 +362,14 @@ Add `BUDGET_CAPACITY` to the `use crate::types::{…}` import. Note `debit_budge
 
 (Add `BackgroundTheory` import to `traits.rs` if not already present — it is.)
 
-- [ ] **Step 4:** `cargo build -p argus-kernel` (kernel.rs test oracles + transitions still need updates; expected). Commit — `feat(argus): credit_budget cap, NotConforming, return_conforms oracle`
+- [x] **Step 4:** `cargo build -p argus-kernel` (kernel.rs test oracles + transitions still need updates; expected). Commit — `feat(argus): credit_budget cap, NotConforming, return_conforms oracle`
 
 ### Task 10: transitions.rs — wire the four actions
 
 **Files:**
 - Modify: `argus/crates/argus-kernel/src/transitions.rs`
 
-- [ ] **Step 1: invoke_complete** (lines ~417-431). The endorsed predicate gains affordability (weighted) and the already-tainted guard; the debit is weighted:
+- [x] **Step 1: invoke_complete** (lines ~417-431). The endorsed predicate gains affordability (weighted) and the already-tainted guard; the debit is weighted:
 
 ```rust
         if let Some((conf_floor, output_bounded)) = meta_info {
@@ -392,7 +392,7 @@ Add `BUDGET_CAPACITY` to the `use crate::types::{…}` import. Note `debit_budge
 
 (Verify `set_contains` is the right owned VecMap-of-VecSet membership accessor — same one used in check 2b; match the existing call sites.)
 
-- [ ] **Step 2: return_endorsed** (lines ~437-468). Thread the conformance oracle in, gate on `return_conforms`, swap exhaustion for affordability (weight 2):
+- [x] **Step 2: return_endorsed** (lines ~437-468). Thread the conformance oracle in, gate on `return_conforms`, swap exhaustion for affordability (weight 2):
 
 ```rust
 pub fn return_endorsed<F: ConformanceOracle>(
@@ -416,7 +416,7 @@ pub fn return_endorsed<F: ConformanceOracle>(
 
 (Rename the `_bg` param to `bg`; the cap check stays `CapKind::Declassify`.)
 
-- [ ] **Step 3: sentinel_credit_budget** (replaces `sentinel_refresh_budget`, lines ~585-600):
+- [x] **Step 3: sentinel_credit_budget** (replaces `sentinel_refresh_budget`, lines ~585-600):
 
 ```rust
 /// Capability-gated granular budget credit (saturates at capacity). Full refresh =
@@ -439,7 +439,7 @@ pub fn sentinel_credit_budget(
 }
 ```
 
-- [ ] **Step 4: grant_override** (lines ~624-639). Swap exhaustion for affordability and debit weight 1:
+- [x] **Step 4: grant_override** (lines ~624-639). Swap exhaustion for affordability and debit weight 1:
 
 ```rust
     if !st.affordable(&granter, 1) {
@@ -449,9 +449,9 @@ pub fn sentinel_credit_budget(
     st.debit_budget(&granter, 1);
 ```
 
-- [ ] **Step 5: `clear_agent_state`** (line ~61) — `st.agent_budget.remove(agent)` is unchanged (absence == capacity == "reset to full"). Verify it stays.
+- [x] **Step 5: `clear_agent_state`** (line ~61) — `st.agent_budget.remove(agent)` is unchanged (absence == capacity == "reset to full"). Verify it stays.
 
-- [ ] **Step 6: Migrate the in-module budget tests** (the `BudgetLevel::Lx` assertions, ~lines 1154-2031). Replace expected `BudgetLevel::L4` with numeric: e.g. `invoke_complete` on a Sensitive-floor tool now debits `2`, so `st.budget(a1) == BUDGET_CAPACITY - 2`; `return_endorsed` debits `2`; `grant_override` debits `1`; the exhaustion test sets the budget low (`insert(g, 1)` then a weight-2 debit refuses). Add:
+- [x] **Step 6: Migrate the in-module budget tests** (the `BudgetLevel::Lx` assertions, ~lines 1154-2031). Replace expected `BudgetLevel::L4` with numeric: e.g. `invoke_complete` on a Sensitive-floor tool now debits `2`, so `st.budget(a1) == BUDGET_CAPACITY - 2`; `return_endorsed` debits `2`; `grant_override` debits `1`; the exhaustion test sets the budget low (`insert(g, 1)` then a weight-2 debit refuses). Add:
 
 ```rust
 #[test]
@@ -467,16 +467,16 @@ fn return_endorsed_non_conforming_refuses() {
 }
 ```
 
-- [ ] **Step 7: Run** — `cargo test -p argus-kernel` (unit). Fix until green.
+- [x] **Step 7: Run** — `cargo test -p argus-kernel` (unit). Fix until green.
 
-- [ ] **Step 8: Commit** — `feat(argus): weighted/credit/conformance budget across 4 transitions`
+- [x] **Step 8: Commit** — `feat(argus): weighted/credit/conformance budget across 4 transitions`
 
 ### Task 11: event.rs + kernel.rs — action variant + driver
 
 **Files:**
 - Modify: `argus/crates/argus-kernel/src/event.rs`, `src/kernel.rs`
 
-- [ ] **Step 1: event.rs** — rename the action variant:
+- [x] **Step 1: event.rs** — rename the action variant:
 
 ```rust
     SentinelCreditBudget {
@@ -487,25 +487,25 @@ fn return_endorsed_non_conforming_refuses() {
 
 Update the `kernel_action_variant_count` test constructor (still 13).
 
-- [ ] **Step 2: kernel.rs driver** — three signature changes:
+- [x] **Step 2: kernel.rs driver** — three signature changes:
   - `return_endorsed` passes the conformance oracle: `transitions::return_endorsed(self.state.clone(), &self.background, &self.conformance, child, parent)`.
   - `sentinel_refresh_budget(agent)` → `sentinel_credit_budget(&mut self, agent: AgentId, amount: u8)` delegating to `transitions::sentinel_credit_budget(…, agent, amount)`.
   - the `full_lifecycle` test's `return_endorsed` call is unchanged (driver arity is the same; `ConformsAll` already implements the trait — see Step 3).
 
-- [ ] **Step 3: test oracles** — `ConformsAll` in kernel.rs (and any other `ConformanceOracle` impl in the crate/tests) gains `return_conforms` returning `true`.
+- [x] **Step 3: test oracles** — `ConformsAll` in kernel.rs (and any other `ConformanceOracle` impl in the crate/tests) gains `return_conforms` returning `true`.
 
-- [ ] **Step 4: Run** — `cargo test -p argus-kernel`. Green. Commit — `feat(argus): SentinelCreditBudget action + conformance-threaded driver`
+- [x] **Step 4: Run** — `cargo test -p argus-kernel`. Green. Commit — `feat(argus): SentinelCreditBudget action + conformance-threaded driver`
 
 ### Task 12: safety_properties.rs — integration suite
 
 **Files:**
 - Modify: `argus/crates/argus-kernel/tests/safety_properties.rs`
 
-- [ ] **Step 1:** Update any `BudgetLevel` / `sentinel_refresh_budget` references to the numeric API + `sentinel_credit_budget(agent, amount)`. Add a property covering the new behaviors: an agent at budget `0` cannot endorse (`invoke_complete` falls to full taint; `return_endorsed`/`grant_override` refuse), and `sentinel_credit_budget` saturates at `BUDGET_CAPACITY`.
+- [x] **Step 1:** Update any `BudgetLevel` / `sentinel_refresh_budget` references to the numeric API + `sentinel_credit_budget(agent, amount)`. Add a property covering the new behaviors: an agent at budget `0` cannot endorse (`invoke_complete` falls to full taint; `return_endorsed`/`grant_override` refuse), and `sentinel_credit_budget` saturates at `BUDGET_CAPACITY`.
 
-- [ ] **Step 2: Run** — `cargo test -p argus-kernel --test safety_properties` → green. Then full `cargo test` + `cargo clippy --workspace`.
+- [x] **Step 2: Run** — `cargo test -p argus-kernel --test safety_properties` → green. Then full `cargo test` + `cargo clippy --workspace`.
 
-- [ ] **Step 3: Commit** — `test(argus): numeric budget + conformance safety properties`
+- [x] **Step 3: Commit** — `test(argus): numeric budget + conformance safety properties`
 
 **Stage 2 exit:** `cargo test` (all unit + safety) green, `cargo clippy --workspace` clean, no `BudgetLevel` symbol remains in argus-kernel.
 
@@ -517,9 +517,9 @@ Proof work: statements below are exact; proof bodies are iterative. Reuse the es
 
 ### Task 13: Re-extract
 
-- [ ] **Step 1:** From `argus/`: run `scripts/charon-aeneas-extract.sh` → fresh `argus_kernel.llbc` + regenerated `formal-lean/ArgusLean/Generated/ArgusKernel.lean`.
-- [ ] **Step 2:** `lake build ArgusLean.Generated.ArgusKernel` from `argus/formal-lean/`. `u8` arithmetic (`saturating_sub`/`saturating_add`/`min`) is modeled by Aeneas as `UScalar` ops — must elaborate. If it fails, the Rust idiom is wrong (e.g. a non-saturating op or a `usize` leak); fix the Rust, do not patch the generated file.
-- [ ] **Step 3:** Commit — `chore(formal-lean): re-extract for numeric budget`
+- [x] **Step 1:** From `argus/`: run `scripts/charon-aeneas-extract.sh` → fresh `argus_kernel.llbc` + regenerated `formal-lean/ArgusLean/Generated/ArgusKernel.lean`.
+- [x] **Step 2:** `lake build ArgusLean.Generated.ArgusKernel` from `argus/formal-lean/`. `u8` arithmetic (`saturating_sub`/`saturating_add`/`min`) is modeled by Aeneas as `UScalar` ops — must elaborate. If it fails, the Rust idiom is wrong (e.g. a non-saturating op or a `usize` leak); fix the Rust, do not patch the generated file.
+- [x] **Step 3:** Commit — `chore(formal-lean): re-extract for numeric budget`
 
 ### Task 14: Budget bridging specs
 
