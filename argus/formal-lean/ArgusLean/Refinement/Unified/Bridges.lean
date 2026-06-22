@@ -64,4 +64,48 @@ theorem debitBudget_full (st : state.KernelState) (agent : types.AgentId) (w : S
   · rw [if_neg hG]
     unfold budgetReadC; rw [hvmLast G, if_neg hG]
 
+/-- `credit_budget agent n` returns a record update `{ st with agent_budget := vm }` whose get-style
+    budget read credits `agent` by `n` (saturating at `BUDGET_CAPACITY`) and frames every other agent,
+    and whose key-uniqueness is preserved. The numeric `vmNodupKeys`-strengthening of `creditBudget_spec`
+    that the `sentinel_credit_budget` unified-`R` preservation needs. -/
+theorem creditBudget_full (st : state.KernelState) (agent : types.AgentId) (n : Std.U8)
+    (hcap : st.agent_budget.entries.val.length < Usize.max) :
+    state.KernelState.credit_budget st agent n ⦃ st1 =>
+      ∃ vm, st1 = { st with agent_budget := vm } ∧
+        (∀ G, budgetReadC vm G =
+          if G = agent then
+            core.cmp.impls.OrdU8.min (core.num.U8.saturating_add (budgetReadC st.agent_budget agent) n)
+              types.BUDGET_CAPACITY
+          else budgetReadC st.agent_budget G) ∧
+        (vmNodupKeys st.agent_budget → vmNodupKeys vm) ⦄ := by
+  unfold state.KernelState.credit_budget
+  obtain ⟨bl, hblEq, hbl⟩ := spec_imp_exists (budget_spec st agent)
+  rw [hblEq]
+  simp only [bind_tc_ok, core.num.U8.saturating_add, lift, agentId_clone_spec]
+  obtain ⟨vm, hvmEq, hvmLast⟩ := spec_imp_exists
+    (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec core.clone.CloneU8 st.agent_budget
+      agent (core.cmp.impls.OrdU8.min (UScalar.saturating_add bl n) types.BUDGET_CAPACITY) hcap)
+  obtain ⟨vm2, hvm2Eq, hvm2nd⟩ := spec_imp_exists
+    (vecMapInsert_nodup types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec core.clone.CloneU8 st.agent_budget
+      agent (core.cmp.impls.OrdU8.min (UScalar.saturating_add bl n) types.BUDGET_CAPACITY) hcap)
+  have hvv : vm2 = vm := Result.ok.inj (hvm2Eq.symm.trans hvmEq)
+  rw [hvmEq]
+  simp only [bind_tc_ok, spec_ok]
+  refine ⟨vm, rfl, fun G => ?_, hvv ▸ hvm2nd⟩
+  show budgetReadC vm G =
+    if G = agent then
+      core.cmp.impls.OrdU8.min (core.num.U8.saturating_add (budgetReadC st.agent_budget agent) n)
+        types.BUDGET_CAPACITY
+    else budgetReadC st.agent_budget G
+  by_cases hG : G = agent
+  · rw [if_pos hG]
+    have hvr : budgetReadC vm G =
+        core.cmp.impls.OrdU8.min (UScalar.saturating_add bl n) types.BUDGET_CAPACITY := by
+      unfold budgetReadC; rw [hvmLast G, if_pos hG]
+    rw [hvr, hbl]; rfl
+  · rw [if_neg hG]
+    unfold budgetReadC; rw [hvmLast G, if_neg hG]
+
 end ArgusLean.Refinement
