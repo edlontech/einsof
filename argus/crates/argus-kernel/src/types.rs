@@ -135,36 +135,16 @@ impl fmt::Display for ConfLevel {
     }
 }
 
-/// Declassification budget level (TzimtzumV2 `BudgetLevel`): a finite saturating ladder
-/// `Exhausted < L1 < L2 < L3 < L4 < L5`. `L5` is full; each endorsement debits one level;
-/// `Exhausted` blocks the zero-taint path (fail-closed). `#[derive(Ord)]` follows declaration
-/// order, so `Exhausted` is the minimum.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BudgetLevel {
-    Exhausted,
-    L1,
-    L2,
-    L3,
-    L4,
-    L5,
-}
+/// Protocol declassification budget capacity (fixed; not operator-configurable).
+pub const BUDGET_CAPACITY: u8 = 16;
 
-impl BudgetLevel {
-    /// The full budget a fresh agent starts with.
-    pub fn full() -> Self {
-        Self::L5
-    }
-
-    /// Step down one level, saturating at `Exhausted` (mirrors Veil `budget_debit`).
-    pub fn debit(self) -> Self {
-        match self {
-            Self::L5 => Self::L4,
-            Self::L4 => Self::L3,
-            Self::L3 => Self::L2,
-            Self::L2 => Self::L1,
-            Self::L1 => Self::Exhausted,
-            Self::Exhausted => Self::Exhausted,
-        }
+/// Sensitivity-weighted declassification cost: Public flows are free, Restricted is dearest.
+pub fn declass_weight(level: ConfLevel) -> u8 {
+    match level {
+        ConfLevel::Public => 0,
+        ConfLevel::Internal => 1,
+        ConfLevel::Sensitive => 2,
+        ConfLevel::Restricted => 4,
     }
 }
 
@@ -206,17 +186,11 @@ mod tests {
     }
 
     #[test]
-    fn budget_level_ordering() {
-        assert!(BudgetLevel::Exhausted < BudgetLevel::L1);
-        assert!(BudgetLevel::L1 < BudgetLevel::L5);
-        assert_eq!(BudgetLevel::full(), BudgetLevel::L5);
-    }
-
-    #[test]
-    fn budget_level_debit_saturates() {
-        assert_eq!(BudgetLevel::L5.debit(), BudgetLevel::L4);
-        assert_eq!(BudgetLevel::L1.debit(), BudgetLevel::Exhausted);
-        assert_eq!(BudgetLevel::Exhausted.debit(), BudgetLevel::Exhausted);
+    fn declass_weight_by_level() {
+        assert_eq!(declass_weight(ConfLevel::Public), 0);
+        assert_eq!(declass_weight(ConfLevel::Internal), 1);
+        assert_eq!(declass_weight(ConfLevel::Sensitive), 2);
+        assert_eq!(declass_weight(ConfLevel::Restricted), 4);
     }
 
     #[test]
