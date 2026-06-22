@@ -1,7 +1,7 @@
 import ArgusLean.Refinement.Unified.Preservation.RegisterTool
 import ArgusLean.Refinement.Unified.Preservation.LoadInstruction
 import ArgusLean.Refinement.Unified.Preservation.GrantCapability
-import ArgusLean.Refinement.Unified.Preservation.SentinelRefreshBudget
+import ArgusLean.Refinement.Unified.Preservation.SentinelCreditBudget
 import ArgusLean.Refinement.Unified.Preservation.ReturnEndorsed
 import ArgusLean.Refinement.Unified.Preservation.Revoke
 import ArgusLean.Refinement.Unified.Preservation.CascadeRevoke
@@ -56,12 +56,13 @@ noncomputable def kernelStep {A C F : Type}
   | .InvokeStart agent tool inv =>
       transitions.invoke_start aInst cgInst st bg authorizer content_gate agent tool inv
   | .InvokeComplete agent inv => transitions.invoke_complete cfInst st bg conformance agent inv
-  | .ReturnEndorsed child parent => transitions.return_endorsed st bg child parent
+  | .ReturnEndorsed child parent =>
+      transitions.return_endorsed cfInst st bg conformance child parent
   | .ReturnUnendorsed child parent =>
       transitions.return_unendorsed cgInst st bg content_gate child parent
   | .SentinelElevateTaint agent level =>
       transitions.sentinel_elevate_taint cgInst st bg content_gate agent level
-  | .SentinelRefreshBudget agent => transitions.sentinel_refresh_budget st bg agent
+  | .SentinelCreditBudget agent amount => transitions.sentinel_credit_budget st bg agent amount
   | .GrantOverride granter target tool level =>
       transitions.grant_override st bg granter target tool level
 
@@ -80,7 +81,7 @@ def absActionOf (act : event.KernelAction) : Kav.Action AbsState :=
   | .ReturnEndorsed child parent => Tzimtzum.return_endorsed child parent
   | .ReturnUnendorsed child parent => Tzimtzum.return_unendorsed child parent
   | .SentinelElevateTaint agent level => Tzimtzum.sentinel_elevate_taint agent (confA level)
-  | .SentinelRefreshBudget agent => Tzimtzum.sentinel_refresh_budget agent
+  | .SentinelCreditBudget agent amount => Tzimtzum.sentinel_credit_budget agent amount.val
   | .GrantOverride granter target tool level =>
       Tzimtzum.grant_override granter target tool (confA level)
 
@@ -92,8 +93,8 @@ free hypotheses. There is no resource model to discharge them — a `Vec` cannot
 rather than pretending it away: `StepPre st bg a act` is the per-action conjunction of exactly the
 bounds the fired transition's `_preservesR` lists, plus — for `InvokeStart` — the abstract binding
 prediction `a.invocation_tool inv = tool` (the one non-capacity precondition, the oracle agreement on
-the invocation's tool). The agent-tree removals (`revoke` / `cascade_revoke`) and the budget reset
-(`sentinel_refresh_budget`) need none, so their slot is `True`. -/
+the invocation's tool). The agent-tree removals (`revoke` / `cascade_revoke`) need none, so their slot
+is `True`; `sentinel_credit_budget` needs only its `agent_budget` capacity bound (the credit insert). -/
 
 /-- The per-action precondition `step_refines` consumes for `act`: the capacity bounds its
     `_preservesR` lemma requires, plus `InvokeStart`'s abstract binding prediction. -/
@@ -152,7 +153,7 @@ def StepPre (st : state.KernelState) (_bg : background.BackgroundTheory) (a : Ab
       (∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max) ∧
       st.gh_taint_invoked.entries.val.length < Usize.max ∧
       (∀ p ∈ st.gh_taint_invoked.entries.val, p.2.items.val.length < Usize.max)
-  | .SentinelRefreshBudget _ => True
+  | .SentinelCreditBudget _ _ => st.agent_budget.entries.val.length < Usize.max
   | .GrantOverride _ _ _ _ =>
       st.flow_override.entries.val.length < Usize.max ∧
       (∀ p ∈ st.flow_override.entries.val, p.2.items.val.length < Usize.max) ∧
@@ -203,6 +204,22 @@ theorem cfOfAgree_iff {F : Type} {cfInst : traits.ConformanceOracle F} {conforma
     (h : CfAgree cfInst conformance bg a) (ag : types.AgentId) (t : types.ToolId) :
     cfOfAgree h ag t = true ↔ a.output_conforms ag t := (h ag t).choose_spec.2
 
+/-- The return-conformance reduction at a fixed `(child, parent)`, from `RcAgree` (state-independent). -/
+noncomputable def rcOfAgree {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
+    {bg : background.BackgroundTheory} {a : AbsState}
+    (h : RcAgree cfInst conformance bg a) (c p : types.AgentId) : Bool :=
+  (h c p).choose
+
+theorem rcOfAgree_ok {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
+    {bg : background.BackgroundTheory} {a : AbsState}
+    (h : RcAgree cfInst conformance bg a) (c p : types.AgentId) (s : state.KernelState) :
+    cfInst.return_conforms conformance c p s bg = .ok (rcOfAgree h c p) := (h c p).choose_spec.1 s
+
+theorem rcOfAgree_iff {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
+    {bg : background.BackgroundTheory} {a : AbsState}
+    (h : RcAgree cfInst conformance bg a) (c p : types.AgentId) :
+    rcOfAgree h c p = true ↔ a.return_conforms c p := (h c p).choose_spec.2
+
 /-! ## The bundle: `step_refines`
 
 The capstone. For any concrete state related to the abstract by `R`, with the runtime oracles agreeing
@@ -223,6 +240,7 @@ theorem step_refines {A C F : Type}
     (hCg : CgAgree cgInst content_gate st bg a)
     (hAu : AuAgree aInst authorizer st bg a)
     (hCf : CfAgree cfInst conformance bg a)
+    (hRc : RcAgree cfInst conformance bg a)
     (hPre : StepPre st bg a act)
     (st' : state.KernelState) (ev : event.KernelAction)
     (hok : kernelStep aInst cgInst cfInst authorizer content_gate conformance st bg act
@@ -252,7 +270,9 @@ theorem step_refines {A C F : Type}
         (fun t s => cfOfAgree_ok hCf agent t s) (fun t => cfOfAgree_iff hCf agent t) hR
         hPre.1 hPre.2.1 hPre.2.2.1 hPre.2.2.2.1 hPre.2.2.2.2 st' ev hok
   | ReturnEndorsed child parent =>
-      exact return_endorsed_preservesR st bg a child parent hR hPre st' ev hok
+      exact return_endorsed_preservesR cfInst st bg conformance a child parent
+        (rcOfAgree hRc child parent) (rcOfAgree_ok hRc child parent) (rcOfAgree_iff hRc child parent)
+        hR hPre st' ev hok
   | ReturnUnendorsed child parent =>
       exact return_unendorsed_preservesR cgInst st bg content_gate a child parent
         (cgOfAgree hCg parent) (fun t => cgOfAgree_ok hCg parent t)
@@ -263,8 +283,8 @@ theorem step_refines {A C F : Type}
         (cgOfAgree hCg agent) (fun t => cgOfAgree_ok hCg agent t)
         (fun t => cgOfAgree_iff hCg agent t) hR hPre.1 hPre.2.1 hPre.2.2.1 hPre.2.2.2.1
         hPre.2.2.2.2.1 hPre.2.2.2.2.2.1 hPre.2.2.2.2.2.2 st' ev hok
-  | SentinelRefreshBudget agent =>
-      exact sentinel_refresh_budget_preservesR st bg a agent hR st' ev hok
+  | SentinelCreditBudget agent amount =>
+      exact sentinel_credit_budget_preservesR st bg a agent amount hR hPre st' ev hok
   | GrantOverride granter target tool level =>
       exact grant_override_preservesR st bg a granter target tool level hR
         hPre.1 hPre.2.1 hPre.2.2 st' ev hok

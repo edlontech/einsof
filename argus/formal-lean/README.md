@@ -63,9 +63,9 @@ State the extractor + assumptions whenever claiming end-to-end soundness.
 - **Standard** — `propext`, `Classical.choice`, `Quot.sound`.
 - **Named-root** — `argus_kernel.types.AgentId.root._native.decide.ax_1`: the `native_decide` residual
   for the root agent's concrete name. A baseline of naming the root, **not** a proof `sorry`.
-- **Opaque id/String ops** (5, in `Bridging/Collections.lean`) — `string_eq_spec`, `string_clone_spec`,
-  `agentId_ne_spec`, `optionAgentId_ne_spec`, `invocationId_ne_spec`: the extracted opaque `String`-backed
-  decidable (dis)equality / clone behave faithfully.
+- **Opaque id/String ops** (6, in `Bridging/Collections.lean`) — `string_eq_spec`, `string_clone_spec`,
+  `agentId_ne_spec`, `optionAgentId_ne_spec`, `invocationId_ne_spec`, `overrideKey_ne_spec`: the extracted
+  opaque `String`-backed decidable (dis)equality / clone behave faithfully.
 - **Aeneas/Charon extractor residuals** (in `Generated/ArgusKernel.lean`) — the per-type
   `…CmpPartialEq….ne` / `…eq` / `…clone` / `to_owned` instance axioms the extractor emits for the
   opaque `String`-backed identifier types.

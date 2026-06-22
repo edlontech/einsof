@@ -147,16 +147,18 @@ theorem init_chars (c0 : state.KernelState) (hc0 : state.KernelState.initial = .
 
 /-- The abstract initial state at the kernel's concrete sorts: the mutable fields per `Tzimtzum.initial`
     (only the root active, holding every capability and full budget), the immutable background fields
-    read off `bg` exactly as `R` requires, and the three runtime-oracle fields set to the given
-    relations (those are not constrained by `R` — they relate to the `Kernel` oracle params). -/
+    read off `bg` exactly as `R` requires, and the four runtime-oracle fields set to the given
+    relations (those are not constrained by `R` — they relate to the `Kernel` oracle params). The
+    `return_conforms` oracle (Campaign B P2) takes its own `(child, parent)`-keyed relation `rcRel`. -/
 noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.AgentId)
-    (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop) : AbsState where
+    (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop)
+    (rcRel : types.AgentId → types.AgentId → Prop) : AbsState where
   agent_active := fun A => A = root
   agent_parent := fun _ _ => False
   agent_cap := fun A _ => A = root
   agent_instruction := fun _ _ => False
   taint_levels := fun _ _ => False
-  agent_budget := fun A L => A = root ∧ L = Tzimtzum.BudgetLevel.bl5
+  agent_budget := fun A L => A = root ∧ L = Tzimtzum.budget_capacity
   in_flight := fun _ _ => False
   tool_registered := fun _ => False
   gh_taint_invoked := fun _ _ => False
@@ -171,6 +173,7 @@ noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.Ag
   tool_issuer := fun t => match toolMetaC bg t with | some tm => tm.issuer | none => default
   trusted_issuer := fun i => vsMem bg.trusted_issuers i
   output_conforms := cfRel
+  return_conforms := rcRel
   instruction_issuer := fun i => match background.BackgroundTheory.impl.instruction_issuer bg i with
     | .ok (some iss) => iss
     | _ => default
@@ -182,7 +185,7 @@ noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.Ag
   invocation_tool := fun _ => default
   root_agent := root
   cap_declassify := capability.CapKind.Declassify
-  cap_refresh_budget := capability.CapKind.RefreshBudget
+  cap_credit_budget := capability.CapKind.CreditBudget
   cap_grant_override := capability.CapKind.GrantOverride
 
 /-- **Init refinement.** The extracted initial state relates, under the unified `R`, to `absInitial`,
@@ -190,12 +193,14 @@ noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.Ag
     supplies the abstract oracle interpretation that the fidelity hypothesis pins to reality). -/
 theorem init_refines (bg : background.BackgroundTheory)
     (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop)
+    (rcRel : types.AgentId → types.AgentId → Prop)
     (c0 : state.KernelState) (hc0 : state.KernelState.initial = .ok c0) :
     ∃ a0 : AbsState, Tzimtzum.initial a0 ∧ R c0 bg a0 ∧
-      a0.content_gate_passes = cgRel ∧ a0.authorizer_allows = auRel ∧ a0.output_conforms = cfRel := by
+      a0.content_gate_passes = cgRel ∧ a0.authorizer_allows = auRel ∧ a0.output_conforms = cfRel ∧
+      a0.return_conforms = rcRel := by
   obtain ⟨root, hroot, hactive, hcap, hcapNd, hpar, htaint, hinf, hinv, htool, hghi, hghr, hinstr,
     hovr, hflow, hbud⟩ := init_chars c0 hc0
-  refine ⟨absInitial bg root cgRel auRel cfRel, ?_, ?_, rfl, rfl, rfl⟩
+  refine ⟨absInitial bg root cgRel auRel cfRel rcRel, ?_, ?_, rfl, rfl, rfl, rfl⟩
   · -- Tzimtzum.initial
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [absInitial]
   · -- R
@@ -214,11 +219,11 @@ theorem init_refines (bg : background.BackgroundTheory)
     · intro G L hG
       have hGr : G = root := hG
       subst hGr
-      simp only [absInitial, budgetReadC, hbud, vmLastEntry, true_and]
+      simp only [absInitial, budgetReadC, hbud, vmLastEntry, List.filter_nil, List.getLast?_nil,
+        budgetCapacity_val, true_and]
       constructor
       · rintro rfl; rfl
-      · intro h
-        exact (budgetC_injective (show budgetC Tzimtzum.BudgetLevel.bl5 = budgetC L from h)).symm
+      · intro h; exact h.symm
     · intro t tmeta C htm
       simp only [absInitial]
       constructor

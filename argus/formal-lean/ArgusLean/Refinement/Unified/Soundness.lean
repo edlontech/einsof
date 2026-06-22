@@ -20,9 +20,10 @@ cannot be without modelling resources or the (external, unverified) oracles:
 
 * **`CapacityOK`** — the `Vec`-capacity bounds (`…length < Usize.max`) each transition needs. A `Vec`
   cannot grow past `usize::MAX` in practice, but proving it needs a resource model. Stated, not faked.
-* **`OracleFidelity`** — the runtime `ContentGate` / `Authorizer` / `Conformance` oracles agree, at
-  every reachable state, with the fixed abstract oracle interpretation (`cgRel` / `auRel` / `cfRel`).
-  Per the guest-model ADR the oracles are external and unverified; this is the interface contract the
+* **`OracleFidelity`** — the runtime `ContentGate` / `Authorizer` / `Conformance` oracles (the latter
+  supplying both the `conforms` and the Campaign-B `return_conforms` verdict) agree, at every reachable
+  state, with the fixed abstract oracle interpretation (`cgRel` / `auRel` / `cfRel` / `rcRel`). Per the
+  guest-model ADR the oracles are external and unverified; this is the interface contract the
   refinement assumes of them. -/
 
 namespace ArgusLean.Refinement
@@ -57,7 +58,7 @@ private theorem mem_ru : ("return_unendorsed", Kav.close2 Tzimtzum.return_unendo
   simp [sysActs, Tzimtzum.system]
 private theorem mem_set : ("sentinel_elevate_taint", Kav.close2 Tzimtzum.sentinel_elevate_taint) ∈ sysActs := by
   simp [sysActs, Tzimtzum.system]
-private theorem mem_srb : ("sentinel_refresh_budget", Kav.close1 Tzimtzum.sentinel_refresh_budget) ∈ sysActs := by
+private theorem mem_scb : ("sentinel_credit_budget", Kav.close2 Tzimtzum.sentinel_credit_budget) ∈ sysActs := by
   simp [sysActs, Tzimtzum.system]
 private theorem mem_li : ("load_instruction", Kav.close2 Tzimtzum.load_instruction) ∈ sysActs := by
   simp [sysActs, Tzimtzum.system]
@@ -88,8 +89,8 @@ theorem absStep_reachable (a a' : AbsState) (act : event.KernelAction)
       Kav.Reachable.step mem_ru hreach ⟨child, parent, hg⟩ ⟨child, parent, hg, hn⟩
   | .SentinelElevateTaint agent level, hg, hn =>
       Kav.Reachable.step mem_set hreach ⟨agent, confA level, hg⟩ ⟨agent, confA level, hg, hn⟩
-  | .SentinelRefreshBudget agent, hg, hn =>
-      Kav.Reachable.step mem_srb hreach ⟨agent, hg⟩ ⟨agent, hg, hn⟩
+  | .SentinelCreditBudget agent amount, hg, hn =>
+      Kav.Reachable.step mem_scb hreach ⟨agent, amount.val, hg⟩ ⟨agent, amount.val, hg, hn⟩
   | .LoadInstruction agent instr, hg, hn =>
       Kav.Reachable.step mem_li hreach ⟨agent, instr, hg⟩ ⟨agent, instr, hg, hn⟩
   | .GrantOverride granter target tool level, hg, hn =>
@@ -97,19 +98,20 @@ theorem absStep_reachable (a a' : AbsState) (act : event.KernelAction)
         ⟨granter, target, tool, confA level, hg, hn⟩
 
 /-- The abstract oracle fields are immutable background — every action frames them — so a step never
-    changes `content_gate_passes` / `authorizer_allows` / `output_conforms`. Lets the fixed oracle
-    interpretation persist across the forward-simulation induction. -/
+    changes `content_gate_passes` / `authorizer_allows` / `output_conforms` / `return_conforms`. Lets
+    the fixed oracle interpretation persist across the forward-simulation induction. -/
 theorem absNext_oracle_frame (a a' : AbsState) (act : event.KernelAction)
     (hn : (absActionOf act).next a a') :
     a'.content_gate_passes = a.content_gate_passes ∧
-    a'.authorizer_allows = a.authorizer_allows ∧ a'.output_conforms = a.output_conforms := by
+    a'.authorizer_allows = a.authorizer_allows ∧ a'.output_conforms = a.output_conforms ∧
+    a'.return_conforms = a.return_conforms := by
   cases act <;>
     simp only [absActionOf, Tzimtzum.register_tool, Tzimtzum.load_instruction, Tzimtzum.delegate,
       Tzimtzum.grant_capability, Tzimtzum.revoke, Tzimtzum.cascade_revoke, Tzimtzum.invoke_start,
       Tzimtzum.invoke_complete, Tzimtzum.return_endorsed, Tzimtzum.return_unendorsed,
-      Tzimtzum.sentinel_elevate_taint, Tzimtzum.sentinel_refresh_budget,
+      Tzimtzum.sentinel_elevate_taint, Tzimtzum.sentinel_credit_budget,
       Tzimtzum.grant_override] at hn <;>
-    refine ⟨?_, ?_, ?_⟩ <;> tauto
+    refine ⟨?_, ?_, ?_, ?_⟩ <;> tauto
 
 /-- Reachability closure of the extracted kernel: states reachable from `KernelState.initial` by any
     sequence of successful `kernelStep`s (under fixed oracle instances/params and background `bg`). -/
@@ -126,17 +128,19 @@ inductive ReachableConcrete {A C F : Type}
       ReachableConcrete aInst cgInst cfInst authorizer content_gate conformance bg c'
 
 /-- **Oracle-fidelity assumption.** At every reachable concrete state the runtime oracles agree with
-    the fixed abstract interpretation (`cgRel` / `auRel` / `cfRel`). The conformance oracle is
-    state-independent, as the kernel's is. -/
+    the fixed abstract interpretation (`cgRel` / `auRel` / `cfRel` / `rcRel`). The two conformance
+    verdicts are state-independent, as the kernel's are. -/
 def OracleFidelity {A C F : Type}
     (aInst : traits.AuthorizerOracle A) (cgInst : traits.ContentGateOracle C)
     (cfInst : traits.ConformanceOracle F) (authorizer : A) (content_gate : C) (conformance : F)
     (bg : background.BackgroundTheory)
-    (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop) : Prop :=
+    (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop)
+    (rcRel : types.AgentId → types.AgentId → Prop) : Prop :=
   ∀ c, ReachableConcrete aInst cgInst cfInst authorizer content_gate conformance bg c →
     (∀ ag t, ∃ b : Bool, cgInst.passes content_gate ag t c bg = .ok b ∧ (b = true ↔ cgRel ag t)) ∧
     (∀ ag t, ∃ b : Bool, aInst.allows authorizer ag t c bg = .ok b ∧ (b = true ↔ auRel ag t)) ∧
-    (∀ ag t, ∃ b : Bool, (∀ s, cfInst.conforms conformance ag t s bg = .ok b) ∧ (b = true ↔ cfRel ag t))
+    (∀ ag t, ∃ b : Bool, (∀ s, cfInst.conforms conformance ag t s bg = .ok b) ∧ (b = true ↔ cfRel ag t)) ∧
+    (∀ cc p, ∃ b : Bool, (∀ s, cfInst.return_conforms conformance cc p s bg = .ok b) ∧ (b = true ↔ rcRel cc p))
 
 /-- **Capacity assumption.** Every fired transition's `Vec`-capacity precondition (`StepPre`) holds at
     every reachable concrete state. Not discharged — there is no resource model (see module header). -/
@@ -158,35 +162,40 @@ theorem reachable_concrete_safe {A C F : Type}
     (authorizer : A) (content_gate : C) (conformance : F)
     (bg : background.BackgroundTheory)
     (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop)
-    (hfid : OracleFidelity aInst cgInst cfInst authorizer content_gate conformance bg cgRel auRel cfRel)
+    (rcRel : types.AgentId → types.AgentId → Prop)
+    (hfid : OracleFidelity aInst cgInst cfInst authorizer content_gate conformance bg
+      cgRel auRel cfRel rcRel)
     (hcap : CapacityOK aInst cgInst cfInst authorizer content_gate conformance bg)
     (c : state.KernelState)
     (hc : ReachableConcrete aInst cgInst cfInst authorizer content_gate conformance bg c) :
     ∃ a, R c bg a ∧ Kav.Reachable Tzimtzum.system a ∧
-      a.content_gate_passes = cgRel ∧ a.authorizer_allows = auRel ∧ a.output_conforms = cfRel := by
+      a.content_gate_passes = cgRel ∧ a.authorizer_allows = auRel ∧ a.output_conforms = cfRel ∧
+      a.return_conforms = rcRel := by
   induction hc with
   | init h =>
-    obtain ⟨a0, hinit, hR, hcg, hau, hcf⟩ := init_refines bg cgRel auRel cfRel _ h
-    exact ⟨a0, hR, Kav.Reachable.init hinit, hcg, hau, hcf⟩
+    obtain ⟨a0, hinit, hR, hcg, hau, hcf, hrc⟩ := init_refines bg cgRel auRel cfRel rcRel _ h
+    exact ⟨a0, hR, Kav.Reachable.init hinit, hcg, hau, hcf, hrc⟩
   | @step c c' act ev hcpre hok ih =>
-    obtain ⟨a, hRca, hreacha, hcg, hau, hcf⟩ := ih
-    obtain ⟨hfcg, hfau, hfcf⟩ := hfid c hcpre
+    obtain ⟨a, hRca, hreacha, hcg, hau, hcf, hrc⟩ := ih
+    obtain ⟨hfcg, hfau, hfcf, hfrc⟩ := hfid c hcpre
     have hCg : CgAgree cgInst content_gate c bg a := by
       unfold CgAgree; intro ag t; rw [hcg]; exact hfcg ag t
     have hAu : AuAgree aInst authorizer c bg a := by
       unfold AuAgree; intro ag t; rw [hau]; exact hfau ag t
     have hCf : CfAgree cfInst conformance bg a := by
       unfold CfAgree; intro ag t; rw [hcf]; exact hfcf ag t
+    have hRc : RcAgree cfInst conformance bg a := by
+      unfold RcAgree; intro cc p; rw [hrc]; exact hfrc cc p
     have hPre : StepPre c bg a act := hcap c a act hcpre hRca
     obtain ⟨a', hg, hn, hRc'a'⟩ := step_refines aInst cgInst cfInst authorizer content_gate
-      conformance c bg a act hRca hCg hAu hCf hPre c' ev hok
-    obtain ⟨hcg', hau', hcf'⟩ := absNext_oracle_frame a a' act hn
+      conformance c bg a act hRca hCg hAu hCf hRc hPre c' ev hok
+    obtain ⟨hcg', hau', hcf', hrc'⟩ := absNext_oracle_frame a a' act hn
     exact ⟨a', hRc'a', absStep_reachable a a' act hreacha hg hn,
-      hcg'.trans hcg, hau'.trans hau, hcf'.trans hcf⟩
+      hcg'.trans hcg, hau'.trans hau, hcf'.trans hcf, hrc'.trans hrc⟩
 
 /-- **Implementation soundness (crown of the refinement).** Under the explicit capacity +
     oracle-fidelity assumptions, every reachable state of the extracted `argus-kernel` model relates to
-    an abstract state satisfying the *full* TzimtzumV2 invariant bundle (10 safeties + 15 strengthening
+    an abstract state satisfying the *full* TzimtzumV2 invariant bundle (10 safeties + 16 strengthening
     invariants) — obtained by composing the forward simulation with the sort-polymorphic Kav soundness
     `Tzimtzum.kav_soundP`. -/
 theorem implementation_sound {A C F : Type}
@@ -195,14 +204,16 @@ theorem implementation_sound {A C F : Type}
     (authorizer : A) (content_gate : C) (conformance : F)
     (bg : background.BackgroundTheory)
     (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop)
-    (hfid : OracleFidelity aInst cgInst cfInst authorizer content_gate conformance bg cgRel auRel cfRel)
+    (rcRel : types.AgentId → types.AgentId → Prop)
+    (hfid : OracleFidelity aInst cgInst cfInst authorizer content_gate conformance bg
+      cgRel auRel cfRel rcRel)
     (hcap : CapacityOK aInst cgInst cfInst authorizer content_gate conformance bg)
     (c : state.KernelState)
     (hc : ReachableConcrete aInst cgInst cfInst authorizer content_gate conformance bg c) :
     ∃ a, R c bg a ∧ Tzimtzum.allInv a := by
-  obtain ⟨a, hR, hreach, _, _, _⟩ :=
+  obtain ⟨a, hR, hreach, _, _, _, _⟩ :=
     reachable_concrete_safe aInst cgInst cfInst authorizer content_gate conformance bg
-      cgRel auRel cfRel hfid hcap c hc
+      cgRel auRel cfRel rcRel hfid hcap c hc
   exact ⟨a, hR, Tzimtzum.kav_soundP a hreach⟩
 
 end ArgusLean.Refinement
