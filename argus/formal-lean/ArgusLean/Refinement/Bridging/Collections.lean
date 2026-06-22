@@ -1404,24 +1404,6 @@ theorem vecMapKVecSetSetContains_spec {K T : Type} [DecidableEq K] [DecidableEq 
     rw [hpeq]
     exact vmLastEntry_mem vm.entries.val key p hL
 
-/-! ## `BudgetLevel` equality / clone
-
-Like `CapKind`, `BudgetLevel` is a concrete nullary enum: extracted `eq` is a discriminant
-comparison and `clone` is the identity, so both specs are *proved* (no extractor trust). Consumed
-by the budget reads/writes (`budget`, `budget_exhausted`, `debit_budget`) the return actions use. -/
-
-deriving instance DecidableEq for types.BudgetLevel
-
-/-- `BudgetLevel.eq` is faithful decidable equality (discriminant comparison on a nullary enum). -/
-@[simp] theorem budgetLevel_eq_spec (a b : types.BudgetLevel) :
-    types.BudgetLevel.Insts.CoreCmpPartialEqBudgetLevel.eq a b = .ok (decide (a = b)) := by
-  cases a <;> cases b <;>
-    simp [types.BudgetLevel.Insts.CoreCmpPartialEqBudgetLevel.eq, types.BudgetLevel.read_discriminant]
-
-/-- `BudgetLevel.clone` is the identity. -/
-@[simp] theorem budgetLevel_clone_spec (a : types.BudgetLevel) :
-    types.BudgetLevel.Insts.CoreCloneClone.clone a = .ok a := rfl
-
 /-- `ConfLevel.clone` is the identity (nullary enum, body is `ok self`). -/
 @[simp] theorem confLevel_clone_spec (a : types.ConfLevel) :
     types.ConfLevel.Insts.CoreCloneClone.clone a = .ok a := rfl

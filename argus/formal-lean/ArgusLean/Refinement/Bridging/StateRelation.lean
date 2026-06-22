@@ -15,9 +15,9 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
-/-- The abstract TzimtzumV2 state at the kernel's concrete sorts. `ConfLevel`/`BudgetLevel`
-    are concrete inductives baked into `St`; the remaining seven sorts are the extracted
-    `String`/inductive types. -/
+/-- The abstract TzimtzumV2 state at the kernel's concrete sorts. `ConfLevel` is a concrete
+    inductive baked into `St` (the numeric budget is a plain `Nat`); the remaining seven sorts are the
+    extracted `String`/inductive types. -/
 abbrev AbsState := Tzimtzum.St types.AgentId types.ToolId types.InvocationId
   capability.CapKind types.EgressKind types.IssuerId types.InstructionId
 
@@ -30,13 +30,12 @@ def Rtool (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsSt
   (∀ i, a.trusted_issuer i ↔ vsMem bg.trusted_issuers i) ∧
   (∀ t tm, bg.tool_metadata t = .ok (some tm) → a.tool_issuer t = tm.issuer)
 
-/-! ## Confidentiality / budget correspondence
+/-! ## Confidentiality correspondence
 
-`ConfLevel` and `BudgetLevel` are baked-in inductives of the abstract `St` (not type
-parameters), so the taint/budget fields cross from the abstract lattice to the extracted
-`types.*` lattice. The two are constructor-for-constructor identical; `confC` / `budgetC` are
-the obvious total maps. `delegate` only ever *clears* these fields, so the proof uses the maps
-opaquely (membership passes through symmetrically) — no bijectivity is required. -/
+`ConfLevel` is a baked-in inductive of the abstract `St` (not a type parameter), so the taint
+fields cross from the abstract lattice to the extracted `types.*` lattice. The two are
+constructor-for-constructor identical; `confC` / `confA` are the obvious total maps. (The budget is
+now a plain `Nat`/`u8` numeric cell — no level map; see the budget section below.) -/
 
 /-- Abstract → concrete confidentiality level. -/
 def confC : Tzimtzum.ConfLevel → types.ConfLevel
@@ -44,15 +43,6 @@ def confC : Tzimtzum.ConfLevel → types.ConfLevel
   | .«internal» => .Internal
   | .sensitive  => .Sensitive
   | .restricted => .Restricted
-
-/-- Abstract → concrete budget level. -/
-def budgetC : Tzimtzum.BudgetLevel → types.BudgetLevel
-  | .bl_exhausted => .Exhausted
-  | .bl1          => .L1
-  | .bl2          => .L2
-  | .bl3          => .L3
-  | .bl4          => .L4
-  | .bl5          => .L5
 
 /-- Concrete → abstract confidentiality level (the inverse of `confC`). -/
 def confA : types.ConfLevel → Tzimtzum.ConfLevel
@@ -159,42 +149,24 @@ theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
   rw [h7Eq]; simp only [bind_tc_ok]
   exact ⟨rfl, rfl, rfl, rfl, rfl, h0, h1, h2, h3, h4, h5, h6, h7⟩
 
-/-! ## Budget reads/writes: `budget`, `budget_exhausted`, `debit_budget`
+/-! ## Budget reads/writes: `budget`, `affordable`, `debit_budget`, `credit_budget`
 
-`return_endorsed` debits the recipient's budget. The kernel reads the budget through `VecMap.get`
-(last-match, absent ⇒ full = `L5`) and writes it back via `VecMap.insert` (last-match overwrite or
-append). The faithful state-relation view of `agent_budget` is therefore the *get-style* read
-`budgetReadC` (none ⇒ `L5`), tied to the abstract level through the bijection `budgetC`. This is the
-read the kernel literally computes — it needs no key-uniqueness side condition (the removal actions'
-raw-membership budget clause happens to work only because *filter* drops every duplicate key; an
-insert/overwrite does not, so the get-style view is the right one here, and reconciling the two is
-part of the future unified-`R` task). -/
+The declassification meter is now a numeric `u8` cell (Campaign B). The kernel reads the budget
+through `VecMap.get` (last-match, absent ⇒ full = `BUDGET_CAPACITY = 16`), tests affordability with
+`>=`, and writes it back via `VecMap.insert` after a saturating `u8` step: `debit_budget` subtracts a
+sensitivity weight `w` (`saturating_sub`), `credit_budget` adds `n` then caps at `BUDGET_CAPACITY`
+(`saturating_add` then `min`). The faithful state-relation view of `agent_budget` is therefore the
+*get-style* read `budgetReadC` (none ⇒ `16`) — the read the kernel literally computes, needing no
+key-uniqueness side condition. The post-values are stated with the same saturating ops the kernel
+runs; `scalar_tac`/`omega` discharge the `u8`↔`Nat` arithmetic downstream. -/
 
-/-- The pure debit map on `BudgetLevel`: one saturating step down (`L5→L4→…→L1→Exhausted`). -/
-def debitC : types.BudgetLevel → types.BudgetLevel
-  | .Exhausted => .Exhausted
-  | .L1 => .Exhausted
-  | .L2 => .L1
-  | .L3 => .L2
-  | .L4 => .L3
-  | .L5 => .L4
-
-/-- The extracted `BudgetLevel.debit` is total and equals `debitC`. -/
-@[simp] theorem budgetLevel_debit_spec (b : types.BudgetLevel) :
-    types.BudgetLevel.debit b = .ok (debitC b) := by cases b <;> rfl
-
-/-- Get-style budget read: the live (last) `G`-keyed budget level, defaulting to full (`L5`) when
-    `G` is absent — exactly what the kernel's `KernelState.budget` computes. -/
-def budgetReadC (vm : collections.VecMap types.AgentId types.BudgetLevel) (G : types.AgentId) :
-    types.BudgetLevel :=
+/-- Get-style budget read: the live (last) `G`-keyed budget cell, defaulting to full
+    (`BUDGET_CAPACITY = 16`) when `G` is absent — exactly what the kernel's `KernelState.budget`
+    computes. -/
+def budgetReadC (vm : collections.VecMap types.AgentId Std.U8) (G : types.AgentId) : Std.U8 :=
   match vmLastEntry vm.entries.val G with
-  | none => types.BudgetLevel.L5
+  | none => types.BUDGET_CAPACITY
   | some p => p.2
-
-/-- `budgetC` is injective (a constructor-for-constructor map between the two six-element lattices),
-    so `budgetReadC vm G = budgetC L` pins `L` uniquely. -/
-theorem budgetC_injective : Function.Injective budgetC := by
-  intro a b h; cases a <;> cases b <;> simp_all [budgetC]
 
 /-- `KernelState.budget` computes the get-style read `budgetReadC`. -/
 theorem budget_spec (st : state.KernelState) (agent : types.AgentId) :
@@ -202,27 +174,30 @@ theorem budget_spec (st : state.KernelState) (agent : types.AgentId) :
   unfold state.KernelState.budget
   obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
     (vecMapGet_spec types.AgentId.Insts.CoreCloneClone types.AgentId.Insts.CoreCmpPartialEqAgentId
-      agentId_eq_spec types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent)
+      agentId_eq_spec core.clone.CloneU8 st.agent_budget agent)
   rw [hoEq]; simp only [bind_tc_ok]
   unfold budgetReadC
   cases hL : vmLastEntry st.agent_budget.entries.val agent with
-  | none => rw [hL] at ho; subst ho; simp [types.BudgetLevel.full]
+  | none => rw [hL] at ho; subst ho; simp
   | some p => rw [hL] at ho; subst ho; simp
 
-/-- `budget_exhausted` is `budgetReadC = Exhausted`. -/
-theorem budgetExhausted_spec (st : state.KernelState) (agent : types.AgentId) :
-    state.KernelState.budget_exhausted st agent ⦃ b =>
-      b = true ↔ budgetReadC st.agent_budget agent = types.BudgetLevel.Exhausted ⦄ := by
-  unfold state.KernelState.budget_exhausted
-  obtain ⟨bl, hblEq, hbl⟩ := spec_imp_exists (budget_spec st agent)
-  rw [hblEq]; simp only [bind_tc_ok, budgetLevel_eq_spec, spec_ok, decide_eq_true_eq, hbl]
+/-- `affordable agent w` is the concrete affordability test `w ≤ budgetReadC agent`. The abstract
+    `∃ b, agent_budget a b ∧ w ≤ b` connection is made downstream (via `R`'s budget clause +
+    `active_has_budget`); here we only bridge the concrete side, built on `budget_spec`. -/
+theorem affordable_spec (st : state.KernelState) (agent : types.AgentId) (w : Std.U8) :
+    state.KernelState.affordable st agent w ⦃ r =>
+      r = true ↔ w ≤ budgetReadC st.agent_budget agent ⦄ := by
+  unfold state.KernelState.affordable
+  obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (budget_spec st agent)
+  rw [hbEq]; simp only [bind_tc_ok, spec_ok, hb, ge_iff_le, decide_eq_true_eq]
 
-/-- `debit_budget agent` debits `agent`'s budget by one level and frames everything else: the
-    post-state's get-style read maps `agent` to `debitC` of its old level, all other agents
-    unchanged. The capacity bound feeds the underlying `VecMap.insert`. -/
-theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
+/-- `debit_budget agent w` subtracts the sensitivity weight `w` from `agent`'s budget cell
+    (saturating at `0`) and frames everything else: the post-state's get-style read maps `agent` to
+    `saturating_sub` of its old cell, all other agents unchanged. The capacity bound feeds the
+    underlying `VecMap.insert`. -/
+theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId) (w : Std.U8)
     (hcap : st.agent_budget.entries.val.length < Usize.max) :
-    state.KernelState.debit_budget st agent ⦃ st1 =>
+    state.KernelState.debit_budget st agent w ⦃ st1 =>
       st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
       st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
       st1.taint_levels = st.taint_levels ∧ st1.gh_taint_received = st.gh_taint_received ∧
@@ -230,22 +205,62 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId)
       st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
       st1.tool_registered = st.tool_registered ∧ st1.flow_override = st.flow_override ∧
       (∀ G, budgetReadC st1.agent_budget G =
-        if G = agent then debitC (budgetReadC st.agent_budget agent)
+        if G = agent then core.num.U8.saturating_sub (budgetReadC st.agent_budget agent) w
         else budgetReadC st.agent_budget G) ⦄ := by
   unfold state.KernelState.debit_budget
-  obtain ⟨bl, hblEq, hbl⟩ := spec_imp_exists (budget_spec st agent)
-  rw [hblEq]; simp only [bind_tc_ok, budgetLevel_debit_spec, agentId_clone_spec]
+  obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (budget_spec st agent)
+  rw [hbEq]; simp only [bind_tc_ok, core.num.U8.saturating_sub, lift, agentId_clone_spec]
   obtain ⟨vm, hvmEq, hvm⟩ := spec_imp_exists
     (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.BudgetLevel.Insts.CoreCloneClone st.agent_budget agent (debitC bl) hcap)
+      core.clone.CloneU8 st.agent_budget agent (UScalar.saturating_sub b w) hcap)
   rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
   refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
     trivial, trivial, fun G => ?_⟩
   show budgetReadC vm G = _
   by_cases hG : G = agent
-  · have hread : budgetReadC vm G = debitC bl := by unfold budgetReadC; rw [hvm G, if_pos hG]
-    rw [hread, hbl, hG]; simp
+  · have hread : budgetReadC vm G = UScalar.saturating_sub b w := by
+      unfold budgetReadC; rw [hvm G, if_pos hG]
+    rw [hread, hb, hG, if_pos rfl]
+  · have hread : budgetReadC vm G = budgetReadC st.agent_budget G := by
+      unfold budgetReadC; rw [hvm G, if_neg hG]
+    rw [hread, if_neg hG]
+
+/-- `credit_budget agent n` adds `n` to `agent`'s budget cell (saturating at `255`) then caps it at
+    `BUDGET_CAPACITY = 16`, framing everything else: the post-state's get-style read maps `agent` to
+    `min (saturating_add old n) BUDGET_CAPACITY`, all other agents unchanged. The capacity bound feeds
+    the underlying `VecMap.insert`. -/
+theorem creditBudget_spec (st : state.KernelState) (agent : types.AgentId) (n : Std.U8)
+    (hcap : st.agent_budget.entries.val.length < Usize.max) :
+    state.KernelState.credit_budget st agent n ⦃ st1 =>
+      st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
+      st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
+      st1.taint_levels = st.taint_levels ∧ st1.gh_taint_received = st.gh_taint_received ∧
+      st1.override_used = st.override_used ∧ st1.gh_taint_invoked = st.gh_taint_invoked ∧
+      st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
+      st1.tool_registered = st.tool_registered ∧ st1.flow_override = st.flow_override ∧
+      (∀ G, budgetReadC st1.agent_budget G =
+        if G = agent then
+          core.cmp.impls.OrdU8.min (core.num.U8.saturating_add (budgetReadC st.agent_budget agent) n)
+            types.BUDGET_CAPACITY
+        else budgetReadC st.agent_budget G) ⦄ := by
+  unfold state.KernelState.credit_budget
+  obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (budget_spec st agent)
+  rw [hbEq]
+  simp only [bind_tc_ok, core.num.U8.saturating_add, lift, agentId_clone_spec]
+  obtain ⟨vm, hvmEq, hvm⟩ := spec_imp_exists
+    (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec core.clone.CloneU8 st.agent_budget
+      agent (core.cmp.impls.OrdU8.min (UScalar.saturating_add b n) types.BUDGET_CAPACITY) hcap)
+  rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
+  refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
+    trivial, trivial, fun G => ?_⟩
+  show budgetReadC vm G = _
+  by_cases hG : G = agent
+  · have hread : budgetReadC vm G =
+        core.cmp.impls.OrdU8.min (UScalar.saturating_add b n) types.BUDGET_CAPACITY := by
+      unfold budgetReadC; rw [hvm G, if_pos hG]
+    rw [hread, hb, hG, if_pos rfl]
   · have hread : budgetReadC vm G = budgetReadC st.agent_budget G := by
       unfold budgetReadC; rw [hvm G, if_neg hG]
     rw [hread, if_neg hG]
