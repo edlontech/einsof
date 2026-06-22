@@ -18,6 +18,9 @@ impl ConformanceOracle for ConformsAll {
     fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
         true
     }
+    fn return_conforms(&self, _: &AgentId, _: &AgentId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        true
+    }
 }
 struct NoopStore;
 impl EventStore for NoopStore {
@@ -552,6 +555,47 @@ fn loaded_instructions_have_trusted_issuer() {
             assert!(k.background().is_trusted_issuer(issuer));
         }
     }
+}
+
+/// sentinel_credit_budget saturates at BUDGET_CAPACITY (no overflow past 16).
+#[test]
+fn sentinel_credit_budget_saturates_at_capacity() {
+    let mut k = test_kernel();
+    k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::CreditBudget).unwrap();
+
+    k.sentinel_credit_budget(AgentId::new("a1"), 100).unwrap();
+    assert_eq!(k.state().budget(&AgentId::new("a1")), BUDGET_CAPACITY);
+}
+
+/// After budget drains to 0 via 8 invoke_complete cycles (weight 2 each),
+/// a 9th invoke_complete falls to the full-taint branch.
+#[test]
+fn budget_exhausted_falls_to_full_taint() {
+    let mut k = test_kernel();
+    k.register_tool(ToolId::new("check_exists")).unwrap();
+    k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead).unwrap();
+
+    // 8 cycles × weight-2 = 16 debits; budget starts at 16 (absence == capacity).
+    let mut i = 0u8;
+    while i < 8 {
+        let inv = InvocationId::new(&format!("inv-{i}"));
+        k.invoke_start(AgentId::new("a1"), ToolId::new("check_exists"), inv.clone()).unwrap();
+        k.invoke_complete(AgentId::new("a1"), inv).unwrap();
+        i += 1;
+    }
+    assert_eq!(k.state().budget(&AgentId::new("a1")), 0);
+    assert!(k.state().taint_levels.get(&AgentId::new("a1")).is_none(), "no taint before exhaustion");
+
+    // 9th cycle: affordable(2) == false → full-taint branch.
+    k.invoke_start(AgentId::new("a1"), ToolId::new("check_exists"), InvocationId::new("inv-8")).unwrap();
+    k.invoke_complete(AgentId::new("a1"), InvocationId::new("inv-8")).unwrap();
+    assert_eq!(k.state().budget(&AgentId::new("a1")), 0);
+    assert!(
+        k.state().taint_levels.get(&AgentId::new("a1")).unwrap().contains(&ConfLevel::Sensitive),
+        "Sensitive taint after budget exhaustion"
+    );
 }
 
 /// Safety: grant_override single-use is preserved across re-arm.
