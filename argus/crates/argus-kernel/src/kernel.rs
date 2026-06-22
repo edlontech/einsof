@@ -156,8 +156,13 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
         child: AgentId,
         parent: AgentId,
     ) -> Result<KernelEvent, KernelError> {
-        let result =
-            transitions::return_endorsed(self.state.clone(), &self.background, child, parent);
+        let result = transitions::return_endorsed(
+            self.state.clone(),
+            &self.background,
+            &self.conformance,
+            child,
+            parent,
+        );
         self.apply(result)
     }
 
@@ -190,11 +195,16 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
         ))
     }
 
-    pub fn sentinel_refresh_budget(&mut self, agent: AgentId) -> Result<KernelEvent, KernelError> {
-        self.apply(transitions::sentinel_refresh_budget(
+    pub fn sentinel_credit_budget(
+        &mut self,
+        agent: AgentId,
+        amount: u8,
+    ) -> Result<KernelEvent, KernelError> {
+        self.apply(transitions::sentinel_credit_budget(
             self.state.clone(),
             &self.background,
             agent,
+            amount,
         ))
     }
 
@@ -239,6 +249,15 @@ mod tests {
     struct ConformsAll;
     impl ConformanceOracle for ConformsAll {
         fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+            true
+        }
+        fn return_conforms(
+            &self,
+            _: &AgentId,
+            _: &AgentId,
+            _: &KernelState,
+            _: &BackgroundTheory,
+        ) -> bool {
             true
         }
     }

@@ -44,8 +44,9 @@ pub enum KernelAction {
         agent: AgentId,
         level: ConfLevel,
     },
-    SentinelRefreshBudget {
+    SentinelCreditBudget {
         agent: AgentId,
+        amount: u8,
     },
     LoadInstruction {
         agent: AgentId,
@@ -119,8 +120,9 @@ mod tests {
                 agent: AgentId::new("a"),
                 level: ConfLevel::Sensitive,
             },
-            KernelAction::SentinelRefreshBudget {
+            KernelAction::SentinelCreditBudget {
                 agent: AgentId::new("a"),
+                amount: 1,
             },
             KernelAction::LoadInstruction {
                 agent: AgentId::new("a"),
