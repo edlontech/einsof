@@ -5,7 +5,7 @@ import ArgusLean.Refinement.Unified.Bridges
 `delegate grantor grantee` adds `grantee`: an `agent_active` insert, an `agent_parent` rebuild
 (`agent_parent_drop_endpoint` + the fresh `(grantee, grantor)` edge), an empty-cap insert, and a
 `clear_agent_state` wipe of `grantee` from seven per-agent maps (so `grantee`'s budget reads back as
-full `bl5`). Combines all the prior machinery: the filter conversions (cleared fields), the empty-cap
+full `budget_capacity`). Combines all the prior machinery: the filter conversions (cleared fields), the empty-cap
 `vmLastEntry`/`nodup` insert, the `parentPost_vmLast`/`parentPost_nodupKeys` rebuild, and the
 absent-after-filter budget. -/
 

@@ -53,6 +53,13 @@ def confA : types.ConfLevel → Tzimtzum.ConfLevel
 
 @[simp] theorem confC_confA (l : types.ConfLevel) : confC (confA l) = l := by cases l <;> rfl
 
+/-- The kernel's `declass_weight` over a concrete level computes (as a total `.ok`) the abstract
+    sensitivity weight as its `Nat` value. The bridge `invoke_complete`'s weighted debit needs to relate
+    the concrete `weight ← declass_weight conf_floor` to the abstract `declass_weight floor`. -/
+theorem declassWeight_spec (L : Tzimtzum.ConfLevel) :
+    ∃ w : Std.U8, types.declass_weight (confC L) = .ok w ∧ w.val = Tzimtzum.declass_weight L := by
+  cases L <;> exact ⟨_, rfl, by rfl⟩
+
 @[simp] theorem confA_confC (l : Tzimtzum.ConfLevel) : confA (confC l) = l := by cases l <;> rfl
 
 theorem confC_injective : Function.Injective confC :=
