@@ -88,9 +88,9 @@ defmodule ExArgus.ConformanceTest do
       assert level in [:public, :internal, :sensitive, :restricted]
     end
 
-    # 5. budgets are valid atoms.
+    # 5. budgets are integers within the meter range (absence == capacity == 16).
     for {_agent, budget} <- s.agent_budget do
-      assert budget in [:exhausted, :l1, :l2, :l3, :l4, :l5]
+      assert is_integer(budget) and budget in 0..16
     end
   end
 

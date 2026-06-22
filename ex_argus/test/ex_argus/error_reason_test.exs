@@ -18,7 +18,7 @@ defmodule ExArgus.ErrorReasonTest do
     not_direct_child parent_still_active
     capability_missing
     invocation_exists invocation_in_flight not_in_flight child_has_in_flight target_has_in_flight
-    flow_gate_blocked authorizer_denied budget_exhausted
+    flow_gate_blocked authorizer_denied budget_exhausted not_conforming
     missing_tool_binding event_store
   )a
 
@@ -55,9 +55,9 @@ defmodule ExArgus.ErrorReasonTest do
   end
 
   describe "the error_reason contract" do
-    test "documents exactly 21 denial atoms" do
-      assert length(@error_reasons) == 21
-      assert length(Enum.uniq(@error_reasons)) == 21
+    test "documents exactly 22 denial atoms" do
+      assert length(@error_reasons) == 22
+      assert length(Enum.uniq(@error_reasons)) == 22
     end
 
     test "ExArgus.Offline.error_reason/0 declares exactly the documented closed set" do
@@ -122,9 +122,9 @@ defmodule ExArgus.ErrorReasonTest do
                Native.invoke_start(s1, bg(), "a1", "read_file", "i", true, %{})
     end
 
-    test "capability_missing: refreshing budget without the refresh-budget capability" do
+    test "capability_missing: crediting budget without the credit-budget capability" do
       {:ok, s1, _} = Native.delegate(Native.initial_state(), bg(), "root", "a1")
-      assert {:error, :capability_missing} = Native.sentinel_refresh_budget(s1, bg(), "a1")
+      assert {:error, :capability_missing} = Native.sentinel_credit_budget(s1, bg(), "a1", 4)
     end
 
     test "not_in_flight: completing an invocation that is not in flight" do

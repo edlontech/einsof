@@ -4,10 +4,10 @@ import ArgusLean.Refinement.Unified.Bridges
 
 `grant_override` (the 13th, Campaign-A action) arms/re-arms a single-use flow override for
 `(target, tool, level)`: it (1) inserts `{tool, level}` into `target`'s `flow_override` set, (2)
-removes that same key from `target`'s `override_used` set, then (3) debits `granter`'s budget by one
-level. The five gates mirror `return_endorsed`'s — `granter`/`target` active (`VecSet.contains`), the
-`GrantOverride` cap (`set_contains`, bridged via `R.ndCap` like `sentinel_refresh_budget`'s
-`RefreshBudget` gate), `¬ budget_exhausted granter`, and the re-arm guard `target` has no in-flight
+removes that same key from `target`'s `override_used` set, then (3) debits `granter`'s budget by the
+flat weight one. The five gates mirror `return_endorsed`'s — `granter`/`target` active (`VecSet.contains`), the
+`GrantOverride` cap (`set_contains`, bridged via `R.ndCap` like `sentinel_credit_budget`'s
+`CreditBudget` gate), `affordable granter 1`, and the re-arm guard `target` has no in-flight
 invocations (`set_nonempty target = false`, exactly `return_endorsed`'s child-no-in-flight guard).
 
 The two override writes use the last-match `vmsMemLast` specs (`vecMapKVecSetInsertInto_vmLast_spec` /

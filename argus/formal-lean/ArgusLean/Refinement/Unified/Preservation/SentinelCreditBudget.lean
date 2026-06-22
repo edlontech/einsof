@@ -2,7 +2,7 @@ import ArgusLean.Refinement.Unified.Bridges
 
 /-! # Layer 1 — `sentinel_credit_budget` preserves the unified `R`
 
-`sentinel_credit_budget` (Campaign B; was `sentinel_refresh_budget`, which deleted the budget entry)
+`sentinel_credit_budget` (Campaign B; replaced the old full-refresh action that deleted the budget entry)
 credits `agent`'s `agent_budget` cell by `amount`, saturating at `BUDGET_CAPACITY` (`VecMap.insert` via
 the numeric `credit_budget`), framing everything else as `{ st with agent_budget := vm }` (via
 `creditBudget_full`). The only **credit** action: `R`'s canonical budget view is the active-guarded

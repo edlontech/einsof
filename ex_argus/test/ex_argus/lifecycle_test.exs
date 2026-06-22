@@ -38,7 +38,12 @@ defmodule ExArgus.LifecycleTest do
     # bounded=false => not the zero-taint path => taint at the tool floor
     assert :sensitive in Map.fetch!(s.taint_levels, "a1")
 
-    {:ok, s, {:return_endorsed, "a1", "root"}} = Offline.return_endorsed(s, bg, "a1", "root")
+    {:ok, s, {:return_endorsed, "a1", "root"}} =
+      Offline.return_endorsed(s, bg, "a1", "root", true)
+
+    # return_endorsed debits the recipient (root) by the flat declassification cost of 2.
+    assert Map.get(s.agent_budget, "root", 16) == 14
+
     {:ok, s, {:revoke, "root", "a1"}} = Offline.revoke(s, bg, "root", "a1")
 
     refute "a1" in s.agent_active
