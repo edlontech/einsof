@@ -5,7 +5,10 @@ use crate::error::KernelError;
 use crate::event::KernelAction;
 use crate::state::KernelState;
 use crate::traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle};
-use crate::types::{AgentId, ConfLevel, EgressKind, InstructionId, InvocationId, OverrideKey, ToolId};
+use crate::types::{
+    AgentId, ConfLevel, EgressKind, InstructionId, InvocationId, OverrideKey, ToolId,
+    declass_weight,
+};
 
 /// Outcome of a flow-gate check at a consuming site (`invoke_start` / `return_unendorsed` /
 /// `sentinel_elevate_taint`). Distinguishes a flow permitted outright (ALLOW, or INSPECT with a
@@ -415,15 +418,16 @@ pub fn invoke_complete<F: ConformanceOracle>(
             None => None,
         };
         if let Some((conf_floor, output_bounded)) = meta_info {
-            // Zero-taint (endorsed) path = bounded declaration AND runtime conformance AND budget
-            // available. Otherwise full taint at the tool's floor (fail-closed). Mirrors Veil
-            // invoke_complete: a bounded-but-non-conforming or out-of-budget tool taints in full.
+            let weight = declass_weight(conf_floor);
+            let already_tainted = st.taint_levels.set_contains(&agent, &conf_floor);
+            // Zero-taint (endorsed) path: bounded + conforms + affordable AND the agent does not
+            // already hold this floor (re-tainting buys nothing, so don't waste budget on it).
             let zero_taint = output_bounded
                 && conformance.conforms(&agent, &tool_id, &st, bg)
-                && !st.budget_exhausted(&agent);
+                && st.affordable(&agent, weight)
+                && !already_tainted;
             if zero_taint {
-                // Charge the agent's own budget for the in-agent declassification.
-                st.debit_budget(&agent);
+                st.debit_budget(&agent, weight);
             } else {
                 st.taint_levels.insert_into(agent.clone(), conf_floor);
                 st.gh_taint_invoked.insert_into(agent.clone(), conf_floor);
@@ -434,9 +438,10 @@ pub fn invoke_complete<F: ConformanceOracle>(
     Ok((st, KernelAction::InvokeComplete { agent, inv }))
 }
 
-pub fn return_endorsed(
+pub fn return_endorsed<F: ConformanceOracle>(
     mut st: KernelState,
-    _bg: &BackgroundTheory,
+    bg: &BackgroundTheory,
+    conformance: &F,
     child: AgentId,
     parent: AgentId,
 ) -> Result<(KernelState, KernelAction), KernelError> {
@@ -459,10 +464,13 @@ pub fn return_endorsed(
     if !st.agent_cap.set_contains(&child, &CapKind::Declassify) {
         return Err(KernelError::CapabilityMissing);
     }
-    if st.budget_exhausted(&parent) {
+    if !conformance.return_conforms(&child, &parent, &st, bg) {
+        return Err(KernelError::NotConforming);
+    }
+    if !st.affordable(&parent, 2) {
         return Err(KernelError::BudgetExhausted);
     }
-    st.debit_budget(&parent);
+    st.debit_budget(&parent, 2);
 
     Ok((st, KernelAction::ReturnEndorsed { child, parent }))
 }
@@ -577,26 +585,24 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
     Ok((st, KernelAction::SentinelElevateTaint { agent, level }))
 }
 
-/// Capability-gated audited budget reset (the DP "new epoch"). An agent holding
-/// `cap_refresh_budget` -- strictly more privileged than `cap_declassify` -- resets its
-/// declassification budget to full. The rare, logged exception that keeps a long-running
-/// orchestrator from dead-ending on an exhausted budget while keeping the escape valve in
-/// the verified kernel. (Audit lives in the event layer; here it is the st change only.)
-pub fn sentinel_refresh_budget(
+/// Capability-gated granular budget credit (saturates at capacity). Full refresh =
+/// credit `BUDGET_CAPACITY`. The rare, logged exception that keeps a long-running orchestrator
+/// from dead-ending on an exhausted budget.
+pub fn sentinel_credit_budget(
     mut st: KernelState,
     _bg: &BackgroundTheory,
     agent: AgentId,
+    amount: u8,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if !st.agent_active.contains(&agent) {
         return Err(KernelError::AgentInactive);
     }
-    if !st.agent_cap.set_contains(&agent, &CapKind::RefreshBudget) {
+    if !st.agent_cap.set_contains(&agent, &CapKind::CreditBudget) {
         return Err(KernelError::CapabilityMissing);
     }
-    // Reset to full. Absence == full, so removing the entry is the canonical "full" st.
-    st.agent_budget.remove(&agent);
+    st.credit_budget(&agent, amount);
 
-    Ok((st, KernelAction::SentinelRefreshBudget { agent }))
+    Ok((st, KernelAction::SentinelCreditBudget { agent, amount }))
 }
 
 /// Capability-gated arming (or re-arming) of a single-use flow override for
@@ -621,7 +627,7 @@ pub fn grant_override(
     if !st.agent_cap.set_contains(&granter, &CapKind::GrantOverride) {
         return Err(KernelError::CapabilityMissing);
     }
-    if st.budget_exhausted(&granter) {
+    if !st.affordable(&granter, 1) {
         return Err(KernelError::BudgetExhausted);
     }
     if st.in_flight.set_nonempty(&target) {
@@ -636,7 +642,7 @@ pub fn grant_override(
         &target,
         &OverrideKey { tool: tool.clone(), level },
     );
-    st.debit_budget(&granter);
+    st.debit_budget(&granter, 1);
 
     Ok((st, KernelAction::GrantOverride { granter, target, tool, level }))
 }
@@ -645,7 +651,7 @@ pub fn grant_override(
 mod tests {
     use super::*;
     use crate::background::{BackgroundTheoryBuilder, ToolMetadata};
-    use crate::types::{BudgetLevel, EgressKind, InstructionId, IssuerId};
+    use crate::types::{BUDGET_CAPACITY, EgressKind, InstructionId, IssuerId};
 
     struct AllowAll;
     impl AuthorizerOracle for AllowAll {
@@ -670,10 +676,28 @@ mod tests {
         fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
             true
         }
+        fn return_conforms(
+            &self,
+            _: &AgentId,
+            _: &AgentId,
+            _: &KernelState,
+            _: &BackgroundTheory,
+        ) -> bool {
+            true
+        }
     }
     struct ConformsNone;
     impl ConformanceOracle for ConformsNone {
         fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+            false
+        }
+        fn return_conforms(
+            &self,
+            _: &AgentId,
+            _: &AgentId,
+            _: &KernelState,
+            _: &BackgroundTheory,
+        ) -> bool {
             false
         }
     }
@@ -1087,7 +1111,7 @@ mod tests {
             .insert(child.clone(), VecSet::from([CapKind::Declassify]));
 
         let (new_state, action) =
-            return_endorsed(st.clone(), &bg, child.clone(), AgentId::root()).unwrap();
+            return_endorsed(st.clone(), &bg, &ConformsAll, child.clone(), AgentId::root()).unwrap();
         assert_eq!(new_state.taint_levels, st.taint_levels);
         assert_eq!(
             action,
@@ -1111,7 +1135,7 @@ mod tests {
         st
             .invocation_tool
             .insert(InvocationId::new("inv-1"), ToolId::new("t"));
-        assert!(return_endorsed(st, &bg, child, AgentId::root()).is_err());
+        assert!(return_endorsed(st, &bg, &ConformsAll, child, AgentId::root()).is_err());
     }
 
     #[test]
@@ -1120,7 +1144,7 @@ mod tests {
         let bg = BackgroundTheoryBuilder::new().build();
         let stranger = AgentId::new("stranger");
         st.agent_active.insert(stranger.clone());
-        assert!(return_endorsed(st, &bg, stranger, AgentId::root()).is_err());
+        assert!(return_endorsed(st, &bg, &ConformsAll, stranger, AgentId::root()).is_err());
     }
 
     // --- declassification: conformance + budget ---
@@ -1162,8 +1186,8 @@ mod tests {
         );
         assert_eq!(
             st.budget(&AgentId::new("a1")),
-            BudgetLevel::L4,
-            "the endorsed completion debits the agent's own budget"
+            BUDGET_CAPACITY - 2,
+            "the endorsed completion debits the agent's own budget by the Sensitive weight (2)"
         );
     }
 
@@ -1188,7 +1212,7 @@ mod tests {
         );
         assert_eq!(
             st.budget(&AgentId::new("a1")),
-            BudgetLevel::L5,
+            BUDGET_CAPACITY,
             "the full-taint path does not debit budget"
         );
     }
@@ -1196,9 +1220,10 @@ mod tests {
     #[test]
     fn invoke_complete_exhausted_budget_adds_full_taint() {
         let (mut st, bg) = state_with_bounded_in_flight(ConfLevel::Sensitive);
+        // Budget below the Sensitive weight (2) cannot afford the endorsed debit.
         st
             .agent_budget
-            .insert(AgentId::new("a1"), BudgetLevel::Exhausted);
+            .insert(AgentId::new("a1"), 1);
         let (st, _) =
             invoke_complete(st, &bg, &ConformsAll, AgentId::new("a1"), InvocationId::new("binv"))
                 .unwrap();
@@ -1210,6 +1235,42 @@ mod tests {
                 .contains(&ConfLevel::Sensitive),
             "exhausted budget fails closed to full taint even when bounded + conforming"
         );
+    }
+
+    #[test]
+    fn invoke_complete_already_tainted_does_not_debit() {
+        // Bounded + conforming Sensitive-floor tool, but the agent already holds Sensitive taint.
+        // The endorsed path is skipped (re-tainting buys nothing) => no debit, taint preserved.
+        let (mut st, bg) = state_with_bounded_in_flight(ConfLevel::Sensitive);
+        st
+            .taint_levels
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+        let (st, _) =
+            invoke_complete(st, &bg, &ConformsAll, AgentId::new("a1"), InvocationId::new("binv"))
+                .unwrap();
+        assert_eq!(
+            st.budget(&AgentId::new("a1")),
+            BUDGET_CAPACITY,
+            "already-tainted at the floor => no wasted budget debit"
+        );
+        assert!(
+            st
+                .taint_levels
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&ConfLevel::Sensitive),
+            "the pre-existing taint is still present"
+        );
+    }
+
+    #[test]
+    fn return_endorsed_non_conforming_refuses() {
+        // A ConformanceOracle whose return_conforms == false blocks the endorsed return.
+        let st = parent_child_state();
+        let bg = BackgroundTheoryBuilder::new().build();
+        let result =
+            return_endorsed(st, &bg, &ConformsNone, AgentId::new("c"), AgentId::new("p"));
+        assert_eq!(result.unwrap_err(), KernelError::NotConforming);
     }
 
     /// Active parent `p` (child of root) and active child `c` (child of `p`) holding cap_declassify.
@@ -1233,7 +1294,7 @@ mod tests {
         st.agent_cap.insert(AgentId::new("c"), VecSet::new());
         let bg = BackgroundTheoryBuilder::new().build();
         assert!(
-            return_endorsed(st, &bg, AgentId::new("c"), AgentId::new("p")).is_err(),
+            return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p")).is_err(),
             "a child lacking cap_declassify cannot declassify upward"
         );
     }
@@ -1243,55 +1304,57 @@ mod tests {
         let st = parent_child_state();
         let bg = BackgroundTheoryBuilder::new().build();
         let (st, _) =
-            return_endorsed(st, &bg, AgentId::new("c"), AgentId::new("p")).unwrap();
+            return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p")).unwrap();
         assert_eq!(
             st.budget(&AgentId::new("p")),
-            BudgetLevel::L4,
-            "return_endorsed charges the RECIPIENT (parent) budget"
+            BUDGET_CAPACITY - 2,
+            "return_endorsed charges the RECIPIENT (parent) budget by the flat weight (2)"
         );
     }
 
     #[test]
-    fn return_endorsed_budget_exhausts_after_five_then_refuses() {
+    fn return_endorsed_budget_drains_then_refuses() {
         let mut st = parent_child_state();
         let bg = BackgroundTheoryBuilder::new().build();
-        // Five endorsed returns drain the parent's per-subtree budget (smurfing bound).
-        for _ in 0..5 {
+        // Eight endorsed returns (each costs 2) drain the parent's per-subtree budget (16).
+        for _ in 0..8 {
             let (s, _) =
-                return_endorsed(st, &bg, AgentId::new("c"), AgentId::new("p")).unwrap();
+                return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p"))
+                    .unwrap();
             st = s;
         }
-        assert!(st.budget_exhausted(&AgentId::new("p")));
+        assert!(!st.affordable(&AgentId::new("p"), 2));
         assert!(
-            return_endorsed(st, &bg, AgentId::new("c"), AgentId::new("p")).is_err(),
-            "sixth endorsed return is refused -- caller must fall back to return_unendorsed"
+            return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p")).is_err(),
+            "the next endorsed return is refused -- caller must fall back to return_unendorsed"
         );
     }
 
     #[test]
-    fn sentinel_refresh_budget_restores_full() {
-        let mut st = state_with_agent("a1", &[CapKind::RefreshBudget]);
+    fn sentinel_credit_budget_saturates_at_capacity() {
+        let mut st = state_with_agent("a1", &[CapKind::CreditBudget]);
         st
             .agent_budget
-            .insert(AgentId::new("a1"), BudgetLevel::Exhausted);
+            .insert(AgentId::new("a1"), 3);
         let bg = BackgroundTheoryBuilder::new().build();
-        let (st, action) = sentinel_refresh_budget(st, &bg, AgentId::new("a1")).unwrap();
-        assert_eq!(st.budget(&AgentId::new("a1")), BudgetLevel::L5);
+        let (st, action) = sentinel_credit_budget(st, &bg, AgentId::new("a1"), 100).unwrap();
+        assert_eq!(st.budget(&AgentId::new("a1")), BUDGET_CAPACITY);
         assert_eq!(
             action,
-            KernelAction::SentinelRefreshBudget {
-                agent: AgentId::new("a1")
+            KernelAction::SentinelCreditBudget {
+                agent: AgentId::new("a1"),
+                amount: 100,
             }
         );
     }
 
     #[test]
-    fn sentinel_refresh_budget_requires_cap() {
+    fn sentinel_credit_budget_requires_cap() {
         let st = state_with_agent("a1", &[]);
         let bg = BackgroundTheoryBuilder::new().build();
         assert!(
-            sentinel_refresh_budget(st, &bg, AgentId::new("a1")).is_err(),
-            "refreshing budget requires cap_refresh_budget"
+            sentinel_credit_budget(st, &bg, AgentId::new("a1"), 4).is_err(),
+            "crediting budget requires cap_credit_budget"
         );
     }
 
@@ -1996,7 +2059,7 @@ mod tests {
         st.agent_active.insert(granter.clone());
         st.agent_active.insert(target.clone());
         st.agent_cap.insert(granter.clone(), VecSet::from([CapKind::GrantOverride]));
-        st.agent_budget.insert(granter.clone(), BudgetLevel::Exhausted);
+        st.agent_budget.insert(granter.clone(), 0);
 
         let bg = BackgroundTheoryBuilder::new().build();
         let result =
@@ -2006,7 +2069,7 @@ mod tests {
 
     #[test]
     fn grant_override_debits_granter() {
-        // Root starts at L5 (full); after grant_override it should be at L4.
+        // Root starts at full capacity; after grant_override it should be one lower.
         let target = AgentId::new("t");
         let mut st = KernelState::initial();
         st.agent_active.insert(target.clone());
@@ -2014,7 +2077,7 @@ mod tests {
         let bg = BackgroundTheoryBuilder::new().build();
         let granter = AgentId::root();
 
-        assert_eq!(st.budget(&granter), BudgetLevel::L5);
+        assert_eq!(st.budget(&granter), BUDGET_CAPACITY);
         let target_budget_before = st.budget(&target);
 
         let (st, _) = grant_override(
@@ -2027,7 +2090,7 @@ mod tests {
         )
         .expect("grant_override should succeed");
 
-        assert_eq!(st.budget(&granter), BudgetLevel::L4, "granter debited one level");
+        assert_eq!(st.budget(&granter), BUDGET_CAPACITY - 1, "granter debited by one");
         assert_eq!(st.budget(&target), target_budget_before, "target budget untouched");
     }
 
@@ -2186,7 +2249,7 @@ mod tests {
             st.has_flow_override(&agent, &ToolId::new("t"), ConfLevel::Sensitive),
             "override armed for granter-as-target"
         );
-        assert_eq!(st.budget(&agent), budget_before.debit(), "granter debited");
+        assert_eq!(st.budget(&agent), budget_before - 1, "granter debited");
     }
 
     #[test]
