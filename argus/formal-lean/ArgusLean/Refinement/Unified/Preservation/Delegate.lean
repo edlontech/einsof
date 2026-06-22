@@ -146,7 +146,7 @@ theorem delegate_preservesR
       agent_instruction := fun A I => a.agent_instruction A I ∧ A ≠ grantee
       taint_levels := fun A L => a.taint_levels A L ∧ A ≠ grantee
       agent_budget := fun G L =>
-        (G = grantee ∧ L = Tzimtzum.BudgetLevel.bl5) ∨ (a.agent_budget G L ∧ G ≠ grantee)
+        (G = grantee ∧ L = Tzimtzum.budget_capacity) ∨ (a.agent_budget G L ∧ G ≠ grantee)
       in_flight := fun A I => a.in_flight A I ∧ A ≠ grantee
       gh_taint_invoked := fun A L => a.gh_taint_invoked A L ∧ A ≠ grantee
       gh_taint_received := fun A L => a.gh_taint_received A L ∧ A ≠ grantee
@@ -208,25 +208,25 @@ theorem delegate_preservesR
         vmsMemLast st'.override_used ag { tool := t, level := confC L }
       rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hOverride hR.ndOverride),
         vmsMem_filter_removeKept _ _ _ hOverride, vmsMem_iff_vmsMemLast _ hR.ndOverride, ← hR.override]
-    · -- budget (grantee → bl5 via absent-after-filter; others filtered)
+    · -- budget (grantee → full capacity via absent-after-filter; others filtered)
       intro G L hactiveG
-      show ((G = grantee ∧ L = Tzimtzum.BudgetLevel.bl5) ∨ (a.agent_budget G L ∧ G ≠ grantee)) ↔
-        budgetReadC st'.agent_budget G = budgetC L
+      show ((G = grantee ∧ L = Tzimtzum.budget_capacity) ∨ (a.agent_budget G L ∧ G ≠ grantee)) ↔
+        (budgetReadC st'.agent_budget G).val = L
       have hbr : budgetReadC st'.agent_budget G =
-          if G = grantee then types.BudgetLevel.L5 else budgetReadC st.agent_budget G := by
+          if G = grantee then types.BUDGET_CAPACITY else budgetReadC st.agent_budget G := by
         unfold budgetReadC; rw [hBudget, vmLastEntry_filter_removeKept]
         by_cases hG : G = grantee <;> simp [hG]
       rw [hbr]
       by_cases hG : G = grantee
       · rw [if_pos hG]
         constructor
-        · rintro (⟨_, hL5⟩ | ⟨_, hne⟩)
-          · subst hL5; rfl
+        · rintro (⟨_, hcap⟩ | ⟨_, hne⟩)
+          · subst hcap; exact budgetCapacity_val
           · exact absurd hG hne
-        · intro h; exact Or.inl ⟨hG, (@budgetC_injective Tzimtzum.BudgetLevel.bl5 L h).symm⟩
+        · intro h; exact Or.inl ⟨hG, (budgetCapacity_val ▸ h).symm⟩
       · rw [if_neg hG]
         have hGact : a.agent_active G := hactiveG.resolve_right hG
-        have hL : ((G = grantee ∧ L = Tzimtzum.BudgetLevel.bl5) ∨ (a.agent_budget G L ∧ G ≠ grantee)) ↔
+        have hL : ((G = grantee ∧ L = Tzimtzum.budget_capacity) ∨ (a.agent_budget G L ∧ G ≠ grantee)) ↔
             a.agent_budget G L :=
           ⟨fun h => h.elim (fun hp => absurd hp.1 hG) (fun hp => hp.1), fun h => Or.inr ⟨h, hG⟩⟩
         rw [hL]; exact hR.budget G L hGact

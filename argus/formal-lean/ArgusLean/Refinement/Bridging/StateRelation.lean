@@ -168,6 +168,12 @@ def budgetReadC (vm : collections.VecMap types.AgentId Std.U8) (G : types.AgentI
   | none => types.BUDGET_CAPACITY
   | some p => p.2
 
+/-- The kernel's `BUDGET_CAPACITY` cell (`16#u8`) carries the abstract `budget_capacity = 16` as its
+    `Nat` value. Both sides are `@[irreducible]` literals, so `simp` (not `rfl`) discharges them. The
+    bridge for the "absent ⇒ full" budget convention (delegate grantee, init root). -/
+@[simp] theorem budgetCapacity_val : (types.BUDGET_CAPACITY).val = Tzimtzum.budget_capacity := by
+  simp [types.BUDGET_CAPACITY, Tzimtzum.budget_capacity]
+
 /-- `KernelState.budget` computes the get-style read `budgetReadC`. -/
 theorem budget_spec (st : state.KernelState) (agent : types.AgentId) :
     state.KernelState.budget st agent ⦃ b => b = budgetReadC st.agent_budget agent ⦄ := by

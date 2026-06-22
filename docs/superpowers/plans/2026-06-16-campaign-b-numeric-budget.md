@@ -526,9 +526,9 @@ Proof work: statements below are exact; proof bodies are iterative. Reuse the es
 **Files:**
 - Modify: `ArgusLean/Refinement/Bridging/*` (the file holding the old `debitBudget_spec` — likely `Budget*.lean` or inline in a `StateRelation`/collection bridging file; grep `debitBudget_spec`)
 
-- [ ] **Step 1:** Replace `debitBudget_spec` (was: enum step-down) with the numeric pair: `debitBudget_spec` (concrete `saturating_sub w` relates to abstract `b - w` under `affordable`) and a new `creditBudget_spec` (concrete `saturating_add n |> min CAP` relates to abstract `min budget_capacity (b + n)`). Both discharge by `scalar_tac`/`omega` over `UScalar` ↔ `Nat` once the absence==capacity convention is bridged (reuse the existing `budget` get-style accessor spec; `budget_capacity = 16` is a literal on both sides).
-- [ ] **Step 2:** `affordable` bridge: concrete `budget(a) >= w` ↔ abstract `∃ b, agent_budget a b ∧ w ≤ b` (existence from `active_has_budget`, value from the get-spec).
-- [ ] **Step 3:** `lake build` the Bridging tree green. Commit — `feat(formal-lean): numeric budget bridging specs`
+- [x] **Step 1:** Replace `debitBudget_spec` (was: enum step-down) with the numeric pair: `debitBudget_spec` (concrete `saturating_sub w` relates to abstract `b - w` under `affordable`) and a new `creditBudget_spec` (concrete `saturating_add n |> min CAP` relates to abstract `min budget_capacity (b + n)`). Both discharge by `scalar_tac`/`omega` over `UScalar` ↔ `Nat` once the absence==capacity convention is bridged (reuse the existing `budget` get-style accessor spec; `budget_capacity = 16` is a literal on both sides).
+- [x] **Step 2:** `affordable` bridge: concrete `budget(a) >= w` ↔ abstract `∃ b, agent_budget a b ∧ w ≤ b` (existence from `active_has_budget`, value from the get-spec).
+- [x] **Step 3:** `lake build` the Bridging tree green. Commit — `feat(formal-lean): numeric budget bridging specs`
 
 ### Task 15: Preservation proofs for the four budget actions
 

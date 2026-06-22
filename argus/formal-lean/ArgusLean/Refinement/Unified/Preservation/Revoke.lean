@@ -217,7 +217,7 @@ theorem revoke_preservesR
     · -- budget (active-guarded; G ≠ target on the active set, filter leaves it untouched)
       intro G L hactive'
       obtain ⟨hGactive, hGne⟩ := hactive'
-      show (a.agent_budget G L ∧ G ≠ target) ↔ budgetReadC st'.agent_budget G = budgetC L
+      show (a.agent_budget G L ∧ G ≠ target) ↔ (budgetReadC st'.agent_budget G).val = L
       have hbr : budgetReadC st'.agent_budget G = budgetReadC st.agent_budget G := by
         unfold budgetReadC; rw [hBudget, vmLastEntry_filter_removeKept, if_neg hGne]
       rw [hbr]

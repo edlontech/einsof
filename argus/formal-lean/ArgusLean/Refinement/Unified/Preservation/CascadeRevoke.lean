@@ -203,7 +203,7 @@ theorem cascade_revoke_preservesR
         vmsMem_filter_removeKept _ _ _ hOverride, vmsMem_iff_vmsMemLast _ hR.ndOverride, ← hR.override]
     · intro G L hactive'
       obtain ⟨hGactive, hGne⟩ := hactive'
-      show (a.agent_budget G L ∧ G ≠ child) ↔ budgetReadC st'.agent_budget G = budgetC L
+      show (a.agent_budget G L ∧ G ≠ child) ↔ (budgetReadC st'.agent_budget G).val = L
       have hbr : budgetReadC st'.agent_budget G = budgetReadC st.agent_budget G := by
         unfold budgetReadC; rw [hBudget, vmLastEntry_filter_removeKept, if_neg hGne]
       rw [hbr]
