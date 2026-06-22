@@ -6,7 +6,7 @@ use argus_kernel::{
 };
 use rustler::{NifMap, NifStruct};
 
-use crate::enums::{BudgetLevelN, CapKindN, ConfLevelN, EgressKindN};
+use crate::enums::{CapKindN, ConfLevelN, EgressKindN};
 
 #[derive(Debug, Clone, NifMap)]
 pub struct ToolMetadataN {
@@ -88,7 +88,7 @@ pub struct StateN {
     pub agent_instruction: HashMap<String, Vec<String>>,
     pub override_used: HashMap<String, Vec<(String, ConfLevelN)>>,
     pub flow_override: HashMap<String, Vec<(String, ConfLevelN)>>,
-    pub agent_budget: HashMap<String, BudgetLevelN>,
+    pub agent_budget: HashMap<String, u8>,
 }
 
 fn into_set_map<NV, KV, F>(m: HashMap<String, Vec<NV>>, f: F) -> VecMap<AgentId, VecSet<KV>>
@@ -143,7 +143,7 @@ impl StateN {
             agent_budget: self
                 .agent_budget
                 .into_iter()
-                .map(|(k, v)| (AgentId(k), v.into_kernel()))
+                .map(|(k, v)| (AgentId(k), v))
                 .collect(),
         }
     }
@@ -185,7 +185,7 @@ impl StateN {
             agent_budget: ks
                 .agent_budget
                 .iter()
-                .map(|(k, v)| (k.0.clone(), BudgetLevelN::from_kernel(*v)))
+                .map(|(k, v)| (k.0.clone(), *v))
                 .collect(),
         }
     }
@@ -223,14 +223,13 @@ mod tests {
         let mut ks = KernelState::initial();
         ks.taint_levels
             .insert_into(AgentId::new("a1"), ConfLevel::Sensitive);
-        ks.agent_budget
-            .insert(AgentId::new("a1"), argus_kernel::BudgetLevel::L3);
+        ks.agent_budget.insert(AgentId::new("a1"), 13);
         let back = StateN::from_kernel(&ks).into_kernel();
         assert!(back
             .taint_levels
             .get(&AgentId::new("a1"))
             .unwrap()
             .contains(&ConfLevel::Sensitive));
-        assert_eq!(back.budget(&AgentId::new("a1")), argus_kernel::BudgetLevel::L3);
+        assert_eq!(back.budget(&AgentId::new("a1")), 13);
     }
 }

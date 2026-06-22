@@ -1,4 +1,4 @@
-use argus_kernel::{BudgetLevel, CapKind, ConfLevel, EgressKind, FlowMode};
+use argus_kernel::{CapKind, ConfLevel, EgressKind, FlowMode};
 use rustler::NifUnitEnum;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NifUnitEnum)]
@@ -81,39 +81,6 @@ impl FlowModeN {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NifUnitEnum)]
-pub enum BudgetLevelN {
-    Exhausted,
-    L1,
-    L2,
-    L3,
-    L4,
-    L5,
-}
-
-impl BudgetLevelN {
-    pub fn into_kernel(self) -> BudgetLevel {
-        match self {
-            Self::Exhausted => BudgetLevel::Exhausted,
-            Self::L1 => BudgetLevel::L1,
-            Self::L2 => BudgetLevel::L2,
-            Self::L3 => BudgetLevel::L3,
-            Self::L4 => BudgetLevel::L4,
-            Self::L5 => BudgetLevel::L5,
-        }
-    }
-    pub fn from_kernel(b: BudgetLevel) -> Self {
-        match b {
-            BudgetLevel::Exhausted => Self::Exhausted,
-            BudgetLevel::L1 => Self::L1,
-            BudgetLevel::L2 => Self::L2,
-            BudgetLevel::L3 => Self::L3,
-            BudgetLevel::L4 => Self::L4,
-            BudgetLevel::L5 => Self::L5,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NifUnitEnum)]
 pub enum CapKindN {
     FilesystemRead,
     FilesystemWrite,
@@ -131,7 +98,7 @@ pub enum CapKindN {
     DatabaseWrite,
     Ipc,
     Declassify,
-    RefreshBudget,
+    CreditBudget,
     GrantOverride,
 }
 
@@ -154,7 +121,7 @@ impl CapKindN {
             Self::DatabaseWrite => CapKind::DatabaseWrite,
             Self::Ipc => CapKind::Ipc,
             Self::Declassify => CapKind::Declassify,
-            Self::RefreshBudget => CapKind::RefreshBudget,
+            Self::CreditBudget => CapKind::CreditBudget,
             Self::GrantOverride => CapKind::GrantOverride,
         }
     }
@@ -176,7 +143,7 @@ impl CapKindN {
             CapKind::DatabaseWrite => Self::DatabaseWrite,
             CapKind::Ipc => Self::Ipc,
             CapKind::Declassify => Self::Declassify,
-            CapKind::RefreshBudget => Self::RefreshBudget,
+            CapKind::CreditBudget => Self::CreditBudget,
             CapKind::GrantOverride => Self::GrantOverride,
         }
     }
@@ -195,20 +162,6 @@ mod tests {
             ConfLevel::Restricted,
         ] {
             assert_eq!(ConfLevelN::from_kernel(c).into_kernel(), c);
-        }
-    }
-
-    #[test]
-    fn budget_level_roundtrips() {
-        for b in [
-            BudgetLevel::Exhausted,
-            BudgetLevel::L1,
-            BudgetLevel::L2,
-            BudgetLevel::L3,
-            BudgetLevel::L4,
-            BudgetLevel::L5,
-        ] {
-            assert_eq!(BudgetLevelN::from_kernel(b).into_kernel(), b);
         }
     }
 

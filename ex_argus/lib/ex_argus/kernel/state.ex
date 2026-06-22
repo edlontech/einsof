@@ -37,6 +37,6 @@ defmodule ExArgus.Kernel.State do
           agent_instruction: %{optional(Types.agent_id()) => [Types.instruction_id()]},
           override_used: %{optional(Types.agent_id()) => [{Types.tool_id(), Types.conf_level()}]},
           flow_override: %{optional(Types.agent_id()) => [{Types.tool_id(), Types.conf_level()}]},
-          agent_budget: %{optional(Types.agent_id()) => Types.budget_level()}
+          agent_budget: %{optional(Types.agent_id()) => non_neg_integer()}
         }
 end

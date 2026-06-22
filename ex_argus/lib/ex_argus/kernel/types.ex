@@ -27,7 +27,7 @@ defmodule ExArgus.Kernel.Types do
   @typedoc "Egress channel kind."
   @type egress_kind :: :network_external | :network_internal | :filesystem_write | :ipc
 
-  @typedoc "Capability kind (17 variants)."
+  @typedoc "Capability kind (18 variants)."
   @type cap_kind ::
           :filesystem_read
           | :filesystem_write
@@ -45,13 +45,11 @@ defmodule ExArgus.Kernel.Types do
           | :database_write
           | :ipc
           | :declassify
-          | :refresh_budget
+          | :credit_budget
+          | :grant_override
 
   @typedoc "Flow-gate mode for a `{conf_level, egress_kind}` pair."
   @type flow_mode :: :allow | :inspect | :deny
-
-  @typedoc "Declassification budget level (`Exhausted < L1 < .. < L5`); absence means full."
-  @type budget_level :: :exhausted | :l1 | :l2 | :l3 | :l4 | :l5
 
   @typedoc "Per-tool metadata in the background theory (a plain map, not a struct)."
   @type tool_metadata :: %{
