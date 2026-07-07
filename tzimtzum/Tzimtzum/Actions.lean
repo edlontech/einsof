@@ -107,29 +107,32 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
   require ∀ AG, ¬ s.in_flight AG inv
   -- CHECK 1: Capability gate
   require ∀ C, s.tool_cap tool C → s.agent_cap a C
-  -- CHECK 2a: Flow gate (existing speculative taint × new tool's egress)
+  -- CHECK 2a: Flow gate (existing speculative taint × new tool's egress). The vouch is the
+  -- NEW invocation's content-gate verdict.
   require ∀ L E,
     Tzimtzum.speculative_taint s a L ∧ s.tool_egress tool E →
       s.flow_allows L E
-      ∨ (s.flow_inspects L E ∧ s.content_gate_passes a tool)
+      ∨ (s.flow_inspects L E ∧ s.invocation_gate_passes inv)
       ∨ (s.flow_override a tool L ∧ ¬ s.override_used a tool L)
-  -- CHECK 2b: Flow gate (new tool's taint × existing in-flight's egress)
+  -- CHECK 2b: Flow gate (new tool's taint × existing in-flight's egress). The vouch is the
+  -- IN-FLIGHT invocation I's content-gate verdict (being re-examined against the new floor).
   require ∀ I E,
     s.in_flight a I ∧ s.tool_egress (s.invocation_tool I) E →
       s.flow_allows (s.tool_conf_floor tool) E
       ∨ (s.flow_inspects (s.tool_conf_floor tool) E
-          ∧ s.content_gate_passes a (s.invocation_tool I))
+          ∧ s.invocation_gate_passes I)
       ∨ (s.flow_override a (s.invocation_tool I) (s.tool_conf_floor tool)
           ∧ ¬ s.override_used a (s.invocation_tool I) (s.tool_conf_floor tool))
-  -- CHECK 2c: Self-flow gate (tool's own taint × its own egress)
+  -- CHECK 2c: Self-flow gate (tool's own taint × its own egress). The vouch is again the
+  -- NEW invocation's content-gate verdict.
   require ∀ E,
     s.tool_egress tool E →
       s.flow_allows (s.tool_conf_floor tool) E
-      ∨ (s.flow_inspects (s.tool_conf_floor tool) E ∧ s.content_gate_passes a tool)
+      ∨ (s.flow_inspects (s.tool_conf_floor tool) E ∧ s.invocation_gate_passes inv)
       ∨ (s.flow_override a tool (s.tool_conf_floor tool)
           ∧ ¬ s.override_used a tool (s.tool_conf_floor tool))
-  -- CHECK 3: Authorizer gate
-  require s.authorizer_allows a tool
+  -- CHECK 3: Authorizer gate, keyed on this invocation.
+  require s.invocation_authorized inv
   override_used := fun A T L =>
     s.override_used A T L
     -- 2a: new tool armed against existing speculative taint L
@@ -145,7 +148,7 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
 -- invoke_complete (Veil lines 619-654). Removes in_flight (point-clear), conditionally adds
 -- taint, and self-debits the weighted budget on the endorsed (zero-taint) path. The endorsed
 -- predicate (inlined at each site, no `let` in action bodies) is the 4-conjunct
---   `endorsed := output_bounded ∧ output_conforms ∧ affordable (declass_weight floor)
+--   `endorsed := output_bounded ∧ invocation_conforms ∧ affordable (declass_weight floor)
 --                ∧ ¬ already-tainted-at-floor`
 -- where `floor = s.tool_conf_floor (s.invocation_tool inv)`. An agent already tainted at
 -- `floor` takes the `¬ endorsed` branch: idempotent taint insert, ZERO debit (the
@@ -160,14 +163,14 @@ kav_action invoke_complete (a : AgentId) (inv : InvocationId) :
     s.taint_levels A L
     ∨ (A = a
         ∧ ¬ (s.tool_output_bounded (s.invocation_tool inv)
-                ∧ s.output_conforms a (s.invocation_tool inv)
+                ∧ s.invocation_conforms inv
                 ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
                 ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
         ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
   agent_budget := fun A =>
     if A = a then
       if s.tool_output_bounded (s.invocation_tool inv)
-          ∧ s.output_conforms a (s.invocation_tool inv)
+          ∧ s.invocation_conforms inv
           ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
           ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv))
       then s.agent_budget a - declass_weight (s.tool_conf_floor (s.invocation_tool inv))
@@ -200,7 +203,7 @@ kav_action return_unendorsed (child prnt : AgentId) :
   require ∀ L I E,
     s.taint_levels child L ∧ s.in_flight prnt I ∧ s.tool_egress (s.invocation_tool I) E →
       s.flow_allows L E
-      ∨ (s.flow_inspects L E ∧ s.content_gate_passes prnt (s.invocation_tool I))
+      ∨ (s.flow_inspects L E ∧ s.invocation_gate_passes I)
       ∨ (s.flow_override prnt (s.invocation_tool I) L
           ∧ ¬ s.override_used prnt (s.invocation_tool I) L)
   taint_levels := fun A L => s.taint_levels A L ∨ (A = prnt ∧ s.taint_levels child L)
@@ -219,7 +222,7 @@ kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
   require ∀ I E,
     s.in_flight a I ∧ s.tool_egress (s.invocation_tool I) E →
       s.flow_allows l E
-      ∨ (s.flow_inspects l E ∧ s.content_gate_passes a (s.invocation_tool I))
+      ∨ (s.flow_inspects l E ∧ s.invocation_gate_passes I)
       ∨ (s.flow_override a (s.invocation_tool I) l
           ∧ ¬ s.override_used a (s.invocation_tool I) l)
   override_used := fun A T L =>

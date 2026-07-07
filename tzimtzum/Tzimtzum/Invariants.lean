@@ -28,12 +28,12 @@ def root_always_active
   s.agent_active s.root_agent
 
 /-- **default_deny**: every in-flight invocation was explicitly authorized — the authorizer
-allowed (agent, tool) and the agent holds every capability the tool requires. -/
+allowed this invocation and the agent holds every capability the tool requires. -/
 def default_deny
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (I : InvocationId),
     s.in_flight A I →
-      s.authorizer_allows A (s.invocation_tool I)
+      s.invocation_authorized I
       ∧ (∀ (C : CapKind), s.tool_cap (s.invocation_tool I) C → s.agent_cap A C)
 
 /-- **flow_confinement**: a tainted agent's in-flight egress is permitted by the flow policy
@@ -43,7 +43,7 @@ def flow_confinement
   ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
     s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E →
       s.flow_allows L E
-      ∨ (s.flow_inspects L E ∧ s.content_gate_passes A (s.invocation_tool I))
+      ∨ (s.flow_inspects L E ∧ s.invocation_gate_passes I)
       ∨ s.flow_override A (s.invocation_tool I) L
 
 /-- **flow_confinement_weak**: oracle-independent flow safety — DENY-mode pairs are
@@ -90,7 +90,7 @@ def override_consumed_when_sole_justification
   ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
     s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E
     ∧ ¬ s.flow_allows L E
-    ∧ ¬ (s.flow_inspects L E ∧ s.content_gate_passes A (s.invocation_tool I))
+    ∧ ¬ (s.flow_inspects L E ∧ s.invocation_gate_passes I)
     ∧ s.flow_override A (s.invocation_tool I) L →
       s.override_used A (s.invocation_tool I) L
 
@@ -157,7 +157,7 @@ def in_flight_flow_compat
     ∧ s.tool_egress (s.invocation_tool I2) E →
       s.flow_allows (s.tool_conf_floor (s.invocation_tool I1)) E
       ∨ (s.flow_inspects (s.tool_conf_floor (s.invocation_tool I1)) E
-          ∧ s.content_gate_passes A (s.invocation_tool I2))
+          ∧ s.invocation_gate_passes I2)
       ∨ s.flow_override A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1))
 
 /-- **in_flight_override_consumed**: if two in-flight invocations are mutually flow-compatible ONLY
@@ -169,7 +169,7 @@ def in_flight_override_consumed
     ∧ s.tool_egress (s.invocation_tool I2) E
     ∧ ¬ s.flow_allows (s.tool_conf_floor (s.invocation_tool I1)) E
     ∧ ¬ (s.flow_inspects (s.tool_conf_floor (s.invocation_tool I1)) E
-          ∧ s.content_gate_passes A (s.invocation_tool I2))
+          ∧ s.invocation_gate_passes I2)
     ∧ s.flow_override A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1)) →
       s.override_used A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1))
 

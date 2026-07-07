@@ -82,13 +82,22 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   tool_output_bounded : ToolId → Prop
   tool_issuer         : ToolId → IssuerId
   trusted_issuer      : IssuerId → Prop
-  output_conforms     : AgentId → ToolId → Prop
+  -- Per-invocation oracle verdicts (rekeyed from static per-(agent, tool) background
+  -- relations): a static relation cannot express "this output conformed, the next didn't",
+  -- so every per-decision verdict is attested per invocation instead. `return_conforms`
+  -- stays pairwise — there is no reified return object to key on.
+  invocation_conforms : InvocationId → Prop
   return_conforms     : AgentId → AgentId → Prop
   instruction_issuer  : InstructionId → IssuerId
   egress_allow_ceiling   : EgressKind → Option ConfLevel
   egress_inspect_ceiling : EgressKind → Option ConfLevel
-  authorizer_allows   : AgentId → ToolId → Prop
-  content_gate_passes : AgentId → ToolId → Prop
+  invocation_authorized  : InvocationId → Prop
+  -- The content-gate verdict is level-independent ("this invocation's content was
+  -- approved"), not tied to the taint level being vouched against: CHECK 2b already
+  -- vouches an old in-flight invocation against a NEW taint level, so keying on the
+  -- invocation alone (rather than a (level, invocation) pair) was the honest reading
+  -- all along.
+  invocation_gate_passes : InvocationId → Prop
   invocation_tool     : InvocationId → ToolId
   -- Named individuals
   root_agent          : AgentId

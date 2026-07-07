@@ -110,8 +110,8 @@ secure."
   explicit assumptions: `Vec` capacity bounds hold at runtime, and the runtime oracles
   agree with their abstract counterparts. It does not independently verify the
   hand-written Rust source.
-- **The oracles are trusted, not verified.** `authorizer_allows`, `content_gate_passes`,
-  `output_conforms`, `return_conforms`, `trusted_issuer` are uninterpreted in the spec.
+- **The oracles are trusted, not verified.** `invocation_authorized`, `invocation_gate_passes`,
+  `invocation_conforms`, `return_conforms`, `trusted_issuer` are uninterpreted in the spec.
   The proof says *if the oracle answers correctly, the state stays safe* -- it says
   nothing about whether the oracle's answer is actually correct. A misconfigured policy
   engine or a compromised content gate defeats the guarantee without breaking any proof.
