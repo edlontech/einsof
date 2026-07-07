@@ -220,8 +220,15 @@ kav_action invoke_complete_unendorsed (a : AgentId) (inv : InvocationId) :
 
 -- return_endorsed (Veil lines 674-688). Capability-gated, recipient-budget-charged
 -- cross-boundary declassification (no taint propagation).
+-- Level-parameterized weighted debit (design §4 "Return debit" / §5.4 "Weighted endorsed
+-- return", closes the child-laundering arbitrage: flat pricing undercharged a restricted
+-- return relative to the restricted invoke it shortcuts). The caller declares `clvl`; the
+-- coverage require verifies the declaration bounds the child's ENTIRE taint set (not just its
+-- max observed level); the debit follows the declaration, not the set itself. A clean child
+-- returns at `clvl = public` for debit 0 (`declass_weight public = 0`) — endorsing nothing
+-- costs nothing. The integrity parameter `ilvl` arrives in Task 12; do not add it here.
 open Classical in
-kav_action return_endorsed (child prnt : AgentId) :
+kav_action return_endorsed (child prnt : AgentId) (clvl : ConfLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_parent child prnt
   require s.agent_active child
@@ -229,8 +236,11 @@ kav_action return_endorsed (child prnt : AgentId) :
   require ∀ I, ¬ s.in_flight child I
   require s.agent_cap child s.cap_declassify
   require s.return_conforms child prnt
-  require s.affordable prnt 2
-  agent_budget := fun A => if A = prnt then s.agent_budget prnt - 2 else s.agent_budget A
+  -- Coverage: the declared level bounds the child's entire taint set.
+  require ∀ L, s.taint_levels child L → le_conf L clvl
+  require s.affordable prnt (declass_weight clvl)
+  agent_budget := fun A =>
+    if A = prnt then s.agent_budget prnt - declass_weight clvl else s.agent_budget A
 
 -- return_unendorsed (Veil lines 708-732). Parent inherits child's taint set; flow-gated
 -- against parent's in-flight tools; eager override consumption (marks used whenever the
@@ -288,19 +298,24 @@ kav_action sentinel_credit_budget (a : AgentId) (n : Nat) :
 -- guard (target has no in-flight invocations) makes both single-use invariants vacuous
 -- for the target at grant time. Self-grant (granter = target) is legal — the guard then
 -- binds the granter.
+-- Weighted debit (design §4 "Return debit" / §5.4 "Weighted override grant"): the primitive
+-- that pushes data through a DENY band is priced by the level it arms, not a flat 1 — closes
+-- the cheap-override arbitrage. Public-level overrides are free, deliberately: public data
+-- through a deny-all channel is harmless.
 open Classical in
 kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : ConfLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active granter
   require s.agent_active target
   require s.agent_cap granter s.cap_grant_override
-  require s.affordable granter 1
+  require s.affordable granter (declass_weight lvl)
   require ∀ (I : InvocationId), ¬ s.in_flight target I
   flow_override := fun A T L =>
     s.flow_override A T L ∨ (A = target ∧ T = tool ∧ L = lvl)
   override_used := fun A T L =>
     s.override_used A T L ∧ ¬ (A = target ∧ T = tool ∧ L = lvl)
-  agent_budget := fun A => if A = granter then s.agent_budget granter - 1 else s.agent_budget A
+  agent_budget := fun A =>
+    if A = granter then s.agent_budget granter - declass_weight lvl else s.agent_budget A
 
 /-! ## Full 14-action transition system -/
 
@@ -317,7 +332,7 @@ def system : Kav.TransitionSystem
       , ("invoke_start",               Kav.close3 invoke_start)
       , ("invoke_complete_endorsed",   Kav.close2 invoke_complete_endorsed)
       , ("invoke_complete_unendorsed", Kav.close2 invoke_complete_unendorsed)
-      , ("return_endorsed",            Kav.close2 return_endorsed)
+      , ("return_endorsed",            Kav.close3 return_endorsed)
       , ("return_unendorsed",          Kav.close2 return_unendorsed)
       , ("sentinel_elevate_taint",     Kav.close2 sentinel_elevate_taint)
       , ("sentinel_credit_budget",     Kav.close2 sentinel_credit_budget)
