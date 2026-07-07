@@ -23,10 +23,10 @@ theorem return_endorsed_pres_revocation_clean
     revocation_clean s' := by
   unfold revocation_clean retEnd return_endorsed Kav.Action.next at *
   have hactive : s'.agent_active = s.agent_active := by grind
-  intro A I L hna
+  intro A I L Li hna
   rw [hactive] at hna
-  obtain ⟨hinf, htaint⟩ := hrc A I L hna
-  exact ⟨by grind, by grind⟩
+  obtain ⟨hinf, htaint, hinteg⟩ := hrc A I L Li hna
+  exact ⟨by grind, by grind, by grind⟩
 
 -- Axiom audit: must depend only on [propext, Classical.choice, Quot.sound].
 #print axioms return_endorsed_pres_revocation_clean

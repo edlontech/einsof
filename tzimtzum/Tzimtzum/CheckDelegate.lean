@@ -24,14 +24,14 @@ theorem delegate_pres_revocation_clean
     (_hg : (dlg grantor grantee).guard s) (hn : (dlg grantor grantee).next s s') :
     revocation_clean s' := by
   unfold revocation_clean dlg delegate Kav.Action.next at *
-  intro A I L hna
+  intro A I L Li hna
   by_cases hAg : A = grantee
   · subst hAg
     exact absurd hna (by grind)
   · have hactive : s'.agent_active A = s.agent_active A := by grind
     rw [hactive] at hna
-    obtain ⟨hinf, htaint⟩ := hrc A I L hna
-    exact ⟨by grind, by grind⟩
+    obtain ⟨hinf, htaint, hinteg⟩ := hrc A I L Li hna
+    exact ⟨by grind, by grind, by grind⟩
 
 -- Axiom audit: must depend only on [propext, Classical.choice, Quot.sound].
 #print axioms delegate_pres_revocation_clean

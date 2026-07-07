@@ -56,6 +56,7 @@ kav_action delegate (grantor grantee : AgentId) :
   agent_cap := fun N C => s.agent_cap N C ∧ N ≠ grantee
   agent_instruction := fun A I => s.agent_instruction A I ∧ A ≠ grantee
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ grantee
+  integ_levels := fun A L => s.integ_levels A L ∧ A ≠ grantee
   agent_budget := fun G => if G = grantee then 0 else s.agent_budget G
   in_flight := fun A I => s.in_flight A I ∧ A ≠ grantee
   override_used := fun A T L => s.override_used A T L ∧ A ≠ grantee
@@ -84,6 +85,7 @@ kav_action revoke (prnt target : AgentId) :
   agent_cap := fun A C => s.agent_cap A C ∧ A ≠ target
   agent_instruction := fun A I => s.agent_instruction A I ∧ A ≠ target
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ target
+  integ_levels := fun A L => s.integ_levels A L ∧ A ≠ target
   in_flight := fun A I => s.in_flight A I ∧ A ≠ target
   override_used := fun A T L => s.override_used A T L ∧ A ≠ target
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ target
@@ -100,6 +102,7 @@ kav_action cascade_revoke (child prnt : AgentId) :
   agent_cap := fun A C => s.agent_cap A C ∧ A ≠ child
   agent_instruction := fun A I => s.agent_instruction A I ∧ A ≠ child
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ child
+  integ_levels := fun A L => s.integ_levels A L ∧ A ≠ child
   in_flight := fun A I => s.in_flight A I ∧ A ≠ child
   override_used := fun A T L => s.override_used A T L ∧ A ≠ child
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ child

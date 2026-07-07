@@ -64,11 +64,12 @@ def capability_subsumption
     s.agent_parent C P ∧ s.agent_active C ∧ s.agent_active P →
       ∀ (Cap : CapKind), s.agent_cap C Cap → s.agent_cap P Cap
 
-/-- **revocation_clean**: inactive agents leave no residue (no in-flight invocations, no taint). -/
+/-- **revocation_clean**: inactive agents leave no residue (no in-flight invocations, no
+taint, no integrity levels). -/
 def revocation_clean
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (I : InvocationId) (L : ConfLevel),
-    ¬ s.agent_active A → ¬ s.in_flight A I ∧ ¬ s.taint_levels A L
+  ∀ (A : AgentId) (I : InvocationId) (L : ConfLevel) (Li : IntegLevel),
+    ¬ s.agent_active A → ¬ s.in_flight A I ∧ ¬ s.taint_levels A L ∧ ¬ s.integ_levels A Li
 
 /-- **tool_attestation_intact**: every registered tool's labels come from a trusted issuer. -/
 def tool_attestation_intact

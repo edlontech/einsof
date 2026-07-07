@@ -58,6 +58,38 @@ def budget_saturating_credit (b n : Nat) : Nat := min budget_capacity (b + n)
 
 attribute [irreducible] budget_saturating_credit
 
+/-! ## Integrity lattice (dual of `ConfLevel`)
+
+Integrity is the dual taint dimension: it FALLS as an agent ingests untrusted content
+(confidentiality taint RISES as an agent reads secret data). `IntegLevel` mirrors `ConfLevel`
+exactly — a concrete inductive with a numeric rank and a decidable order, no ordering axioms —
+and `integ_weight` prices endorsement by how far below `attested` the ingested content sits
+(the dual of `declass_weight`). -/
+
+inductive IntegLevel where
+  | untrusted | standard | trusted | attested
+  deriving DecidableEq, Repr
+
+/-- Numeric rank for the integrity total order: untrusted < standard < trusted < attested. -/
+def integRank : IntegLevel → Nat
+  | .untrusted => 0
+  | .standard  => 1
+  | .trusted   => 2
+  | .attested  => 3
+
+/-- The integrity total order (mirrors `le_conf`). -/
+def le_integ (a b : IntegLevel) : Prop := integRank a ≤ integRank b
+
+instance (a b : IntegLevel) : Decidable (le_integ a b) := inferInstanceAs (Decidable (_ ≤ _))
+
+/-- Endorsement weight: dual of `declass_weight`. Attested content is free to endorse;
+untrusted is dearest. -/
+def integ_weight : IntegLevel → Nat
+  | .attested  => 0
+  | .trusted   => 1
+  | .standard  => 2
+  | .untrusted => 4
+
 /-! ## State structure
 
 The remaining uninterpreted sorts are the type parameters. Mutable relations, immutable
@@ -70,6 +102,10 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   agent_cap           : AgentId → CapKind → Prop
   agent_instruction   : AgentId → InstructionId → Prop
   taint_levels        : AgentId → ConfLevel → Prop
+  -- Integrity taint (dual of `taint_levels`): levels ingested. Effective integrity is the
+  -- MIN of the set; EMPTY SET = FULLY TRUSTED (dual of "empty taint set = untainted"). Every
+  -- gate quantifies ∀ over the set, so an empty set passes every gate.
+  integ_levels        : AgentId → IntegLevel → Prop
   agent_budget        : AgentId → Nat
   in_flight           : AgentId → InvocationId → Prop
   -- Global freshness history: set at `invoke_start`, NEVER cleared (not by `revoke`,
@@ -82,6 +118,19 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   tool_cap            : ToolId → CapKind → Prop
   tool_egress         : ToolId → EgressKind → Prop
   tool_conf_floor     : ToolId → ConfLevel
+  -- Integrity floor + vouchable inspect-band floor (dual of `tool_conf_floor`): what an
+  -- agent must be to invoke. ALLOW iff level ≥ floor, INSPECT iff level ≥ inspect_floor; an
+  -- inspect floor above the allow floor is an empty band — coherent by construction.
+  tool_integ_floor         : ToolId → IntegLevel
+  tool_integ_inspect_floor : ToolId → IntegLevel
+  -- Emission: what ingesting this tool's output does to the invoking agent's integrity.
+  -- Floor and emission are genuinely distinct: `delete_repo` floor `trusted` / emission
+  -- `attested`; `web_fetch` floor `untrusted` / emission `untrusted`.
+  tool_output_integ        : ToolId → IntegLevel
+  -- Robust-declassification floors for the levers (`return_endorsed`/`grant_override`,
+  -- Task 13): a shared pair used at both crossing sites.
+  lever_integ_floor         : IntegLevel
+  lever_integ_inspect_floor : IntegLevel
   tool_output_bounded : ToolId → Prop
   tool_issuer         : ToolId → IssuerId
   trusted_issuer      : IssuerId → Prop
@@ -153,6 +202,56 @@ def speculative_taint
     (a : AgentId) (l : ConfLevel) : Prop :=
   s.taint_levels a l ∨ (∃ I, s.in_flight a I ∧ s.tool_conf_floor (s.invocation_tool I) = l)
 
+/-- Speculative (worst-case) integrity: held integrity levels, plus the emission of every
+in-flight tool (dual of `speculative_taint`). -/
+def speculative_integ
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (a : AgentId) (l : IntegLevel) : Prop :=
+  s.integ_levels a l ∨ (∃ I, s.in_flight a I ∧ s.tool_output_integ (s.invocation_tool I) = l)
+
+/-! ## The generic graduated gate
+
+The conf side of the invoke gate is atomic via `ceilingAdmits` over an `EgressKind →
+Option ConfLevel` ceiling map, `@[irreducible]` so the discharge cascades never unfold its
+existential. The integrity side has no such map — floors are plain total `IntegLevel`
+functions of the tool — so its ALLOW/INSPECT atoms are bare `le_integ` comparisons with
+nothing to hide from the cascade. Design §9 open question ("exact Lean encoding of the
+generic graduated gate") is resolved here as **two definitionally-aligned instantiations**,
+not one shared polymorphic gate: `ceilingAdmits` and its conf callers (`St.flow_allows`,
+`St.flow_inspects`) stay byte-identical to what Tasks 1-9 already proved over, and the
+integrity instantiation below is free to stay transparent (no `irreducible` discipline
+needed — there is no existential to blow up congruence closure). Same graduated SHAPE
+(ALLOW / INSPECT+vouch / DENY), two bodies. -/
+
+/-- Derived integrity-ALLOW relation for a tool: the agent's level clears the tool's floor
+(dual of `St.flow_allows`). -/
+@[simp] def St.integ_allows
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (l : IntegLevel) (t : ToolId) : Prop :=
+  le_integ (s.tool_integ_floor t) l
+
+/-- Derived integrity-INSPECT relation for a tool: the agent's level clears the vouchable
+inspect floor (dual of `St.flow_inspects`). An inspect floor above the allow floor is an
+empty band — coherent by construction. -/
+@[simp] def St.integ_inspects
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (l : IntegLevel) (t : ToolId) : Prop :=
+  le_integ (s.tool_integ_inspect_floor t) l
+
+/-- Robust-declassification lever ALLOW (Task 13): the agent's level clears the shared lever
+floor. -/
+@[simp] def St.lever_allows
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (l : IntegLevel) : Prop :=
+  le_integ s.lever_integ_floor l
+
+/-- Robust-declassification lever INSPECT (Task 13): the agent's level clears the lever's
+vouchable inspect floor. -/
+@[simp] def St.lever_inspects
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (l : IntegLevel) : Prop :=
+  le_integ s.lever_integ_inspect_floor l
+
 /-- Initial state predicate mirroring `after_init` (Veil lines 360-372): only `root_agent`
 active, holding all capabilities and full budget; everything else empty. -/
 def initial
@@ -162,6 +261,7 @@ def initial
   (∀ (A : AgentId) (C : CapKind), s.agent_cap A C ↔ A = s.root_agent) ∧
   (∀ (A : AgentId) (I : InstructionId), ¬ s.agent_instruction A I) ∧
   (∀ (A : AgentId) (L : ConfLevel), ¬ s.taint_levels A L) ∧
+  (∀ (A : AgentId) (L : IntegLevel), ¬ s.integ_levels A L) ∧
   (∀ (A : AgentId), s.agent_budget A = budget_capacity) ∧
   (∀ (A : AgentId) (I : InvocationId), ¬ s.in_flight A I) ∧
   (∀ (I : InvocationId), ¬ s.invocation_used I) ∧
