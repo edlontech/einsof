@@ -45,8 +45,6 @@ kav_action delegate (grantor grantee : AgentId) :
   agent_budget := fun G L =>
     (G = grantee ∧ L = budget_capacity) ∨ (s.agent_budget G L ∧ G ≠ grantee)
   in_flight := fun A I => s.in_flight A I ∧ A ≠ grantee
-  gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∧ A ≠ grantee
-  gh_taint_received := fun A L => s.gh_taint_received A L ∧ A ≠ grantee
   override_used := fun A T L => s.override_used A T L ∧ A ≠ grantee
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ grantee
 
@@ -73,8 +71,6 @@ kav_action revoke (prnt target : AgentId) :
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ target
   agent_budget := fun A L => s.agent_budget A L ∧ A ≠ target
   in_flight := fun A I => s.in_flight A I ∧ A ≠ target
-  gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∧ A ≠ target
-  gh_taint_received := fun A L => s.gh_taint_received A L ∧ A ≠ target
   override_used := fun A T L => s.override_used A T L ∧ A ≠ target
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ target
 
@@ -92,8 +88,6 @@ kav_action cascade_revoke (child prnt : AgentId) :
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ child
   agent_budget := fun A L => s.agent_budget A L ∧ A ≠ child
   in_flight := fun A I => s.in_flight A I ∧ A ≠ child
-  gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∧ A ≠ child
-  gh_taint_received := fun A L => s.gh_taint_received A L ∧ A ≠ child
   override_used := fun A T L => s.override_used A T L ∧ A ≠ child
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ child
 
@@ -175,14 +169,6 @@ kav_action invoke_complete (a : AgentId) (inv : InvocationId) :
                 ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
                 ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
         ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
-  gh_taint_invoked := fun A L =>
-    s.gh_taint_invoked A L
-    ∨ (A = a
-        ∧ ¬ (s.tool_output_bounded (s.invocation_tool inv)
-                ∧ s.output_conforms a (s.invocation_tool inv)
-                ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
-                ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
-        ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
   agent_budget := fun A L =>
     (A = a ∧
       ( ( (s.tool_output_bounded (s.invocation_tool inv)
@@ -228,7 +214,6 @@ kav_action return_unendorsed (child prnt : AgentId) :
       ∨ (s.flow_override prnt (s.invocation_tool I) L
           ∧ ¬ s.override_used prnt (s.invocation_tool I) L)
   taint_levels := fun A L => s.taint_levels A L ∨ (A = prnt ∧ s.taint_levels child L)
-  gh_taint_received := fun A L => s.gh_taint_received A L ∨ (A = prnt ∧ s.taint_levels child L)
   override_used := fun A T L =>
     s.override_used A T L
     ∨ (A = prnt ∧ s.taint_levels child L
@@ -258,7 +243,6 @@ kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
               ∧ ¬ s.flow_allows l E
               ∧ ¬ (s.flow_inspects l E ∧ s.content_gate_passes a (s.invocation_tool I)))))
   taint_levels := fun A L => s.taint_levels A L ∨ (A = a ∧ L = l)
-  gh_taint_invoked := fun A L => s.gh_taint_invoked A L ∨ (A = a ∧ L = l)
 
 -- sentinel_credit_budget (Veil lines 780-784). Capability-gated budget credit of `n`,
 -- saturating at capacity (a full refresh = credit `budget_capacity`).

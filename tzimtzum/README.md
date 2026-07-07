@@ -10,10 +10,10 @@ the guarantee stops, see [PROOFS.md](PROOFS.md).
 
 ## The verified protocol
 
-The full protocol is 13 actions, 10 safety properties, and 16 strengthening invariants,
+The full protocol is 13 actions, 9 safety properties, and 14 strengthening invariants,
 proved inductive over all transitions:
 
-- 364 VCs discharged: 26 initiation VCs (`#kav_check_init`) plus 13 × 26 preservation VCs
+- 322 VCs discharged: 23 initiation VCs (`#kav_check_init`) plus 13 × 23 preservation VCs
   (`#kav_check_action`), one per (action, invariant) pair.
 - All kernel-checked: the automation cascade uses only mathlib tactics (`grind`, `simp_all`,
   `auto`, `duper`).
@@ -49,8 +49,6 @@ No `sorryAx` or `native_decide` axiom appears.
 
 Audited theorems:
 - `audit_flow_confinement`: flow confinement preserved by `invoke_start`.
-- `audit_taint_integrity`: taint integrity preserved by `invoke_start` (cleaner:
-  `[propext, Quot.sound]` only).
 - `audit_override_consumed`: single-use override invariant preserved by `invoke_start`.
 - `audit_init_flow_confinement`: flow confinement holds in the initial state.
 - `return_endorsed_pres_active_has_budget`: the manual `active_has_budget` proof.
@@ -95,9 +93,9 @@ tzimtzum/
     OpaqueTypes.lean         shared opaque sorts (KAgent, KTool, ..., KSt)
     State.lean               St structure, ConfLevel/BudgetLevel, initial predicate
     Actions.lean             13 kav_action definitions
-    Invariants.lean          26 invariant/safety predicates + allInvariants bundle
+    Invariants.lean          23 invariant/safety predicates + allInvariants bundle
     Check*.lean              per-action #kav_check_action modules (13 files) + CheckInit
-    CheckInit.lean           #kav_check_init (26 initiation VCs)
+    CheckInit.lean           #kav_check_init (23 initiation VCs)
     Soundness.lean           kav_sound aggregator (over Soundness/)
     Soundness/               reachability bundle (Common, PresMost, per-budget-action Pres, Bundle)
     Audit.lean               audited named theorems + #print axioms

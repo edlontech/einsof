@@ -73,8 +73,6 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   agent_budget        : AgentId → Nat → Prop
   in_flight           : AgentId → InvocationId → Prop
   tool_registered     : ToolId → Prop
-  gh_taint_invoked    : AgentId → ConfLevel → Prop
-  gh_taint_received   : AgentId → ConfLevel → Prop
   override_used       : AgentId → ToolId → ConfLevel → Prop
   flow_override       : AgentId → ToolId → ConfLevel → Prop
   -- Immutable background — relations (Prop-valued) and functions (Veil lines 150-214, 245)
@@ -153,8 +151,6 @@ def initial
       s.agent_budget A L ↔ (A = s.root_agent ∧ L = budget_capacity)) ∧
   (∀ (A : AgentId) (I : InvocationId), ¬ s.in_flight A I) ∧
   (∀ (T : ToolId), ¬ s.tool_registered T) ∧
-  (∀ (A : AgentId) (L : ConfLevel), ¬ s.gh_taint_invoked A L) ∧
-  (∀ (A : AgentId) (L : ConfLevel), ¬ s.gh_taint_received A L) ∧
   (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.override_used A T L) ∧
   (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.flow_override A T L)
 

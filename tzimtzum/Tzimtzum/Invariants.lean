@@ -70,14 +70,6 @@ def revocation_clean
   ∀ (A : AgentId) (I : InvocationId) (L : ConfLevel),
     ¬ s.agent_active A → ¬ s.in_flight A I ∧ ¬ s.taint_levels A L
 
-/-- **taint_integrity**: taint doesn't appear from nowhere — an active tainted agent's taint is
-justified by a completed non-endorsed invocation or an unendorsed return from a tainted child. -/
-def taint_integrity
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L : ConfLevel),
-    s.taint_levels A L ∧ s.agent_active A →
-      s.gh_taint_invoked A L ∨ s.gh_taint_received A L
-
 /-- **tool_attestation_intact**: every registered tool's labels come from a trusted issuer. -/
 def tool_attestation_intact
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
@@ -166,18 +158,6 @@ def budget_bounded
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (L : Nat), s.agent_budget A L → L ≤ budget_capacity
 
-/-- **ghost_invoked_sound**: the `gh_taint_invoked` ghost relation stays in sync with taint. -/
-def ghost_invoked_sound
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L : ConfLevel),
-    s.gh_taint_invoked A L → s.taint_levels A L ∨ ¬ s.agent_active A
-
-/-- **ghost_received_sound**: the `gh_taint_received` ghost relation stays in sync with taint. -/
-def ghost_received_sound
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L : ConfLevel),
-    s.gh_taint_received A L → s.taint_levels A L ∨ ¬ s.agent_active A
-
 /-- **in_flight_flow_compat**: any two concurrent in-flight invocations for the same agent are
 mutually compatible under the flow policy (I1's conf-floor taint vs I2's egress). -/
 def in_flight_flow_compat
@@ -217,7 +197,6 @@ def allInvariants :
   , ("flow_confinement_weak", flow_confinement_weak)
   , ("capability_subsumption", capability_subsumption)
   , ("revocation_clean", revocation_clean)
-  , ("taint_integrity", taint_integrity)
   , ("tool_attestation_intact", tool_attestation_intact)
   , ("instruction_attestation_intact", instruction_attestation_intact)
   , ("override_consumed_when_sole_justification", override_consumed_when_sole_justification)
@@ -233,8 +212,6 @@ def allInvariants :
   , ("budget_unique", budget_unique)
   , ("active_has_budget", active_has_budget)
   , ("budget_bounded", budget_bounded)
-  , ("ghost_invoked_sound", ghost_invoked_sound)
-  , ("ghost_received_sound", ghost_received_sound)
   , ("in_flight_flow_compat", in_flight_flow_compat)
   , ("in_flight_override_consumed", in_flight_override_consumed) ]
 

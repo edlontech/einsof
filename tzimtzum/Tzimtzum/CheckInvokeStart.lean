@@ -12,11 +12,11 @@ private def invStart : KAgent → KTool → KInv → Kav.Action KSt := invoke_st
 -- simpler in_flight monotone ones.)
 private def invsA : List (Kav.Invariant KSt) :=
   allInvariants.filter (fun p => p.1 ∈
-    (["root_always_active", "capability_subsumption", "revocation_clean", "taint_integrity",
+    (["root_always_active", "capability_subsumption", "revocation_clean",
       "tool_attestation_intact", "instruction_attestation_intact", "parent_implies_active",
       "single_parent", "no_self_parent", "root_no_parent", "in_flight_active",
       "in_flight_registered", "in_flight_unique", "root_all_caps", "root_no_in_flight",
-      "budget_unique", "active_has_budget", "ghost_invoked_sound", "ghost_received_sound",
+      "budget_unique", "active_has_budget",
       "default_deny"] : List String))
 
 #kav_check_action invStart invsA

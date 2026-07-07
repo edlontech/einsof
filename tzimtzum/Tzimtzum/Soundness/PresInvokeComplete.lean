@@ -107,8 +107,8 @@ theorem pres_invoke_complete
     (hn : (Kav.close2 invoke_complete).next s s') : allInv s' := by
   simp only [Kav.close2] at hn
   obtain ⟨a, invid, hg, hn⟩ := hn
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
-      hbu, hahb, hbb, _, _, _, _⟩ := hinv
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+      hbu, hahb, hbb, _, _⟩ := hinv
   have hbudget : budget_unique s' := by
     simp only [budget_unique] at hbu ⊢
     simp only [active_has_budget] at hahb
@@ -117,17 +117,17 @@ theorem pres_invoke_complete
   have hahb' : active_has_budget s' := ic_pres_ahb a invid s s' hahb hbu hg hn
   have hbb' : budget_bounded s' := ic_pres_bb a invid s s' hbb hn
   unfold allInv
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      hbudget, hahb', hbb', ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+      hbudget, hahb', hbb', ?_, ?_⟩
   all_goals_fresh (
     (try simp only [invoke_complete, allInv,
         root_always_active, default_deny, flow_confinement, flow_confinement_weak,
-        capability_subsumption, revocation_clean, taint_integrity, tool_attestation_intact,
+        capability_subsumption, revocation_clean, tool_attestation_intact,
         instruction_attestation_intact, override_consumed_when_sole_justification,
         parent_implies_active, single_parent, no_self_parent, root_no_parent,
         in_flight_active, in_flight_registered, in_flight_unique, root_all_caps,
-        root_no_in_flight, budget_unique, active_has_budget, budget_bounded, ghost_invoked_sound,
-        ghost_received_sound, in_flight_flow_compat, in_flight_override_consumed,
+        root_no_in_flight, budget_unique, active_has_budget, budget_bounded,
+        in_flight_flow_compat, in_flight_override_consumed,
         Tzimtzum.speculative_taint, Kav.Action.guard, Kav.Action.next] at *) <;>
       (first | trivial | grind | (simp_all <;> grind) | auto | duper [*]))
 

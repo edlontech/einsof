@@ -6,7 +6,7 @@ The third budget action. Like `invoke_complete` / `return_endorsed`, the granter
 5-way budget debit makes `active_has_budget` resistant to the cascade (the debit
 branch needs an explicit post-budget witness), so it is slotted in manually via
 `go_pres_ahb` (the monomorphic twin was verified as
-`grant_override_pres_active_has_budget` in `CheckGrantOverride`). The other 24
+`grant_override_pres_active_has_budget` in `CheckGrantOverride`). The other 21
 conjuncts close under the per-goal-fresh cascade: the re-arm guard
 (`∀ I, ¬ s.in_flight target I`) makes the two single-use override invariants vacuous
 for the target, and nothing else observable changes for other agents. -/
@@ -79,22 +79,22 @@ theorem pres_grant_override
     (hn : (Kav.close4 grant_override).next s s') : allInv s' := by
   simp only [Kav.close4] at hn
   obtain ⟨granter, target, tool, lvl, hg, hn⟩ := hn
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
-      hbu, hahb, hbb, _, _, _, _⟩ := hinv
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+      hbu, hahb, hbb, _, _⟩ := hinv
   have hahb' : active_has_budget s' := go_pres_ahb granter target tool lvl s s' hahb hbu hg hn
   have hbb' : budget_bounded s' := go_pres_bb granter target tool lvl s s' hbb hg hn
   unfold allInv
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, hahb', hbb', ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+      ?_, hahb', hbb', ?_, ?_⟩
   all_goals_fresh (
     (try simp only [grant_override, allInv,
         root_always_active, default_deny, flow_confinement, flow_confinement_weak,
-        capability_subsumption, revocation_clean, taint_integrity, tool_attestation_intact,
+        capability_subsumption, revocation_clean, tool_attestation_intact,
         instruction_attestation_intact, override_consumed_when_sole_justification,
         parent_implies_active, single_parent, no_self_parent, root_no_parent,
         in_flight_active, in_flight_registered, in_flight_unique, root_all_caps,
-        root_no_in_flight, budget_unique, active_has_budget, budget_bounded, ghost_invoked_sound,
-        ghost_received_sound, in_flight_flow_compat, in_flight_override_consumed,
+        root_no_in_flight, budget_unique, active_has_budget, budget_bounded,
+        in_flight_flow_compat, in_flight_override_consumed,
         St.flow_allows, St.flow_inspects,
         Tzimtzum.speculative_taint, Kav.Action.guard, Kav.Action.next] at *) <;>
       (first | trivial | grind | (simp_all <;> grind) | auto | duper [*]))

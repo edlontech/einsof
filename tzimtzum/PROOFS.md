@@ -7,16 +7,16 @@ Tzimtzum.kav_sound : ∀ s, Kav.Reachable ksystem s → allInv s
 ```
 
 Read it as: for any state `s` reachable by running the protocol's 13 actions in any
-order, any number of times, `s` satisfies all 26 rules in `allInv`. The proof holds for
+order, any number of times, `s` satisfies all 23 rules in `allInv`. The proof holds for
 every reachable state, including ones nobody has written a test for.
 
 ## What is being proved
 
 The protocol is a state machine: 13 actions (`register_tool`, `delegate`, `invoke_start`,
-`revoke`, ...) that each take a state and produce a new one, plus 26 rules the state must
+`revoke`, ...) that each take a state and produce a new one, plus 23 rules the state must
 always satisfy. The rules split into two groups.
 
-### 10 safety properties -- the rules that actually matter for security
+### 9 safety properties -- the rules that actually matter for security
 
 - **root_always_active** -- the root agent can never be deactivated. There is always
   someone who can act.
@@ -36,9 +36,6 @@ always satisfy. The rules split into two groups.
   parent's. Delegation can narrow authority; it can never broaden it.
 - **revocation_clean** -- a deactivated agent has no leftover in-flight calls and no
   leftover taint. Revocation is immediate and total, not eventually-consistent.
-- **taint_integrity** -- an agent's taint is never invented from nowhere. It is always
-  traceable to a specific completed invocation or a specific unendorsed return from a
-  child. Taint can't appear as an unexplained side effect of a bug elsewhere.
 - **tool_attestation_intact** -- every registered tool's declared labels came from a
   trusted issuer. A tool can't self-report as safe.
 - **instruction_attestation_intact** -- the same guarantee for system prompts / loaded
@@ -48,7 +45,7 @@ always satisfy. The rules split into two groups.
   can't be reused. If an override is the only thing letting a tainted flow through, it is
   marked used at that moment.
 
-### 16 strengthening invariants -- the scaffolding the proof needs to stand up
+### 14 strengthening invariants -- the scaffolding the proof needs to stand up
 
 Consistency facts -- "the agent tree has one parent per node," "budgets stay within
 bounds," "in-flight invocations only exist for active agents and registered tools" --
@@ -59,10 +56,10 @@ through. The load-bearing walls: nobody cares about them directly, but the roof
 
 ## How the proof is actually done
 
-For each of the 26 rules and each of the 13 actions, there is a verification condition:
+For each of the 23 rules and each of the 13 actions, there is a verification condition:
 *if the rule holds before the action runs and the action's preconditions are met, the
-rule still holds after.* That's 13 x 26 = 338 preservation checks, plus 26 checks that
-the rules hold in the initial state -- 364 total. All but 6 are discharged automatically
+rule still holds after.* That's 13 x 23 = 299 preservation checks, plus 23 checks that
+the rules hold in the initial state -- 322 total. All but 6 are discharged automatically
 by mathlib tactics (`grind`, `simp_all`, `auto`, `duper`); the 6 budget-arithmetic ones
 (where a debit or saturating credit needs an existential witness the automation can't
 guess) are proved by hand.
