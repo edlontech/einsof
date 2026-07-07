@@ -49,4 +49,27 @@ theorem missing_cap_declassify_routes_unendorsed
   rintro ⟨_, _, hc, _, _⟩
   exact hcap hc
 
+-- Acceptance criterion (Task 12): neither dimension helping makes `crossing_ok`'s last
+-- conjunct (`conf_helps ∨ integ_helps`) unsatisfiable, so the crossing routes to
+-- `invoke_complete_unendorsed` with zero debit — the wasted-budget generalization
+-- (design §5.4 / §6 "Neither-dimension-helps crossings").
+theorem neither_helps_routes_unendorsed
+    (s : KSt) (a : KAgent) (inv : KInv)
+    (hconf : ¬ conf_helps s a inv) (hinteg : ¬ integ_helps s a inv) :
+    ¬ crossing_ok s a inv := by
+  unfold crossing_ok
+  rintro ⟨_, _, _, _, hc | hi⟩
+  exacts [hconf hc, hinteg hi]
+
+-- Acceptance criterion (Task 12): an already-conf-tainted agent (`conf_helps` false)
+-- endorsing an untrusted-emission tool (`integ_helps` true) is charged EXACTLY
+-- `integ_weight` of the tool's emission — the dimension-adjusted debit skips the conf half
+-- entirely rather than wasting budget on a crossing that wouldn't newly cap the taint set.
+theorem crossing_weight_conf_tainted
+    (s : KSt) (a : KAgent) (inv : KInv)
+    (hconf : ¬ conf_helps s a inv) (hinteg : integ_helps s a inv) :
+    crossing_weight s a inv = integ_weight (s.tool_output_integ (s.invocation_tool inv)) := by
+  unfold crossing_weight
+  simp [hconf, hinteg]
+
 end Tzimtzum

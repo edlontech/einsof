@@ -197,14 +197,44 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
   in_flight := fun A I => s.in_flight A I ∨ (A = a ∧ I = inv)
   invocation_used := fun I => s.invocation_used I ∨ I = inv
 
+-- The two-dimension crossing helpers (design §5.4). `conf_helps` mirrors the old
+-- `¬ already-tainted-at-floor` conjunct; `integ_helps` is its integrity dual (would this
+-- crossing newly LOWER the agent's held floor, i.e. is the agent not already degraded there).
+def conf_helps
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (a : AgentId) (inv : InvocationId) : Prop :=
+  ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv))
+
+def integ_helps
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (a : AgentId) (inv : InvocationId) : Prop :=
+  ¬ s.integ_levels a (s.tool_output_integ (s.invocation_tool inv))
+
+-- Dimension-adjusted debit (design §5.4): pay `declass_weight` only if the conf insert would
+-- be new, `integ_weight` only if the integ drop would be real — an already-conf-tainted agent
+-- endorsing an untrusted-emission tool pays only the integrity half. Classical `ite` on the
+-- (undecidable, type-variable-keyed) `conf_helps`/`integ_helps` Props, same denylisted-`ite`
+-- pattern as every other budget point-update in this file (Task 1/3); `noncomputable` because
+-- the branch conditions route through `Classical.propDecidable`, not a real `Decidable`
+-- instance — harmless, the spec is proof-only.
+open Classical in
+noncomputable def crossing_weight
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (a : AgentId) (inv : InvocationId) : Nat :=
+  (if conf_helps s a inv then declass_weight (s.tool_conf_floor (s.invocation_tool inv)) else 0)
+  + (if integ_helps s a inv then integ_weight (s.tool_output_integ (s.invocation_tool inv)) else 0)
+
 -- The shared crossing-guard predicate (design §5.4 "invoke_complete shape" / §4). Replaces
 -- the endorsed predicate that used to be inlined (and repeated) three times inside a single
--- `invoke_complete`: the 4-conjunct
---   `output_bounded ∧ invocation_conforms ∧ affordable (declass_weight floor)
---    ∧ ¬ already-tainted-at-floor`
--- plus a NEW `cap_declassify` conjunct (design finding 11: `cap_declassify` is now required
--- at BOTH crossing sites — invocation completion and endorsed return — closing an
--- undocumented asymmetry; missing the capability routes to the unendorsed action, fail-safe).
+-- `invoke_complete`: the 5-conjunct
+--   `output_bounded ∧ invocation_conforms ∧ cap_declassify ∧ affordable crossing_weight
+--    ∧ (conf_helps ∨ integ_helps)`
+-- `cap_declassify` is required at BOTH crossing sites — invocation completion and endorsed
+-- return — closing an undocumented asymmetry (design finding 11); missing the capability
+-- routes to the unendorsed action, fail-safe. The last conjunct GENERALIZES the old
+-- `¬ already-tainted` conjunct (Task 7/8) to both dimensions (Task 12): when NEITHER
+-- dimension helps, the crossing is pointless and routes unendorsed with zero debit — the
+-- wasted-budget generalization (design §6 "Neither-dimension-helps crossings").
 -- Used POSITIVELY by `invoke_complete_endorsed` and NEGATIVELY (syntactic negation, not a
 -- re-derived condition) by `invoke_complete_unendorsed`, so the split is a total,
 -- complementary partition and the environment's choice between the two actions is forced —
@@ -215,23 +245,23 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
 -- `def` reachable from the goal, so a plain `def` here is inlined automatically at every gate
 -- site exactly as the old textual duplication was. `irreducible` is reserved for defs the
 -- cascades must NOT see through (e.g. `ceilingAdmits`, whose existential blows up congruence
--- closure) — `crossing_ok`'s four conjuncts are exactly what the invariants need exposed, so
--- keeping it transparent is what keeps the checks automatic. Integrity dimensions are NOT
--- added here — that is Task 12's `conf_helps` / `integ_helps` extension.
+-- closure) — `crossing_ok`'s conjuncts are exactly what the invariants need exposed, so
+-- keeping it (and `conf_helps`/`integ_helps`/`crossing_weight`) transparent is what keeps the
+-- checks automatic.
 def crossing_ok
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (a : AgentId) (inv : InvocationId) : Prop :=
   s.tool_output_bounded (s.invocation_tool inv)
     ∧ s.invocation_conforms inv
     ∧ s.agent_cap a s.cap_declassify
-    ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
-    ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv))
+    ∧ s.affordable a (crossing_weight s a inv)
+    ∧ (conf_helps s a inv ∨ integ_helps s a inv)
 
 -- invoke_complete_endorsed (Veil lines 619-654, endorsed branch — split per design
 -- "invoke_complete shape": complementary total guards instead of one embedded conditional, so
 -- each branch of the Rust kernel's `if/else` refines exactly one spec action). Requires
--- `crossing_ok` positively: removes in_flight (point-clear) and self-debits the weighted
--- budget. No taint insert — the crossing was clean.
+-- `crossing_ok` positively: removes in_flight (point-clear) and self-debits the
+-- dimension-adjusted `crossing_weight`. No taint/integ insert — the crossing was clean.
 open Classical in
 kav_action invoke_complete_endorsed (a : AgentId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
@@ -240,14 +270,13 @@ kav_action invoke_complete_endorsed (a : AgentId) (inv : InvocationId) :
   require crossing_ok s a inv
   in_flight := fun A I => s.in_flight A I ∧ ¬ (A = a ∧ I = inv)
   agent_budget := fun A =>
-    if A = a
-    then s.agent_budget a - declass_weight (s.tool_conf_floor (s.invocation_tool inv))
-    else s.agent_budget A
+    if A = a then s.agent_budget a - crossing_weight s a inv else s.agent_budget A
 
 -- invoke_complete_unendorsed (Veil lines 619-654, unendorsed branch — split per design
 -- "invoke_complete shape"). Requires the SYNTACTIC NEGATION of `crossing_ok`: removes
--- in_flight (point-clear) and inserts the tool's conf floor into taint. No budget change — an
--- agent that cannot cross cleanly is never charged (the wasted-budget fix).
+-- in_flight (point-clear) and inserts the tool's conf floor into taint AND the tool's output
+-- integrity into integ (Task 12: the unendorsed branch now degrades both dimensions). No
+-- budget change — an agent that cannot cross cleanly is never charged (the wasted-budget fix).
 kav_action invoke_complete_unendorsed (a : AgentId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.in_flight a inv
@@ -256,18 +285,26 @@ kav_action invoke_complete_unendorsed (a : AgentId) (inv : InvocationId) :
   in_flight := fun A I => s.in_flight A I ∧ ¬ (A = a ∧ I = inv)
   taint_levels := fun A L =>
     s.taint_levels A L ∨ (A = a ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
+  integ_levels := fun A L =>
+    s.integ_levels A L ∨ (A = a ∧ L = s.tool_output_integ (s.invocation_tool inv))
 
 -- return_endorsed (Veil lines 674-688). Capability-gated, recipient-budget-charged
--- cross-boundary declassification (no taint propagation).
+-- cross-boundary declassification. Both dimensions are now declared, coverage-guarded, and
+-- weighted (Task 12): `clvl` bounds the child's held taint set, `ilvl` LOWER-bounds the
+-- child's held integ set (integrity is a meet/min lattice — the declared level must sit
+-- at-or-below every level the child holds, dual of `clvl`'s at-or-above bound); debit is
+-- `declass_weight clvl + integ_weight ilvl`. Endorsed return blocks BOTH propagations — no
+-- `taint_levels` update (unchanged since Task 8) and no `integ_levels` update (new here): the
+-- parent absorbs nothing of either set, only pays for the declaration.
 -- Level-parameterized weighted debit (design §4 "Return debit" / §5.4 "Weighted endorsed
 -- return", closes the child-laundering arbitrage: flat pricing undercharged a restricted
--- return relative to the restricted invoke it shortcuts). The caller declares `clvl`; the
--- coverage require verifies the declaration bounds the child's ENTIRE taint set (not just its
--- max observed level); the debit follows the declaration, not the set itself. A clean child
--- returns at `clvl = public` for debit 0 (`declass_weight public = 0`) — endorsing nothing
--- costs nothing. The integrity parameter `ilvl` arrives in Task 12; do not add it here.
+-- return relative to the restricted invoke it shortcuts). The caller declares `clvl`/`ilvl`;
+-- the coverage requires verify the declarations bound the child's entire sets; the debit
+-- follows the declarations, not the sets themselves. A clean child returns at
+-- `(clvl, ilvl) = (public, attested)` for debit 0 (`declass_weight public = integ_weight
+-- attested = 0`) — endorsing nothing costs nothing.
 open Classical in
-kav_action return_endorsed (child prnt : AgentId) (clvl : ConfLevel) :
+kav_action return_endorsed (child prnt : AgentId) (clvl : ConfLevel) (ilvl : IntegLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_parent child prnt
   require s.agent_active child
@@ -277,13 +314,20 @@ kav_action return_endorsed (child prnt : AgentId) (clvl : ConfLevel) :
   require s.return_conforms child prnt
   -- Coverage: the declared level bounds the child's entire taint set.
   require ∀ L, s.taint_levels child L → le_conf L clvl
-  require s.affordable prnt (declass_weight clvl)
+  -- Coverage: the declared integ level LOWER-bounds the child's entire integ set.
+  require ∀ L, s.integ_levels child L → le_integ ilvl L
+  require s.affordable prnt (declass_weight clvl + integ_weight ilvl)
   agent_budget := fun A =>
-    if A = prnt then s.agent_budget prnt - declass_weight clvl else s.agent_budget A
+    if A = prnt
+    then s.agent_budget prnt - (declass_weight clvl + integ_weight ilvl)
+    else s.agent_budget A
 
 -- return_unendorsed (Veil lines 708-732). Parent inherits child's taint set; flow-gated
 -- against parent's in-flight tools; eager override consumption (marks used whenever the
 -- gate examined an armed pair, regardless of another arm admitting the flow).
+-- Task 12: the parent ALSO inherits the child's integ set, gated against the parent's
+-- in-flight tools' integrity floors (graduated, vouchable, no override arm — endorsement is
+-- the only way up, so the integ side has no eager-consumption clause to mirror).
 kav_action return_unendorsed (child prnt : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_parent child prnt
@@ -296,7 +340,12 @@ kav_action return_unendorsed (child prnt : AgentId) :
       ∨ (s.flow_inspects L E ∧ s.invocation_gate_passes I)
       ∨ (s.flow_override prnt (s.invocation_tool I) L
           ∧ ¬ s.override_used prnt (s.invocation_tool I) L)
+  require ∀ L I,
+    s.integ_levels child L ∧ s.in_flight prnt I →
+      s.integ_allows L (s.invocation_tool I)
+      ∨ (s.integ_inspects L (s.invocation_tool I) ∧ s.invocation_gate_passes I)
   taint_levels := fun A L => s.taint_levels A L ∨ (A = prnt ∧ s.taint_levels child L)
+  integ_levels := fun A L => s.integ_levels A L ∨ (A = prnt ∧ s.integ_levels child L)
   override_used := fun A T L =>
     s.override_used A T L
     ∨ (A = prnt ∧ s.taint_levels child L
@@ -387,7 +436,7 @@ def system : Kav.TransitionSystem
       , ("invoke_start",               Kav.close3 invoke_start)
       , ("invoke_complete_endorsed",   Kav.close2 invoke_complete_endorsed)
       , ("invoke_complete_unendorsed", Kav.close2 invoke_complete_unendorsed)
-      , ("return_endorsed",            Kav.close3 return_endorsed)
+      , ("return_endorsed",            Kav.close4 return_endorsed)
       , ("return_unendorsed",          Kav.close2 return_unendorsed)
       , ("sentinel_elevate_taint",     Kav.close2 sentinel_elevate_taint)
       , ("sentinel_degrade_integrity", Kav.close2 sentinel_degrade_integrity)

@@ -19,9 +19,9 @@ variable {AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId 
 theorem pres_return_endorsed
     (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (hinv : allInv s)
-    (hn : (Kav.close3 return_endorsed).next s s') : allInv s' := by
-  simp only [Kav.close3] at hn
-  obtain ⟨child, prnt, clvl, hg, hn⟩ := hn
+    (hn : (Kav.close4 return_endorsed).next s s') : allInv s' := by
+  simp only [Kav.close4] at hn
+  obtain ⟨child, prnt, clvl, ilvl, hg, hn⟩ := hn
   kav_discharge return_endorsed
 
 end Tzimtzum
