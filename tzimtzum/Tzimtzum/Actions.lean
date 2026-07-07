@@ -92,12 +92,17 @@ kav_action cascade_revoke (child prnt : AgentId) :
   override_used := fun A T L => s.override_used A T L ∧ A ≠ child
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ child
 
--- invoke_start (Veil lines 550-606). THE BIG ONE: CHECK 1 + 2a + 2b + 2c + 3,
--- override_used full-redefinition (clauses 2a/2c/2b), and the in_flight point-set.
+-- invoke_start (Veil lines 550-606). THE BIG ONE: freshness + attestation guards,
+-- CHECK 1 + 2a + 2b + 2c + 3, override_used full-redefinition (clauses 2a/2c/2b), and the
+-- in_flight point-set.
 -- Eager consumption (design doc "Override consumption semantics"): an armed override is
 -- marked used whenever the gate examined a pair it was armed for, regardless of whether
 -- another arm (ALLOW / INSPECT+gate) would have admitted the flow — no negated gate arms,
 -- no inner egress existentials.
+-- Freshness (`invocation_used`) closes the id-reuse hole that would let a stale
+-- `invocation_egress` attestation ride a new call; narrowing/coverage keep the attested
+-- egress anchored to (and, on egress-bearing tools, non-vacuously covering) the tool's
+-- declared set, so CHECK 2 can gate over the attested set instead of the static one.
 kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active a
@@ -105,28 +110,35 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
   require s.tool_registered tool
   require s.invocation_tool inv = tool
   require ∀ AG, ¬ s.in_flight AG inv
+  -- Freshness: this invocation id has never been used before.
+  require ¬ s.invocation_used inv
+  -- Narrowing: the attested egress cannot exceed the tool's declared set.
+  require ∀ E, s.invocation_egress inv E → s.tool_egress tool E
+  -- Coverage: an egress-bearing tool cannot be admitted on an empty attestation.
+  require (∃ E, s.tool_egress tool E) → (∃ E, s.invocation_egress inv E)
   -- CHECK 1: Capability gate
   require ∀ C, s.tool_cap tool C → s.agent_cap a C
-  -- CHECK 2a: Flow gate (existing speculative taint × new tool's egress). The vouch is the
-  -- NEW invocation's content-gate verdict.
+  -- CHECK 2a: Flow gate (existing speculative taint × new invocation's attested egress).
+  -- The vouch is the NEW invocation's content-gate verdict.
   require ∀ L E,
-    Tzimtzum.speculative_taint s a L ∧ s.tool_egress tool E →
+    Tzimtzum.speculative_taint s a L ∧ s.invocation_egress inv E →
       s.flow_allows L E
       ∨ (s.flow_inspects L E ∧ s.invocation_gate_passes inv)
       ∨ (s.flow_override a tool L ∧ ¬ s.override_used a tool L)
-  -- CHECK 2b: Flow gate (new tool's taint × existing in-flight's egress). The vouch is the
-  -- IN-FLIGHT invocation I's content-gate verdict (being re-examined against the new floor).
+  -- CHECK 2b: Flow gate (new tool's taint × existing in-flight I's attested egress). The
+  -- vouch is the IN-FLIGHT invocation I's content-gate verdict (being re-examined against
+  -- the new floor).
   require ∀ I E,
-    s.in_flight a I ∧ s.tool_egress (s.invocation_tool I) E →
+    s.in_flight a I ∧ s.invocation_egress I E →
       s.flow_allows (s.tool_conf_floor tool) E
       ∨ (s.flow_inspects (s.tool_conf_floor tool) E
           ∧ s.invocation_gate_passes I)
       ∨ (s.flow_override a (s.invocation_tool I) (s.tool_conf_floor tool)
           ∧ ¬ s.override_used a (s.invocation_tool I) (s.tool_conf_floor tool))
-  -- CHECK 2c: Self-flow gate (tool's own taint × its own egress). The vouch is again the
-  -- NEW invocation's content-gate verdict.
+  -- CHECK 2c: Self-flow gate (tool's own taint × the new invocation's own attested egress).
+  -- The vouch is again the NEW invocation's content-gate verdict.
   require ∀ E,
-    s.tool_egress tool E →
+    s.invocation_egress inv E →
       s.flow_allows (s.tool_conf_floor tool) E
       ∨ (s.flow_inspects (s.tool_conf_floor tool) E ∧ s.invocation_gate_passes inv)
       ∨ (s.flow_override a tool (s.tool_conf_floor tool)
@@ -144,6 +156,7 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
         ∧ (∃ I, s.in_flight a I ∧ T = s.invocation_tool I
            ∧ s.flow_override a (s.invocation_tool I) (s.tool_conf_floor tool)))
   in_flight := fun A I => s.in_flight A I ∨ (A = a ∧ I = inv)
+  invocation_used := fun I => s.invocation_used I ∨ I = inv
 
 -- invoke_complete (Veil lines 619-654). Removes in_flight (point-clear), conditionally adds
 -- taint, and self-debits the weighted budget on the endorsed (zero-taint) path. The endorsed
@@ -201,7 +214,7 @@ kav_action return_unendorsed (child prnt : AgentId) :
   require s.agent_active prnt
   require ∀ I, ¬ s.in_flight child I
   require ∀ L I E,
-    s.taint_levels child L ∧ s.in_flight prnt I ∧ s.tool_egress (s.invocation_tool I) E →
+    s.taint_levels child L ∧ s.in_flight prnt I ∧ s.invocation_egress I E →
       s.flow_allows L E
       ∨ (s.flow_inspects L E ∧ s.invocation_gate_passes I)
       ∨ (s.flow_override prnt (s.invocation_tool I) L
@@ -220,7 +233,7 @@ kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active a
   require ∀ I E,
-    s.in_flight a I ∧ s.tool_egress (s.invocation_tool I) E →
+    s.in_flight a I ∧ s.invocation_egress I E →
       s.flow_allows l E
       ∨ (s.flow_inspects l E ∧ s.invocation_gate_passes I)
       ∨ (s.flow_override a (s.invocation_tool I) l

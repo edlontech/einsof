@@ -41,4 +41,12 @@ private def invsB3 : List (Kav.Invariant KSt) :=
 
 #kav_check_action invStart invsB3
 
+-- Group B4: the new egress-attestation + freshness invariants (Task 6). Made inductive by
+-- the narrowing/coverage requires and the freshness require/update respectively.
+private def invsB4 : List (Kav.Invariant KSt) :=
+  allInvariants.filter (fun p => p.1 ∈
+    (["in_flight_egress_attested", "in_flight_implies_used"] : List String))
+
+#kav_check_action invStart invsB4
+
 end Tzimtzum

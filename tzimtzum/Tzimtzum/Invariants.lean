@@ -41,7 +41,7 @@ def default_deny
 def flow_confinement
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
-    s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E →
+    s.taint_levels A L ∧ s.in_flight A I ∧ s.invocation_egress I E →
       s.flow_allows L E
       ∨ (s.flow_inspects L E ∧ s.invocation_gate_passes I)
       ∨ s.flow_override A (s.invocation_tool I) L
@@ -51,7 +51,7 @@ structurally blocked regardless of oracle behavior. -/
 def flow_confinement_weak
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
-    s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E →
+    s.taint_levels A L ∧ s.in_flight A I ∧ s.invocation_egress I E →
       s.flow_allows L E
       ∨ s.flow_inspects L E
       ∨ s.flow_override A (s.invocation_tool I) L
@@ -88,7 +88,7 @@ override has been consumed (`override_used`). -/
 def override_consumed_when_sole_justification
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (L : ConfLevel) (I : InvocationId) (E : EgressKind),
-    s.taint_levels A L ∧ s.in_flight A I ∧ s.tool_egress (s.invocation_tool I) E
+    s.taint_levels A L ∧ s.in_flight A I ∧ s.invocation_egress I E
     ∧ ¬ s.flow_allows L E
     ∧ ¬ (s.flow_inspects L E ∧ s.invocation_gate_passes I)
     ∧ s.flow_override A (s.invocation_tool I) L →
@@ -154,7 +154,7 @@ def in_flight_flow_compat
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (I1 I2 : InvocationId) (E : EgressKind),
     s.in_flight A I1 ∧ s.in_flight A I2
-    ∧ s.tool_egress (s.invocation_tool I2) E →
+    ∧ s.invocation_egress I2 E →
       s.flow_allows (s.tool_conf_floor (s.invocation_tool I1)) E
       ∨ (s.flow_inspects (s.tool_conf_floor (s.invocation_tool I1)) E
           ∧ s.invocation_gate_passes I2)
@@ -166,12 +166,29 @@ def in_flight_override_consumed
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (I1 I2 : InvocationId) (E : EgressKind),
     s.in_flight A I1 ∧ s.in_flight A I2
-    ∧ s.tool_egress (s.invocation_tool I2) E
+    ∧ s.invocation_egress I2 E
     ∧ ¬ s.flow_allows (s.tool_conf_floor (s.invocation_tool I1)) E
     ∧ ¬ (s.flow_inspects (s.tool_conf_floor (s.invocation_tool I1)) E
           ∧ s.invocation_gate_passes I2)
     ∧ s.flow_override A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1)) →
       s.override_used A (s.invocation_tool I2) (s.tool_conf_floor (s.invocation_tool I1))
+
+/-- **in_flight_egress_attested**: every in-flight invocation's attested egress narrows to
+(and, when the tool is egress-bearing, covers) its tool's declared egress set — what the
+`invoke_start` narrowing/coverage requires make inductive. -/
+def in_flight_egress_attested
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I : InvocationId),
+    s.in_flight A I →
+      (∀ (E : EgressKind), s.invocation_egress I E → s.tool_egress (s.invocation_tool I) E)
+      ∧ ((∃ (E : EgressKind), s.tool_egress (s.invocation_tool I) E)
+          → (∃ (E : EgressKind), s.invocation_egress I E))
+
+/-- **in_flight_implies_used**: every in-flight invocation has been recorded in the global
+freshness history — what makes the `invoke_start` freshness require inductive. -/
+def in_flight_implies_used
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (I : InvocationId), s.in_flight A I → s.invocation_used I
 
 /-! ## Invariant bundle
 
@@ -201,6 +218,8 @@ def allInvariants :
   , ("root_no_in_flight", root_no_in_flight)
   , ("budget_bounded", budget_bounded)
   , ("in_flight_flow_compat", in_flight_flow_compat)
-  , ("in_flight_override_consumed", in_flight_override_consumed) ]
+  , ("in_flight_override_consumed", in_flight_override_consumed)
+  , ("in_flight_egress_attested", in_flight_egress_attested)
+  , ("in_flight_implies_used", in_flight_implies_used) ]
 
 end Tzimtzum

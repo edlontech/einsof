@@ -42,10 +42,11 @@ theorem pres_sentinel_credit_budget
     (hn : (Kav.close2 sentinel_credit_budget).next s s') : allInv s' := by
   simp only [Kav.close2] at hn
   obtain ⟨a, n, hg, hn⟩ := hn
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hbb, _, _⟩ := hinv
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hbb, _, _, _, _⟩ := hinv
   have hbb' : budget_bounded s' := scb_pres_bb a n s s' hbb hn
   unfold allInv
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hbb', ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hbb', ?_, ?_,
+    ?_, ?_⟩
   all_goals_fresh (
     (try simp only [sentinel_credit_budget, allInv,
         root_always_active, default_deny, flow_confinement, flow_confinement_weak,
@@ -55,6 +56,7 @@ theorem pres_sentinel_credit_budget
         in_flight_active, in_flight_registered, in_flight_unique, root_all_caps,
         root_no_in_flight, budget_bounded,
         in_flight_flow_compat, in_flight_override_consumed,
+        in_flight_egress_attested, in_flight_implies_used,
         Tzimtzum.speculative_taint, Kav.Action.guard, Kav.Action.next] at *) <;>
       (first | trivial | grind | (simp_all <;> grind) | auto | duper [*]))
 

@@ -72,6 +72,9 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   taint_levels        : AgentId → ConfLevel → Prop
   agent_budget        : AgentId → Nat
   in_flight           : AgentId → InvocationId → Prop
+  -- Global freshness history: set at `invoke_start`, NEVER cleared (not by `revoke`,
+  -- `cascade_revoke`, or `delegate` — it is history of invocation ids, not agent state).
+  invocation_used     : InvocationId → Prop
   tool_registered     : ToolId → Prop
   override_used       : AgentId → ToolId → ConfLevel → Prop
   flow_override       : AgentId → ToolId → ConfLevel → Prop
@@ -99,6 +102,10 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   -- all along.
   invocation_gate_passes : InvocationId → Prop
   invocation_tool     : InvocationId → ToolId
+  -- Oracle-attested egress kinds of this specific invocation (the allowlist authorizer's
+  -- URL/path → destination-class classification). A relation, not a function, because a
+  -- single invocation may touch several channels.
+  invocation_egress   : InvocationId → EgressKind → Prop
   -- Named individuals
   root_agent          : AgentId
   cap_declassify      : CapKind
@@ -157,6 +164,7 @@ def initial
   (∀ (A : AgentId) (L : ConfLevel), ¬ s.taint_levels A L) ∧
   (∀ (A : AgentId), s.agent_budget A = budget_capacity) ∧
   (∀ (A : AgentId) (I : InvocationId), ¬ s.in_flight A I) ∧
+  (∀ (I : InvocationId), ¬ s.invocation_used I) ∧
   (∀ (T : ToolId), ¬ s.tool_registered T) ∧
   (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.override_used A T L) ∧
   (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.flow_override A T L)

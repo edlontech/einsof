@@ -29,7 +29,8 @@ private def invsB : List (Kav.Invariant KSt) :=
   allInvariants.filter (fun p => p.1 ∈
     (["flow_confinement", "flow_confinement_weak",
       "override_consumed_when_sole_justification", "budget_bounded",
-      "in_flight_flow_compat", "in_flight_override_consumed"] : List String))
+      "in_flight_flow_compat", "in_flight_override_consumed",
+      "in_flight_egress_attested", "in_flight_implies_used"] : List String))
 
 #kav_check_action grantOverride invsB
 
