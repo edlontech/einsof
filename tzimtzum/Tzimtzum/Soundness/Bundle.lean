@@ -23,8 +23,9 @@ theorem hpres_bundle : ∀ na ∈ ksystem.actions, ∀ s s',
   intro na hmem s s' hinv _hg hn
   simp only [ksystem, system, List.mem_cons, List.not_mem_nil, or_false] at hmem
   rcases hmem with
-    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact pres_register_tool s s' hinv hn
+  · exact pres_unregister_tool s s' hinv hn
   · exact pres_load_instruction s s' hinv hn
   · exact pres_delegate s s' hinv hn
   · exact pres_grant_capability s s' hinv hn
@@ -69,8 +70,9 @@ theorem hpres_bundleP :
   intro na hmem s s' hinv _hg hn
   simp only [system, List.mem_cons, List.not_mem_nil, or_false] at hmem
   rcases hmem with
-    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact pres_register_tool s s' hinv hn
+  · exact pres_unregister_tool s s' hinv hn
   · exact pres_load_instruction s s' hinv hn
   · exact pres_delegate s s' hinv hn
   · exact pres_grant_capability s s' hinv hn

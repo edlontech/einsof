@@ -23,6 +23,18 @@ kav_action register_tool (tool : ToolId) :
   require s.trusted_issuer (s.tool_issuer tool)
   tool_registered := fun T => s.tool_registered T ∨ T = tool
 
+-- unregister_tool (design §5.6 "Unregistration", 15th action). A compromised tool can
+-- finally leave the authorization surface: the guard forbids removing a tool with an
+-- in-flight invocation, which preserves `in_flight_registered` by construction. Re-registration
+-- later is permitted — `register_tool`'s guard only requires ¬registered + a trusted issuer, so
+-- no new machinery is needed for a tool to come back. Issuer distrust (key revocation) stays in
+-- the mesh (design §3 non-goal); this action is tool lifecycle only.
+kav_action unregister_tool (tool : ToolId) :
+    St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
+  require s.tool_registered tool
+  require ∀ (A : AgentId) (I : InvocationId), s.in_flight A I → s.invocation_tool I ≠ tool
+  tool_registered := fun T => s.tool_registered T ∧ T ≠ tool
+
 -- load_instruction (Veil lines 408-412).
 kav_action load_instruction (a : AgentId) (instr : InstructionId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
@@ -317,13 +329,14 @@ kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : Conf
   agent_budget := fun A =>
     if A = granter then s.agent_budget granter - declass_weight lvl else s.agent_budget A
 
-/-! ## Full 14-action transition system -/
+/-! ## Full 15-action transition system -/
 
 def system : Kav.TransitionSystem
     (St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) :=
   { init := initial
     actions :=
       [ ("register_tool",              Kav.close1 register_tool)
+      , ("unregister_tool",            Kav.close1 unregister_tool)
       , ("load_instruction",           Kav.close2 load_instruction)
       , ("delegate",                   Kav.close2 delegate)
       , ("grant_capability",           Kav.close3 grant_capability)

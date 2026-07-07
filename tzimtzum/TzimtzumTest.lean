@@ -6,6 +6,7 @@
 -- be co-imported without conflicts.
 import Tzimtzum.CheckInit
 import Tzimtzum.CheckRegisterTool
+import Tzimtzum.CheckUnregisterTool
 import Tzimtzum.CheckLoadInstruction
 import Tzimtzum.CheckDelegate
 import Tzimtzum.CheckGrantCapability

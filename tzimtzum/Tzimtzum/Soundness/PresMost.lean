@@ -1,6 +1,6 @@
 import Tzimtzum.Soundness.Common
 
-/-! # C0 — initiation + the nine cascade-discharged actions
+/-! # C0 — initiation + the ten cascade-discharged actions
 
 Every action whose preservation VCs the `kav_discharge` cascade closes outright (no budget
 witness to reconstruct). The budget-touching actions (`invoke_complete_endorsed`,
@@ -31,6 +31,13 @@ theorem pres_register_tool (s s' : St AgentId ToolId InvocationId CapKind Egress
   simp only [Kav.close1] at hn
   obtain ⟨tool, hg, hn⟩ := hn
   kav_discharge register_tool
+
+theorem pres_unregister_tool (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (hinv : allInv s)
+    (hn : (Kav.close1 unregister_tool).next s s') : allInv s' := by
+  simp only [Kav.close1] at hn
+  obtain ⟨tool, hg, hn⟩ := hn
+  kav_discharge unregister_tool
 
 theorem pres_load_instruction (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (hinv : allInv s)
