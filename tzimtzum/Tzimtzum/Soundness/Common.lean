@@ -12,12 +12,12 @@ modules and no longer force the other ten to recompile).
 
 This module holds the pieces every preservation module shares:
 
-* `allInv` — the 23-conjunct invariant bundle (9 safeties + 14 strengthening), in
+* `allInv` — the 26-conjunct invariant bundle (11 safeties + 15 strengthening), in
   `allInvariants` order.
 * `all_goals_fresh` — run a tactic on each goal under a FRESH heartbeat budget
   (`Core.withCurrHeartbeats`), mirroring the per-VC freshness that makes
   `#kav_check_action` succeed where one shared budget starves.
-* `kav_discharge` — split the bundle goal into its 21 conjuncts and discharge each
+* `kav_discharge` — split the bundle goal into its 26 conjuncts and discharge each
   under that fresh budget with the kernel-checked cascade.
 * `ksystem` — the TzimtzumV2 system monomorphised at the opaque `KSt` sorts. -/
 
@@ -47,6 +47,9 @@ def allInv (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId Instr
   ∧ in_flight_override_consumed s
   ∧ in_flight_egress_attested s
   ∧ in_flight_implies_used s
+  ∧ integrity_confinement s
+  ∧ integrity_confinement_weak s
+  ∧ in_flight_integ_compat s
 
 open Lean Lean.Elab.Tactic in
 /-- Run `tac` on every current goal, each under a FRESH heartbeat budget
@@ -61,16 +64,17 @@ elab "all_goals_fresh " tac:tacticSeq : tactic => do
       acc := acc ++ (← getGoals).toArray
   setGoals acc.toList
 
-/-- Split the bundle goal into its 23 atomic conjuncts, then discharge each under a fresh
+/-- Split the bundle goal into its 26 atomic conjuncts, then discharge each under a fresh
     heartbeat budget. `$head` is the action `def` (or `initial` for the init VCs); its
     field equations are exposed inside each per-goal window where they cost what one
     `#kav_check_action` VC costs. -/
 macro "kav_discharge" head:ident : tactic => `(tactic| (
   (try unfold allInv) <;>
   (try refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_, ?_⟩);
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩);
   all_goals_fresh (
     (try simp only [$head:ident, allInv, St.flow_allows, St.flow_inspects,
+        St.integ_allows, St.integ_inspects,
         root_always_active, default_deny, flow_confinement, flow_confinement_weak,
         capability_subsumption, revocation_clean, tool_attestation_intact,
         instruction_attestation_intact, override_consumed_when_sole_justification,
@@ -79,7 +83,9 @@ macro "kav_discharge" head:ident : tactic => `(tactic| (
         root_no_in_flight, budget_bounded,
         in_flight_flow_compat, in_flight_override_consumed,
         in_flight_egress_attested, in_flight_implies_used,
-        Tzimtzum.speculative_taint, Kav.Action.guard, Kav.Action.next] at *) <;>
+        integrity_confinement, integrity_confinement_weak, in_flight_integ_compat,
+        Tzimtzum.speculative_taint, Tzimtzum.speculative_integ,
+        Kav.Action.guard, Kav.Action.next] at *) <;>
       (first | trivial | grind | (simp_all <;> grind) | auto | duper [*]))))
 
 /-- The TzimtzumV2 transition system, monomorphised at the opaque sorts of `KSt`. -/

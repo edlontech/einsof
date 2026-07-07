@@ -42,7 +42,7 @@ theorem hpres_bundle : ∀ na ∈ ksystem.actions, ∀ s s',
   · exact pres_grant_override s s' hinv hn
 
 /-- **Crown of C0:** every reachable state of the TzimtzumV2 transition system satisfies
-    the full invariant bundle (9 safeties + 14 strengthening invariants). -/
+    the full invariant bundle (11 safeties + 15 strengthening invariants). -/
 theorem kav_sound (s : KSt) (h : Kav.Reachable ksystem s) : allInv s :=
   Kav.reachable_sound hinit_bundle hpres_bundle h
 

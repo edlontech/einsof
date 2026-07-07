@@ -16,7 +16,7 @@ private def invsA : List (Kav.Invariant KSt) :=
       "tool_attestation_intact", "instruction_attestation_intact", "parent_implies_active",
       "single_parent", "no_self_parent", "root_no_parent", "in_flight_active",
       "in_flight_registered", "in_flight_unique", "root_all_caps", "root_no_in_flight",
-      "default_deny"] : List String))
+      "default_deny", "budget_bounded"] : List String))
 
 #kav_check_action invStart invsA
 
@@ -48,6 +48,18 @@ private def invsB4 : List (Kav.Invariant KSt) :=
     (["in_flight_egress_attested", "in_flight_implies_used"] : List String))
 
 #kav_check_action invStart invsB4
+
+-- Group B5: the integrity invariants (Task 14). CHECK 4a makes `integrity_confinement`
+-- inductive for the newly-added invocation; CHECK 4b/4c (both the in-flight and the
+-- self-pair) make `in_flight_integ_compat` inductive, which in turn covers
+-- `integrity_confinement`'s pre-existing in-flight invocations against the agent's
+-- (possibly unchanged) integrity levels.
+private def invsB5 : List (Kav.Invariant KSt) :=
+  allInvariants.filter (fun p => p.1 ∈
+    (["integrity_confinement", "integrity_confinement_weak",
+      "in_flight_integ_compat"] : List String))
+
+#kav_check_action invStart invsB5
 
 -- Acceptance criterion (Task 11): CHECK 4a is unsatisfiable for an untrusted-tainted agent
 -- against a trusted-floor tool — the ALLOW arm fails the rank comparison and the INSPECT
