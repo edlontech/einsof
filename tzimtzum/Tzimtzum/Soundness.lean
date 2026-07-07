@@ -2,7 +2,7 @@ import Tzimtzum.Soundness.Bundle
 
 /-! # C0 — Kav soundness bundle for TzimtzumV2 (aggregator)
 
-Assembles the 345 per-action / per-init verification conditions (23 init + 14 x 23) into
+Assembles the 442 per-action / per-init verification conditions (26 init + 16 x 26) into
 a single reachability theorem
 
   `Tzimtzum.kav_sound : ∀ s, Reachable ksystem s → allInv s`
@@ -13,7 +13,7 @@ Phase C (C3) consumes it.
 
 The proof is split across `Tzimtzum/Soundness/`:
 * `Common`                   — `allInv`, `all_goals_fresh`, `kav_discharge`, `ksystem`.
-* `PresMost`                 — initiation + the nine cascade-discharged actions.
+* `PresMost`                 — initiation + the eleven cascade-discharged actions.
 * `PresInvokeComplete`       — `invoke_complete_endorsed` / `invoke_complete_unendorsed`
                                 (budget VCs slotted manually where the classical `ite`
                                 stalls the cascade).

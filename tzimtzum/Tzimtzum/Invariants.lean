@@ -95,6 +95,25 @@ def override_consumed_when_sole_justification
     ∧ s.flow_override A (s.invocation_tool I) L →
       s.override_used A (s.invocation_tool I) L
 
+/-- **integrity_confinement** (headline): an active agent holding integrity level `L` has no
+in-flight invocation of a tool whose floor `L` fails to clear, unless the pair sits in the
+inspect band with a content-gate vouch (dual of `flow_confinement`, minus the override arm —
+endorsement is the only way up). -/
+def integrity_confinement
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : IntegLevel) (I : InvocationId),
+    s.integ_levels A L ∧ s.in_flight A I →
+      s.integ_allows L (s.invocation_tool I)
+      ∨ (s.integ_inspects L (s.invocation_tool I) ∧ s.invocation_gate_passes I)
+
+/-- **integrity_confinement_weak**: oracle-independent integrity safety — below-inspect-band
+pairs are structurally impossible regardless of oracle behavior. -/
+def integrity_confinement_weak
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
+  ∀ (A : AgentId) (L : IntegLevel) (I : InvocationId),
+    s.integ_levels A L ∧ s.in_flight A I →
+      s.integ_allows L (s.invocation_tool I) ∨ s.integ_inspects L (s.invocation_tool I)
+
 /-! ## Strengthening invariants (Veil lines 909-976) -/
 
 /-- **parent_implies_active**: the parent relation is consistent with active status. -/
@@ -190,25 +209,6 @@ freshness history — what makes the `invoke_start` freshness require inductive.
 def in_flight_implies_used
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (A : AgentId) (I : InvocationId), s.in_flight A I → s.invocation_used I
-
-/-- **integrity_confinement** (headline): an active agent holding integrity level `L` has no
-in-flight invocation of a tool whose floor `L` fails to clear, unless the pair sits in the
-inspect band with a content-gate vouch (dual of `flow_confinement`, minus the override arm —
-endorsement is the only way up). -/
-def integrity_confinement
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L : IntegLevel) (I : InvocationId),
-    s.integ_levels A L ∧ s.in_flight A I →
-      s.integ_allows L (s.invocation_tool I)
-      ∨ (s.integ_inspects L (s.invocation_tool I) ∧ s.invocation_gate_passes I)
-
-/-- **integrity_confinement_weak**: oracle-independent integrity safety — below-inspect-band
-pairs are structurally impossible regardless of oracle behavior. -/
-def integrity_confinement_weak
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L : IntegLevel) (I : InvocationId),
-    s.integ_levels A L ∧ s.in_flight A I →
-      s.integ_allows L (s.invocation_tool I) ∨ s.integ_inspects L (s.invocation_tool I)
 
 /-- **in_flight_integ_compat**: any two concurrent in-flight invocations for the same agent
 (including the self-pair) are mutually compatible under the integrity gate — one's emission

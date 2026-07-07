@@ -442,7 +442,7 @@ kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : Conf
   agent_budget := fun A =>
     if A = granter then s.agent_budget granter - declass_weight lvl else s.agent_budget A
 
-/-! ## Full 15-action transition system -/
+/-! ## Full 16-action transition system -/
 
 def system : Kav.TransitionSystem
     (St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) :=

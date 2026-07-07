@@ -10,22 +10,44 @@ the guarantee stops, see [PROOFS.md](PROOFS.md).
 
 ## The verified protocol
 
-The full protocol is 13 actions, 9 safety properties, and 12 strengthening invariants,
-proved inductive over all transitions:
+The full protocol is 16 actions, 11 safety properties, and 15 strengthening invariants
+(26 total), proved inductive over all transitions. `ConfLevel` (confidentiality, rises as
+an agent reads secret data) and `IntegLevel` (integrity, falls as an agent ingests
+untrusted content) are dual 4-point lattices; the invoke gate checks both (CHECK 1-3 flow
++ authorizer, CHECK 4 integrity), and a single unified crossing guard (`crossing_ok`)
+clears both dimensions with one conformance verdict at both declassification sites
+(`invoke_complete_endorsed`, `return_endorsed`):
 
-- 294 VCs discharged: 21 initiation VCs (`#kav_check_init`) plus 13 × 21 preservation VCs
-  (`#kav_check_action`), one per (action, invariant) pair.
+- 442 VCs discharged: 26 initiation VCs (`#kav_check_init`) plus 16 × 26 preservation VCs
+  (`#kav_check_action`), one per (action, invariant) pair. Some actions split their 26 VCs
+  across several `#kav_check_action` calls (invariant-name filters) purely for
+  automation-search stability, not to change the total.
 - All kernel-checked: the automation cascade uses only mathlib tactics (`grind`, `simp_all`,
   `auto`, `duper`).
 - The declassification budget is a total function field (`agent_budget : AgentId → Nat`),
   updated by classical `ite` point-updates in every action that debits or credits it.
-- Six VCs proved by hand: `revocation_clean` under `delegate`, `invoke_complete`,
+  `delegate` spawns the child's budget at 0 (delegation mints nothing);
+  `sentinel_credit_budget` is the only faucet. Debits are weighted, not flat: the unified
+  crossing's `crossing_weight` (dimension-adjusted: pays `declass_weight` only if the conf
+  insert is new, `integ_weight` only if the integ drop is real), `return_endorsed`'s
+  `declass_weight clvl + integ_weight ilvl` (level-parameterized, coverage-guarded), and
+  `grant_override`'s `declass_weight lvl`.
+- Six VCs proved by hand: `revocation_clean` under `delegate`, `invoke_complete_endorsed`,
   `return_endorsed`, `grant_override`, and `sentinel_credit_budget` (the classical `ite`
   inside the untouched `agent_budget` conjunct stalls the shared cascade for this one
   invariant, even though its own logic never touches the budget), plus `budget_bounded`
   under `sentinel_credit_budget` (the saturating credit's `≤ budget_capacity` bound is
   hidden behind an `@[irreducible]` helper). These live in the matching
   `Tzimtzum/Check*.lean` modules.
+- New since the integrity-taint campaign: `unregister_tool` (tool lifecycle -- a
+  compromised tool can leave the authorization surface), `sentinel_degrade_integrity`
+  (platform-reported ingestion at an integrity level, gated against in-flight tools'
+  floors), and `invoke_complete` split into `invoke_complete_endorsed` /
+  `invoke_complete_unendorsed` (complementary total guards over `crossing_ok`, so each
+  branch of the Rust kernel's `if/else` refines exactly one spec action).
+- Oracle verdicts (`invocation_conforms`, `invocation_authorized`, `invocation_gate_passes`,
+  `invocation_egress`) are keyed per invocation, not per static (agent, tool) pair, with a
+  freshness guard (`invocation_used`) closing invocation-id replay.
 
 ### Soundness bundle
 
@@ -57,6 +79,10 @@ Audited theorems:
 - `audit_init_flow_confinement`: flow confinement holds in the initial state.
 - `return_endorsed_pres_revocation_clean`: one of the five manual `revocation_clean`
   proofs, re-audited here for visibility.
+- `audit_integrity_confinement`: the headline injection-containment guarantee --
+  integrity confinement preserved by `invoke_start` (CHECK 4a/4b/4c).
+- `audit_crossing_endorsed`: the unified crossing's defining property -- an endorsed
+  completion (`invoke_complete_endorsed`) never inserts taint or integrity.
 
 ## Building and running the check suite
 
@@ -96,12 +122,13 @@ tzimtzum/
   TzimtzumTest.lean          aggregator: per-action VC checks + soundness + audit
   Tzimtzum/
     OpaqueTypes.lean         shared opaque sorts (KAgent, KTool, ..., KSt)
-    State.lean               St structure, ConfLevel/BudgetLevel, initial predicate
-    Actions.lean             13 kav_action definitions
-    Invariants.lean          21 invariant/safety predicates + allInvariants bundle
-    Check*.lean              per-action #kav_check_action modules (13 files) + CheckInit
-    CheckInit.lean           #kav_check_init (21 initiation VCs)
+    State.lean               St structure, ConfLevel/IntegLevel, initial predicate
+    Actions.lean             16 kav_action definitions
+    Invariants.lean          26 invariant/safety predicates + allInvariants bundle
+    Check*.lean              per-action #kav_check_action modules (16 files) + CheckInit
+    CheckInit.lean           #kav_check_init (26 initiation VCs)
     Soundness.lean           kav_sound aggregator (over Soundness/)
     Soundness/               reachability bundle (Common, PresMost, per-budget-action Pres, Bundle)
     Audit.lean               audited named theorems + #print axioms
+    BudgetConservation.lean  budget_monotone_except_credit per-action lemmas
 ```

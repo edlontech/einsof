@@ -6,9 +6,10 @@ import Lean
 /-! # C0 soundness bundle — shared infrastructure
 
 Split out of the former monolithic `Tzimtzum/Soundness.lean` so `lake` caches and
-parallelises each action's preservation proof independently (the two budget actions
-`invoke_complete` / `return_endorsed` dominated the build, so they live in their own
-modules and no longer force the other ten to recompile).
+parallelises each action's preservation proof independently (the budget-touching actions
+`invoke_complete_endorsed`/`invoke_complete_unendorsed`, `return_endorsed`,
+`grant_override`, and `sentinel_credit_budget` dominated the build, so they live in their
+own modules and no longer force the other eleven to recompile).
 
 This module holds the pieces every preservation module shares:
 
