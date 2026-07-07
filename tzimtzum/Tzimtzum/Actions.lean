@@ -303,6 +303,16 @@ kav_action invoke_complete_unendorsed (a : AgentId) (inv : InvocationId) :
 -- follows the declarations, not the sets themselves. A clean child returns at
 -- `(clvl, ilvl) = (public, attested)` for debit 0 (`declass_weight public = integ_weight
 -- attested = 0`) — endorsing nothing costs nothing.
+-- Robust declassification (design §5.5, Zdancewic/Myers): the CHILD is the declassifying
+-- party here, so it is the child's held integrity that must clear the shared lever floor, or
+-- sit in the lever's vouchable inspect band. The vouch is `return_conforms child prnt` — this
+-- action's existing conformance require doubles as the vouch (one oracle, no new relation,
+-- consistent with the unified-crossing philosophy). This makes the vouch arm honest but
+-- partially redundant with the `return_conforms` require above; it is kept anyway for
+-- shape-fidelity with the design's graduated-gate shape and forward-compat in case the two
+-- requires ever decouple. Untrusted influence cannot reach this lever: the headline claim
+-- strengthens from "can't fire destructive tools" to "can't fire destructive tools AND can't
+-- launder anything past the lattice."
 open Classical in
 kav_action return_endorsed (child prnt : AgentId) (clvl : ConfLevel) (ilvl : IntegLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
@@ -312,6 +322,9 @@ kav_action return_endorsed (child prnt : AgentId) (clvl : ConfLevel) (ilvl : Int
   require ∀ I, ¬ s.in_flight child I
   require s.agent_cap child s.cap_declassify
   require s.return_conforms child prnt
+  -- Robust declassification lever floor (Task 13): the child's held integrity clears the
+  -- lever, or sits in the inspect band vouched by `return_conforms` (already required above).
+  require ∀ L, s.integ_levels child L → s.lever_allows L ∨ (s.lever_inspects L ∧ s.return_conforms child prnt)
   -- Coverage: the declared level bounds the child's entire taint set.
   require ∀ L, s.taint_levels child L → le_conf L clvl
   -- Coverage: the declared integ level LOWER-bounds the child's entire integ set.
@@ -405,12 +418,21 @@ kav_action sentinel_credit_budget (a : AgentId) (n : Nat) :
 -- that pushes data through a DENY band is priced by the level it arms, not a flat 1 — closes
 -- the cheap-override arbitrage. Public-level overrides are free, deliberately: public data
 -- through a deny-all channel is harmless.
+-- Robust declassification (design §5.5, Zdancewic/Myers): the GRANTER, not the target, is the
+-- declassifying party arming this lever, so it is the granter's held integrity that must clear
+-- the lever floor — STRICT, two-verdict, no inspect/vouch arm. Unlike `return_endorsed` there
+-- is no conformance object to vouch a near-miss granter with, so a degraded granter has no
+-- band at all. Untrusted influence cannot reach this lever: the headline claim strengthens
+-- from "can't fire destructive tools" to "can't fire destructive tools AND can't launder
+-- anything past the lattice."
 open Classical in
 kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : ConfLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active granter
   require s.agent_active target
   require s.agent_cap granter s.cap_grant_override
+  -- Robust declassification lever floor (Task 13): strict, no vouch arm.
+  require ∀ L, s.integ_levels granter L → s.lever_allows L
   require s.affordable granter (declass_weight lvl)
   require ∀ (I : InvocationId), ¬ s.in_flight target I
   flow_override := fun A T L =>

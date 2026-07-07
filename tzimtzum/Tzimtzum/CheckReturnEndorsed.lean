@@ -40,7 +40,7 @@ theorem return_endorsed_coverage_required
     (hheld : s.taint_levels child heldL) (hbelow : ¬ le_conf heldL clvl) :
     ¬ (retEnd child prnt clvl ilvl).guard s := by
   unfold retEnd return_endorsed
-  intro ⟨_, _, _, _, _, _, hcov, _, _⟩
+  intro ⟨_, _, _, _, _, _, _, hcov, _, _⟩
   exact hbelow (hcov heldL hheld)
 
 -- Acceptance criterion: a declared `ilvl` strictly ABOVE a level the child actually holds
@@ -51,7 +51,7 @@ theorem return_endorsed_integ_coverage_required
     (hheld : s.integ_levels child heldL) (habove : ¬ le_integ ilvl heldL) :
     ¬ (retEnd child prnt clvl ilvl).guard s := by
   unfold retEnd return_endorsed
-  intro ⟨_, _, _, _, _, _, _, hcov, _⟩
+  intro ⟨_, _, _, _, _, _, _, _, hcov, _⟩
   exact habove (hcov heldL hheld)
 
 -- Acceptance criterion: an untainted, clean child returning at `(clvl, ilvl) = (public,
@@ -60,5 +60,24 @@ theorem return_endorsed_integ_coverage_required
 theorem return_endorsed_public_debit_zero : declass_weight ConfLevel.«public» = 0 := rfl
 
 theorem return_endorsed_attested_debit_zero : integ_weight IntegLevel.attested = 0 := rfl
+
+-- Acceptance criterion (Task 13, robust declassification): a child holding `untrusted` —
+-- below both lever floors — cannot fire `return_endorsed`, when both floors are pinned at
+-- `trusted`. Floors are background VALUES, not fixed constants, so the theorem is stated
+-- hypothetically over concrete floor levels rather than baking `trusted`/`trusted` into the
+-- state: `le_integ trusted untrusted` is false on both the ALLOW and the INSPECT arm (the
+-- child's `untrusted` clears neither), so the guard is unsatisfiable regardless of
+-- `return_conforms`.
+theorem return_endorsed_lever_floor_untrusted_denied
+    (child prnt : KAgent) (clvl : ConfLevel) (ilvl : IntegLevel) (s : KSt)
+    (hfloor : s.lever_integ_floor = IntegLevel.trusted)
+    (hinspect : s.lever_integ_inspect_floor = IntegLevel.trusted)
+    (hheld : s.integ_levels child IntegLevel.untrusted) :
+    ¬ (retEnd child prnt clvl ilvl).guard s := by
+  unfold retEnd return_endorsed
+  intro ⟨_, _, _, _, _, _, hlever, _, _, _⟩
+  rcases hlever IntegLevel.untrusted hheld with hallow | ⟨hinsp, _⟩
+  · simp [St.lever_allows, hfloor, le_integ, integRank] at hallow
+  · simp [St.lever_inspects, hinspect, le_integ, integRank] at hinsp
 
 end Tzimtzum

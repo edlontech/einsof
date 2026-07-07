@@ -51,4 +51,18 @@ theorem grant_override_pres_revocation_clean
 -- Axiom audit: must depend only on [propext, Classical.choice, Quot.sound].
 #print axioms grant_override_pres_revocation_clean
 
+-- Acceptance criterion (Task 13, robust declassification): a granter holding `untrusted` —
+-- below both lever floors — cannot fire `grant_override`, when both floors are pinned at
+-- `trusted`. Strict two-verdict: unlike `return_endorsed` there is no vouch arm to fall back
+-- to, so `le_integ trusted untrusted` being false is the whole story.
+theorem grant_override_lever_floor_untrusted_denied
+    (granter target : KAgent) (tool : KTool) (lvl : ConfLevel) (s : KSt)
+    (hfloor : s.lever_integ_floor = IntegLevel.trusted)
+    (hheld : s.integ_levels granter IntegLevel.untrusted) :
+    ¬ (grantOverride granter target tool lvl).guard s := by
+  unfold grantOverride grant_override
+  intro ⟨_, _, _, hlever, _, _⟩
+  have hallow := hlever IntegLevel.untrusted hheld
+  simp [St.lever_allows, hfloor, le_integ, integRank] at hallow
+
 end Tzimtzum
