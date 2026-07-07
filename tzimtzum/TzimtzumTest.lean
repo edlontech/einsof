@@ -12,7 +12,8 @@ import Tzimtzum.CheckGrantCapability
 import Tzimtzum.CheckRevoke
 import Tzimtzum.CheckCascadeRevoke
 import Tzimtzum.CheckInvokeStart
-import Tzimtzum.CheckInvokeComplete
+import Tzimtzum.CheckInvokeCompleteEndorsed
+import Tzimtzum.CheckInvokeCompleteUnendorsed
 import Tzimtzum.CheckReturnEndorsed
 import Tzimtzum.CheckReturnUnendorsed
 import Tzimtzum.CheckSentinelElevateTaint

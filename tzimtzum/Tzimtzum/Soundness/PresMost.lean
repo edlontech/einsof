@@ -3,8 +3,10 @@ import Tzimtzum.Soundness.Common
 /-! # C0 — initiation + the nine cascade-discharged actions
 
 Every action whose preservation VCs the `kav_discharge` cascade closes outright (no budget
-witness to reconstruct). The four budget actions (`invoke_complete`, `return_endorsed`,
-`grant_override`, `sentinel_credit_budget`) live in their own modules. -/
+witness to reconstruct). The budget-touching actions (`invoke_complete_endorsed`,
+`invoke_complete_unendorsed`, `return_endorsed`, `grant_override`, `sentinel_credit_budget`)
+live in their own modules — `invoke_complete_unendorsed` needs no manual proof either, it just
+shares a file with its endorsed sibling. -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true

@@ -158,37 +158,65 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
   in_flight := fun A I => s.in_flight A I ∨ (A = a ∧ I = inv)
   invocation_used := fun I => s.invocation_used I ∨ I = inv
 
--- invoke_complete (Veil lines 619-654). Removes in_flight (point-clear), conditionally adds
--- taint, and self-debits the weighted budget on the endorsed (zero-taint) path. The endorsed
--- predicate (inlined at each site, no `let` in action bodies) is the 4-conjunct
---   `endorsed := output_bounded ∧ invocation_conforms ∧ affordable (declass_weight floor)
---                ∧ ¬ already-tainted-at-floor`
--- where `floor = s.tool_conf_floor (s.invocation_tool inv)`. An agent already tainted at
--- `floor` takes the `¬ endorsed` branch: idempotent taint insert, ZERO debit (the
--- wasted-budget fix).
+-- The shared crossing-guard predicate (design §5.4 "invoke_complete shape" / §4). Replaces
+-- the endorsed predicate that used to be inlined (and repeated) three times inside a single
+-- `invoke_complete`: the 4-conjunct
+--   `output_bounded ∧ invocation_conforms ∧ affordable (declass_weight floor)
+--    ∧ ¬ already-tainted-at-floor`
+-- plus a NEW `cap_declassify` conjunct (design finding 11: `cap_declassify` is now required
+-- at BOTH crossing sites — invocation completion and endorsed return — closing an
+-- undocumented asymmetry; missing the capability routes to the unendorsed action, fail-safe).
+-- Used POSITIVELY by `invoke_complete_endorsed` and NEGATIVELY (syntactic negation, not a
+-- re-derived condition) by `invoke_complete_unendorsed`, so the split is a total,
+-- complementary partition and the environment's choice between the two actions is forced —
+-- zero semantic change versus the old embedded conditional.
+--
+-- Deliberately NOT `@[irreducible]`: `#kav_check_action`'s `collectUnfoldNamesTransitive`
+-- (`kav/Kav/CheckAction.lean`) transitively unfolds every non-irreducible, non-denylisted
+-- `def` reachable from the goal, so a plain `def` here is inlined automatically at every gate
+-- site exactly as the old textual duplication was. `irreducible` is reserved for defs the
+-- cascades must NOT see through (e.g. `ceilingAdmits`, whose existential blows up congruence
+-- closure) — `crossing_ok`'s four conjuncts are exactly what the invariants need exposed, so
+-- keeping it transparent is what keeps the checks automatic. Integrity dimensions are NOT
+-- added here — that is Task 12's `conf_helps` / `integ_helps` extension.
+def crossing_ok
+    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (a : AgentId) (inv : InvocationId) : Prop :=
+  s.tool_output_bounded (s.invocation_tool inv)
+    ∧ s.invocation_conforms inv
+    ∧ s.agent_cap a s.cap_declassify
+    ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
+    ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv))
+
+-- invoke_complete_endorsed (Veil lines 619-654, endorsed branch — split per design
+-- "invoke_complete shape": complementary total guards instead of one embedded conditional, so
+-- each branch of the Rust kernel's `if/else` refines exactly one spec action). Requires
+-- `crossing_ok` positively: removes in_flight (point-clear) and self-debits the weighted
+-- budget. No taint insert — the crossing was clean.
 open Classical in
-kav_action invoke_complete (a : AgentId) (inv : InvocationId) :
+kav_action invoke_complete_endorsed (a : AgentId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.in_flight a inv
   require s.agent_active a
+  require crossing_ok s a inv
+  in_flight := fun A I => s.in_flight A I ∧ ¬ (A = a ∧ I = inv)
+  agent_budget := fun A =>
+    if A = a
+    then s.agent_budget a - declass_weight (s.tool_conf_floor (s.invocation_tool inv))
+    else s.agent_budget A
+
+-- invoke_complete_unendorsed (Veil lines 619-654, unendorsed branch — split per design
+-- "invoke_complete shape"). Requires the SYNTACTIC NEGATION of `crossing_ok`: removes
+-- in_flight (point-clear) and inserts the tool's conf floor into taint. No budget change — an
+-- agent that cannot cross cleanly is never charged (the wasted-budget fix).
+kav_action invoke_complete_unendorsed (a : AgentId) (inv : InvocationId) :
+    St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
+  require s.in_flight a inv
+  require s.agent_active a
+  require ¬ crossing_ok s a inv
   in_flight := fun A I => s.in_flight A I ∧ ¬ (A = a ∧ I = inv)
   taint_levels := fun A L =>
-    s.taint_levels A L
-    ∨ (A = a
-        ∧ ¬ (s.tool_output_bounded (s.invocation_tool inv)
-                ∧ s.invocation_conforms inv
-                ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
-                ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
-        ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
-  agent_budget := fun A =>
-    if A = a then
-      if s.tool_output_bounded (s.invocation_tool inv)
-          ∧ s.invocation_conforms inv
-          ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
-          ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv))
-      then s.agent_budget a - declass_weight (s.tool_conf_floor (s.invocation_tool inv))
-      else s.agent_budget a
-    else s.agent_budget A
+    s.taint_levels A L ∨ (A = a ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
 
 -- return_endorsed (Veil lines 674-688). Capability-gated, recipient-budget-charged
 -- cross-boundary declassification (no taint propagation).
@@ -274,24 +302,25 @@ kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : Conf
     s.override_used A T L ∧ ¬ (A = target ∧ T = tool ∧ L = lvl)
   agent_budget := fun A => if A = granter then s.agent_budget granter - 1 else s.agent_budget A
 
-/-! ## Full 13-action transition system -/
+/-! ## Full 14-action transition system -/
 
 def system : Kav.TransitionSystem
     (St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) :=
   { init := initial
     actions :=
-      [ ("register_tool",          Kav.close1 register_tool)
-      , ("load_instruction",       Kav.close2 load_instruction)
-      , ("delegate",               Kav.close2 delegate)
-      , ("grant_capability",       Kav.close3 grant_capability)
-      , ("revoke",                 Kav.close2 revoke)
-      , ("cascade_revoke",         Kav.close2 cascade_revoke)
-      , ("invoke_start",           Kav.close3 invoke_start)
-      , ("invoke_complete",        Kav.close2 invoke_complete)
-      , ("return_endorsed",        Kav.close2 return_endorsed)
-      , ("return_unendorsed",      Kav.close2 return_unendorsed)
-      , ("sentinel_elevate_taint", Kav.close2 sentinel_elevate_taint)
-      , ("sentinel_credit_budget", Kav.close2 sentinel_credit_budget)
-      , ("grant_override",         Kav.close4 grant_override) ] }
+      [ ("register_tool",              Kav.close1 register_tool)
+      , ("load_instruction",           Kav.close2 load_instruction)
+      , ("delegate",                   Kav.close2 delegate)
+      , ("grant_capability",           Kav.close3 grant_capability)
+      , ("revoke",                     Kav.close2 revoke)
+      , ("cascade_revoke",             Kav.close2 cascade_revoke)
+      , ("invoke_start",               Kav.close3 invoke_start)
+      , ("invoke_complete_endorsed",   Kav.close2 invoke_complete_endorsed)
+      , ("invoke_complete_unendorsed", Kav.close2 invoke_complete_unendorsed)
+      , ("return_endorsed",            Kav.close2 return_endorsed)
+      , ("return_unendorsed",          Kav.close2 return_unendorsed)
+      , ("sentinel_elevate_taint",     Kav.close2 sentinel_elevate_taint)
+      , ("sentinel_credit_budget",     Kav.close2 sentinel_credit_budget)
+      , ("grant_override",             Kav.close4 grant_override) ] }
 
 end Tzimtzum

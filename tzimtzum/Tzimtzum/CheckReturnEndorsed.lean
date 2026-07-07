@@ -8,8 +8,8 @@ namespace Tzimtzum
 private def retEnd : KAgent → KAgent → Kav.Action KSt := return_endorsed
 
 -- All invariants except `revocation_clean`, proved manually below (same cascade stall as
--- `invoke_complete`: the classical `ite` inside the untouched `agent_budget` conjunct, not
--- `revocation_clean`'s own logic).
+-- `invoke_complete_endorsed`: the classical `ite` inside the untouched `agent_budget`
+-- conjunct, not `revocation_clean`'s own logic).
 private def invsAuto : List (Kav.Invariant KSt) :=
   allInvariants.filter (fun p => p.1 ≠ "revocation_clean")
 
