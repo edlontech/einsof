@@ -94,6 +94,10 @@ kav_action cascade_revoke (child prnt : AgentId) :
 
 -- invoke_start (Veil lines 550-606). THE BIG ONE: CHECK 1 + 2a + 2b + 2c + 3,
 -- override_used full-redefinition (clauses 2a/2c/2b), and the in_flight point-set.
+-- Eager consumption (design doc "Override consumption semantics"): an armed override is
+-- marked used whenever the gate examined a pair it was armed for, regardless of whether
+-- another arm (ALLOW / INSPECT+gate) would have admitted the flow — no negated gate arms,
+-- no inner egress existentials.
 kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active a
@@ -128,25 +132,14 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
   require s.authorizer_allows a tool
   override_used := fun A T L =>
     s.override_used A T L
-    -- 2a: new tool admitted against existing speculative taint L
-    ∨ (A = a ∧ T = tool ∧ s.flow_override a tool L ∧ Tzimtzum.speculative_taint s a L
-        ∧ (∃ E, s.tool_egress tool E
-           ∧ ¬ s.flow_allows L E
-           ∧ ¬ (s.flow_inspects L E ∧ s.content_gate_passes a tool)))
-    -- 2c: new tool's own floor against its own egress
-    ∨ (A = a ∧ T = tool ∧ L = s.tool_conf_floor tool
-        ∧ s.flow_override a tool (s.tool_conf_floor tool)
-        ∧ (∃ E, s.tool_egress tool E
-           ∧ ¬ s.flow_allows (s.tool_conf_floor tool) E
-           ∧ ¬ (s.flow_inspects (s.tool_conf_floor tool) E ∧ s.content_gate_passes a tool)))
-    -- 2b: pre-existing in-flight tool I against new tool's floor (keyed on I's tool)
+    -- 2a: new tool armed against existing speculative taint L
+    ∨ (A = a ∧ T = tool ∧ s.flow_override a tool L ∧ Tzimtzum.speculative_taint s a L)
+    -- 2c: new tool's own floor armed against its own egress
+    ∨ (A = a ∧ T = tool ∧ L = s.tool_conf_floor tool ∧ s.flow_override a tool (s.tool_conf_floor tool))
+    -- 2b: pre-existing in-flight tool I armed against new tool's floor (keyed on I's tool)
     ∨ (A = a ∧ L = s.tool_conf_floor tool
         ∧ (∃ I, s.in_flight a I ∧ T = s.invocation_tool I
-           ∧ s.flow_override a (s.invocation_tool I) (s.tool_conf_floor tool)
-           ∧ (∃ E, s.tool_egress (s.invocation_tool I) E
-              ∧ ¬ s.flow_allows (s.tool_conf_floor tool) E
-              ∧ ¬ (s.flow_inspects (s.tool_conf_floor tool) E
-                      ∧ s.content_gate_passes a (s.invocation_tool I)))))
+           ∧ s.flow_override a (s.invocation_tool I) (s.tool_conf_floor tool)))
   in_flight := fun A I => s.in_flight A I ∨ (A = a ∧ I = inv)
 
 -- invoke_complete (Veil lines 619-654). Removes in_flight (point-clear), conditionally adds
@@ -196,7 +189,8 @@ kav_action return_endorsed (child prnt : AgentId) :
   agent_budget := fun A => if A = prnt then s.agent_budget prnt - 2 else s.agent_budget A
 
 -- return_unendorsed (Veil lines 708-732). Parent inherits child's taint set; flow-gated
--- against parent's in-flight tools; consumes overrides used as sole justification.
+-- against parent's in-flight tools; eager override consumption (marks used whenever the
+-- gate examined an armed pair, regardless of another arm admitting the flow).
 kav_action return_unendorsed (child prnt : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_parent child prnt
@@ -214,13 +208,11 @@ kav_action return_unendorsed (child prnt : AgentId) :
     s.override_used A T L
     ∨ (A = prnt ∧ s.taint_levels child L
         ∧ (∃ I, s.in_flight prnt I ∧ T = s.invocation_tool I
-           ∧ s.flow_override prnt (s.invocation_tool I) L
-           ∧ (∃ E, s.tool_egress (s.invocation_tool I) E
-              ∧ ¬ s.flow_allows L E
-              ∧ ¬ (s.flow_inspects L E ∧ s.content_gate_passes prnt (s.invocation_tool I)))))
+           ∧ s.flow_override prnt (s.invocation_tool I) L))
 
 -- sentinel_elevate_taint (Veil lines 751-769). Raises agent taint to `l`, flow-gated against
--- in-flight tools; CONSUMES overrides (single-use property).
+-- in-flight tools; CONSUMES overrides eagerly (single-use property: marked used whenever the
+-- gate examined an armed pair, regardless of another arm admitting the flow).
 kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active a
@@ -234,10 +226,7 @@ kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
     s.override_used A T L
     ∨ (A = a ∧ L = l
         ∧ (∃ I, s.in_flight a I ∧ T = s.invocation_tool I
-           ∧ s.flow_override a (s.invocation_tool I) l
-           ∧ (∃ E, s.tool_egress (s.invocation_tool I) E
-              ∧ ¬ s.flow_allows l E
-              ∧ ¬ (s.flow_inspects l E ∧ s.content_gate_passes a (s.invocation_tool I)))))
+           ∧ s.flow_override a (s.invocation_tool I) l))
   taint_levels := fun A L => s.taint_levels A L ∨ (A = a ∧ L = l)
 
 -- sentinel_credit_budget (Veil lines 780-784). Capability-gated budget credit of `n`,
