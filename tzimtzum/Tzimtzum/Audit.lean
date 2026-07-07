@@ -14,10 +14,12 @@ Each theorem uses the same discharge cascade that `#kav_check_action` employs:
     (first | trivial | grind | (simp_all <;> grind) | auto | duper [*])`
 
 The `opaque` sorts and `abbrev KSt` are defined once in `OpaqueTypes` and shared
-by all Check modules (imported transitively via `CheckReturnEndorsed`).  The two
-manual `active_has_budget` theorems audit their axioms in-place in
-`CheckReturnEndorsed` and `CheckInvokeComplete`; Theorem 4 below re-audits the
-ReturnEndorsed one here for visibility.
+by all Check modules (imported transitively via `CheckReturnEndorsed`).  The
+function-encoded budget's manual `revocation_clean` theorems (the classical `ite`
+inside the untouched `agent_budget` conjunct stalls the shared cascade for that one
+invariant on every budget-touching action) audit their axioms in-place in each
+`Check*.lean` module; Theorem 4 below re-audits the ReturnEndorsed one here for
+visibility.
 -/
 
 set_option maxHeartbeats 4000000
@@ -88,15 +90,16 @@ theorem audit_init_flow_confinement
 #print axioms audit_init_flow_confinement
 
 /-!
-## Theorem 4 — manual `active_has_budget` theorem axiom audit
+## Theorem 4 — manual `revocation_clean` theorem axiom audit
 
-`return_endorsed_pres_active_has_budget` (defined in `CheckReturnEndorsed`) and
-`invoke_complete_pres_active_has_budget` (defined in `CheckInvokeComplete`) are the
-two manual proofs for the budget-debit-resistant VC.  Their `#print axioms` appear
-in-place in those modules; this file re-audits the ReturnEndorsed one to confirm
-the bound in a single build.
+`return_endorsed_pres_revocation_clean` (defined in `CheckReturnEndorsed`) is one of
+five manual proofs for the classical-`ite`-resistant VC (every action whose
+`agent_budget` update is an inline `ite` point-update needs the same one-line frame
+extraction for `revocation_clean`).  Their `#print axioms` appear in-place in their
+respective modules; this file re-audits the ReturnEndorsed one to confirm the bound
+in a single build.
 -/
 
-#print axioms return_endorsed_pres_active_has_budget
+#print axioms return_endorsed_pres_revocation_clean
 
 end Tzimtzum

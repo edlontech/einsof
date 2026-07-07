@@ -7,13 +7,13 @@ Tzimtzum.kav_sound : ∀ s, Kav.Reachable ksystem s → allInv s
 ```
 
 Read it as: for any state `s` reachable by running the protocol's 13 actions in any
-order, any number of times, `s` satisfies all 23 rules in `allInv`. The proof holds for
+order, any number of times, `s` satisfies all 21 rules in `allInv`. The proof holds for
 every reachable state, including ones nobody has written a test for.
 
 ## What is being proved
 
 The protocol is a state machine: 13 actions (`register_tool`, `delegate`, `invoke_start`,
-`revoke`, ...) that each take a state and produce a new one, plus 23 rules the state must
+`revoke`, ...) that each take a state and produce a new one, plus 21 rules the state must
 always satisfy. The rules split into two groups.
 
 ### 9 safety properties -- the rules that actually matter for security
@@ -45,7 +45,7 @@ always satisfy. The rules split into two groups.
   can't be reused. If an override is the only thing letting a tainted flow through, it is
   marked used at that moment.
 
-### 14 strengthening invariants -- the scaffolding the proof needs to stand up
+### 12 strengthening invariants -- the scaffolding the proof needs to stand up
 
 Consistency facts -- "the agent tree has one parent per node," "budgets stay within
 bounds," "in-flight invocations only exist for active agents and registered tools" --
@@ -54,17 +54,26 @@ through. The load-bearing walls: nobody cares about them directly, but the roof
 (`flow_confinement` and friends) falls without them. The full list is in
 `Tzimtzum/Invariants.lean`.
 
+The declassification budget (`agent_budget : AgentId → Nat`) is a total function, not a
+relation: an agent's budget is a plain number, updated by classical `ite` point-updates
+in every action that touches it. `delegate` sets a new agent's budget to 0 -- delegation
+mints no budget; `sentinel_credit_budget` is the only faucet.
+
 ## How the proof is actually done
 
-For each of the 23 rules and each of the 13 actions, there is a verification condition:
+For each of the 21 rules and each of the 13 actions, there is a verification condition:
 *if the rule holds before the action runs and the action's preconditions are met, the
-rule still holds after.* That's 13 x 23 = 299 preservation checks, plus 23 checks that
-the rules hold in the initial state -- 322 total. All but 6 are discharged automatically
-by mathlib tactics (`grind`, `simp_all`, `auto`, `duper`); the 6 budget-arithmetic ones
-(where a debit or saturating credit needs an existential witness the automation can't
-guess) are proved by hand.
+rule still holds after.* That's 13 x 21 = 273 preservation checks, plus 21 checks that
+the rules hold in the initial state -- 294 total. All but 6 are discharged automatically
+by mathlib tactics (`grind`, `simp_all`, `auto`, `duper`); 6 are proved by hand:
+`revocation_clean` under `delegate`, `invoke_complete`, `return_endorsed`,
+`grant_override`, and `sentinel_credit_budget` (a classical `ite` elsewhere in the same
+action's update stalls the shared automation on this one rule, even though
+`revocation_clean` itself never mentions the budget), plus `budget_bounded` under
+`sentinel_credit_budget` (the saturating credit hides its `≤ capacity` bound behind an
+`@[irreducible]` definition the automation can't see through).
 
-Those 364 local checks are then assembled into the one global theorem above by
+Those 294 local checks are then assembled into the one global theorem above by
 induction over reachability: if the rules hold initially, and every action preserves
 them, they hold in every reachable state, full stop.
 

@@ -10,18 +10,22 @@ the guarantee stops, see [PROOFS.md](PROOFS.md).
 
 ## The verified protocol
 
-The full protocol is 13 actions, 9 safety properties, and 14 strengthening invariants,
+The full protocol is 13 actions, 9 safety properties, and 12 strengthening invariants,
 proved inductive over all transitions:
 
-- 322 VCs discharged: 23 initiation VCs (`#kav_check_init`) plus 13 × 23 preservation VCs
+- 294 VCs discharged: 21 initiation VCs (`#kav_check_init`) plus 13 × 21 preservation VCs
   (`#kav_check_action`), one per (action, invariant) pair.
 - All kernel-checked: the automation cascade uses only mathlib tactics (`grind`, `simp_all`,
   `auto`, `duper`).
-- Six budget-meter VCs proved by hand: `active_has_budget` under `invoke_complete`,
-  `return_endorsed`, `grant_override`, and `sentinel_credit_budget`, plus `budget_unique`
-  and `budget_bounded` under `sentinel_credit_budget`. The debit and saturating-credit
-  branches introduce an existential witness the cascade cannot reconstruct; these live in
-  the matching `Tzimtzum/Check*.lean` modules.
+- The declassification budget is a total function field (`agent_budget : AgentId → Nat`),
+  updated by classical `ite` point-updates in every action that debits or credits it.
+- Six VCs proved by hand: `revocation_clean` under `delegate`, `invoke_complete`,
+  `return_endorsed`, `grant_override`, and `sentinel_credit_budget` (the classical `ite`
+  inside the untouched `agent_budget` conjunct stalls the shared cascade for this one
+  invariant, even though its own logic never touches the budget), plus `budget_bounded`
+  under `sentinel_credit_budget` (the saturating credit's `≤ budget_capacity` bound is
+  hidden behind an `@[irreducible]` helper). These live in the matching
+  `Tzimtzum/Check*.lean` modules.
 
 ### Soundness bundle
 
@@ -51,7 +55,8 @@ Audited theorems:
 - `audit_flow_confinement`: flow confinement preserved by `invoke_start`.
 - `audit_override_consumed`: single-use override invariant preserved by `invoke_start`.
 - `audit_init_flow_confinement`: flow confinement holds in the initial state.
-- `return_endorsed_pres_active_has_budget`: the manual `active_has_budget` proof.
+- `return_endorsed_pres_revocation_clean`: one of the five manual `revocation_clean`
+  proofs, re-audited here for visibility.
 
 ## Building and running the check suite
 
@@ -93,9 +98,9 @@ tzimtzum/
     OpaqueTypes.lean         shared opaque sorts (KAgent, KTool, ..., KSt)
     State.lean               St structure, ConfLevel/BudgetLevel, initial predicate
     Actions.lean             13 kav_action definitions
-    Invariants.lean          23 invariant/safety predicates + allInvariants bundle
+    Invariants.lean          21 invariant/safety predicates + allInvariants bundle
     Check*.lean              per-action #kav_check_action modules (13 files) + CheckInit
-    CheckInit.lean           #kav_check_init (23 initiation VCs)
+    CheckInit.lean           #kav_check_init (21 initiation VCs)
     Soundness.lean           kav_sound aggregator (over Soundness/)
     Soundness/               reachability bundle (Common, PresMost, per-budget-action Pres, Bundle)
     Audit.lean               audited named theorems + #print axioms

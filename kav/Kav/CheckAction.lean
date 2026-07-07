@@ -48,7 +48,7 @@ def actionUnfoldDenylist : Std.HashSet Name :=
   Std.HashSet.ofList
     [``Eq, ``And, ``Or, ``Not, ``Iff, ``True, ``False, ``Bool,
      ``Prod, ``Prod.mk, ``List, ``List.cons, ``List.nil, ``Exists,
-     ``Kav.Action, ``Kav.TransitionSystem]
+     ``Kav.Action, ``Kav.TransitionSystem, ``ite, ``dite]
 
 /-- Transitively collect delta-reducible `def` names reachable from `goalTy`, walking each
     definition's body to a fixpoint. Skips denylisted names, inductives, axioms, ctors, and

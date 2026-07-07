@@ -30,7 +30,9 @@ kav_action load_instruction (a : AgentId) (instr : InstructionId) :
   require s.trusted_issuer (s.instruction_issuer instr)
   agent_instruction := fun A I => s.agent_instruction A I ∨ (A = a ∧ I = instr)
 
--- delegate (Veil lines 426-441).
+-- delegate (Veil lines 426-441). Budget mint fix (design finding 5): the grantee spawns at
+-- budget 0, not full capacity — `sentinel_credit_budget` is the only faucet.
+open Classical in
 kav_action delegate (grantor grantee : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active grantor
@@ -42,8 +44,7 @@ kav_action delegate (grantor grantee : AgentId) :
   agent_cap := fun N C => s.agent_cap N C ∧ N ≠ grantee
   agent_instruction := fun A I => s.agent_instruction A I ∧ A ≠ grantee
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ grantee
-  agent_budget := fun G L =>
-    (G = grantee ∧ L = budget_capacity) ∨ (s.agent_budget G L ∧ G ≠ grantee)
+  agent_budget := fun G => if G = grantee then 0 else s.agent_budget G
   in_flight := fun A I => s.in_flight A I ∧ A ≠ grantee
   override_used := fun A T L => s.override_used A T L ∧ A ≠ grantee
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ grantee
@@ -57,7 +58,9 @@ kav_action grant_capability (prnt child : AgentId) (cap : CapKind) :
   require s.agent_cap prnt cap
   agent_cap := fun N C => (N = child ∧ C = cap) ∨ s.agent_cap N C
 
--- revoke (Veil lines 467-482).
+-- revoke (Veil lines 467-482). `agent_budget` is left framed: a revoked agent's budget
+-- value is inert (it can no longer act), and `delegate` resets it to 0 deterministically
+-- if the id is ever reused as a grantee.
 kav_action revoke (prnt target : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_parent target prnt
@@ -69,12 +72,11 @@ kav_action revoke (prnt target : AgentId) :
   agent_cap := fun A C => s.agent_cap A C ∧ A ≠ target
   agent_instruction := fun A I => s.agent_instruction A I ∧ A ≠ target
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ target
-  agent_budget := fun A L => s.agent_budget A L ∧ A ≠ target
   in_flight := fun A I => s.in_flight A I ∧ A ≠ target
   override_used := fun A T L => s.override_used A T L ∧ A ≠ target
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ target
 
--- cascade_revoke (Veil lines 505-520).
+-- cascade_revoke (Veil lines 505-520). `agent_budget` left framed, same rationale as `revoke`.
 kav_action cascade_revoke (child prnt : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_parent child prnt
@@ -86,7 +88,6 @@ kav_action cascade_revoke (child prnt : AgentId) :
   agent_cap := fun A C => s.agent_cap A C ∧ A ≠ child
   agent_instruction := fun A I => s.agent_instruction A I ∧ A ≠ child
   taint_levels := fun A L => s.taint_levels A L ∧ A ≠ child
-  agent_budget := fun A L => s.agent_budget A L ∧ A ≠ child
   in_flight := fun A I => s.in_flight A I ∧ A ≠ child
   override_used := fun A T L => s.override_used A T L ∧ A ≠ child
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ child
@@ -156,6 +157,7 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
 -- where `floor = s.tool_conf_floor (s.invocation_tool inv)`. An agent already tainted at
 -- `floor` takes the `¬ endorsed` branch: idempotent taint insert, ZERO debit (the
 -- wasted-budget fix).
+open Classical in
 kav_action invoke_complete (a : AgentId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.in_flight a inv
@@ -169,23 +171,19 @@ kav_action invoke_complete (a : AgentId) (inv : InvocationId) :
                 ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
                 ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
         ∧ s.tool_conf_floor (s.invocation_tool inv) = L)
-  agent_budget := fun A L =>
-    (A = a ∧
-      ( ( (s.tool_output_bounded (s.invocation_tool inv)
-           ∧ s.output_conforms a (s.invocation_tool inv)
-           ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
-           ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
-          ∧ ∀ b, s.agent_budget a b →
-              L = b - declass_weight (s.tool_conf_floor (s.invocation_tool inv)) )
-        ∨ ( ¬ (s.tool_output_bounded (s.invocation_tool inv)
-               ∧ s.output_conforms a (s.invocation_tool inv)
-               ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
-               ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv)))
-            ∧ s.agent_budget a L ) ))
-    ∨ (A ≠ a ∧ s.agent_budget A L)
+  agent_budget := fun A =>
+    if A = a then
+      if s.tool_output_bounded (s.invocation_tool inv)
+          ∧ s.output_conforms a (s.invocation_tool inv)
+          ∧ s.affordable a (declass_weight (s.tool_conf_floor (s.invocation_tool inv)))
+          ∧ ¬ s.taint_levels a (s.tool_conf_floor (s.invocation_tool inv))
+      then s.agent_budget a - declass_weight (s.tool_conf_floor (s.invocation_tool inv))
+      else s.agent_budget a
+    else s.agent_budget A
 
 -- return_endorsed (Veil lines 674-688). Capability-gated, recipient-budget-charged
 -- cross-boundary declassification (no taint propagation).
+open Classical in
 kav_action return_endorsed (child prnt : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_parent child prnt
@@ -195,9 +193,7 @@ kav_action return_endorsed (child prnt : AgentId) :
   require s.agent_cap child s.cap_declassify
   require s.return_conforms child prnt
   require s.affordable prnt 2
-  agent_budget := fun A L =>
-    (A = prnt ∧ ∀ b, s.agent_budget prnt b → L = b - 2)
-    ∨ (A ≠ prnt ∧ s.agent_budget A L)
+  agent_budget := fun A => if A = prnt then s.agent_budget prnt - 2 else s.agent_budget A
 
 -- return_unendorsed (Veil lines 708-732). Parent inherits child's taint set; flow-gated
 -- against parent's in-flight tools; consumes overrides used as sole justification.
@@ -246,19 +242,20 @@ kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
 
 -- sentinel_credit_budget (Veil lines 780-784). Capability-gated budget credit of `n`,
 -- saturating at capacity (a full refresh = credit `budget_capacity`).
+open Classical in
 kav_action sentinel_credit_budget (a : AgentId) (n : Nat) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active a
   require s.agent_cap a s.cap_credit_budget
-  agent_budget := fun A L =>
-    (A = a ∧ ∀ b, s.agent_budget a b → L = budget_saturating_credit b n)
-    ∨ (A ≠ a ∧ s.agent_budget A L)
+  agent_budget := fun A =>
+    if A = a then budget_saturating_credit (s.agent_budget a) n else s.agent_budget A
 
 -- grant_override (Campaign A, 13th action). Capability-gated, granter-budget-debited
 -- arming/re-arming of a single-use flow override for (target, tool, lvl). The re-arm
 -- guard (target has no in-flight invocations) makes both single-use invariants vacuous
 -- for the target at grant time. Self-grant (granter = target) is legal — the guard then
 -- binds the granter.
+open Classical in
 kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : ConfLevel) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active granter
@@ -270,9 +267,7 @@ kav_action grant_override (granter target : AgentId) (tool : ToolId) (lvl : Conf
     s.flow_override A T L ∨ (A = target ∧ T = tool ∧ L = lvl)
   override_used := fun A T L =>
     s.override_used A T L ∧ ¬ (A = target ∧ T = tool ∧ L = lvl)
-  agent_budget := fun A L =>
-    (A = granter ∧ ∀ b, s.agent_budget granter b → L = b - 1)
-    ∨ (A ≠ granter ∧ s.agent_budget A L)
+  agent_budget := fun A => if A = granter then s.agent_budget granter - 1 else s.agent_budget A
 
 /-! ## Full 13-action transition system -/
 

@@ -70,7 +70,7 @@ structure St (AgentId ToolId InvocationId CapKind EgressKind IssuerId Instructio
   agent_cap           : AgentId → CapKind → Prop
   agent_instruction   : AgentId → InstructionId → Prop
   taint_levels        : AgentId → ConfLevel → Prop
-  agent_budget        : AgentId → Nat → Prop
+  agent_budget        : AgentId → Nat
   in_flight           : AgentId → InvocationId → Prop
   tool_registered     : ToolId → Prop
   override_used       : AgentId → ToolId → ConfLevel → Prop
@@ -125,11 +125,10 @@ ceiling. An inspect ceiling below the allow ceiling is an empty inspect band —
     (l : ConfLevel) (e : EgressKind) : Prop :=
   ceilingAdmits s.egress_inspect_ceiling l e
 
-/-- Affordability: the agent holds a budget `b` covering the weighted cost `w`. With
-`budget_unique` that `b` is the agent's unique level, so this is exactly "cost ≤ budget". -/
+/-- Affordability: the weighted cost `w` is within the agent's budget. -/
 def St.affordable (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
     (a : AgentId) (w : Nat) : Prop :=
-  ∃ b, s.agent_budget a b ∧ w ≤ b
+  w ≤ s.agent_budget a
 
 /-- Speculative (worst-case) taint: held taint, plus the conf-floor of every in-flight tool
 (Veil lines 348-351). -/
@@ -147,8 +146,7 @@ def initial
   (∀ (A : AgentId) (C : CapKind), s.agent_cap A C ↔ A = s.root_agent) ∧
   (∀ (A : AgentId) (I : InstructionId), ¬ s.agent_instruction A I) ∧
   (∀ (A : AgentId) (L : ConfLevel), ¬ s.taint_levels A L) ∧
-  (∀ (A : AgentId) (L : Nat),
-      s.agent_budget A L ↔ (A = s.root_agent ∧ L = budget_capacity)) ∧
+  (∀ (A : AgentId), s.agent_budget A = budget_capacity) ∧
   (∀ (A : AgentId) (I : InvocationId), ¬ s.in_flight A I) ∧
   (∀ (T : ToolId), ¬ s.tool_registered T) ∧
   (∀ (A : AgentId) (T : ToolId) (L : ConfLevel), ¬ s.override_used A T L) ∧

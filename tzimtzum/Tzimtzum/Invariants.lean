@@ -142,21 +142,11 @@ def root_no_in_flight
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
   ∀ (I : InvocationId), ¬ s.in_flight s.root_agent I
 
-/-- **budget_unique**: every active agent has exactly one declassification budget level. -/
-def budget_unique
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L1 L2 : Nat),
-    s.agent_active A ∧ s.agent_budget A L1 ∧ s.agent_budget A L2 → L1 = L2
-
-/-- **active_has_budget**: every active agent has a declassification budget level. -/
-def active_has_budget
-    (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId), s.agent_active A → ∃ (L : Nat), s.agent_budget A L
-
-/-- **budget_bounded**: every recorded budget is within capacity (keeps the state space finite). -/
+/-- **budget_bounded**: every agent's budget is within capacity (keeps the state space
+finite). -/
 def budget_bounded
     (s : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId) : Prop :=
-  ∀ (A : AgentId) (L : Nat), s.agent_budget A L → L ≤ budget_capacity
+  ∀ (A : AgentId), s.agent_budget A ≤ budget_capacity
 
 /-- **in_flight_flow_compat**: any two concurrent in-flight invocations for the same agent are
 mutually compatible under the flow policy (I1's conf-floor taint vs I2's egress). -/
@@ -209,8 +199,6 @@ def allInvariants :
   , ("in_flight_unique", in_flight_unique)
   , ("root_all_caps", root_all_caps)
   , ("root_no_in_flight", root_no_in_flight)
-  , ("budget_unique", budget_unique)
-  , ("active_has_budget", active_has_budget)
   , ("budget_bounded", budget_bounded)
   , ("in_flight_flow_compat", in_flight_flow_compat)
   , ("in_flight_override_consumed", in_flight_override_consumed) ]

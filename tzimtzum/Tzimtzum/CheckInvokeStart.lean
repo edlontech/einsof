@@ -16,7 +16,6 @@ private def invsA : List (Kav.Invariant KSt) :=
       "tool_attestation_intact", "instruction_attestation_intact", "parent_implies_active",
       "single_parent", "no_self_parent", "root_no_parent", "in_flight_active",
       "in_flight_registered", "in_flight_unique", "root_all_caps", "root_no_in_flight",
-      "budget_unique", "active_has_budget",
       "default_deny"] : List String))
 
 #kav_check_action invStart invsA
