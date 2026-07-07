@@ -18,6 +18,7 @@ import Tzimtzum.CheckInvokeCompleteUnendorsed
 import Tzimtzum.CheckReturnEndorsed
 import Tzimtzum.CheckReturnUnendorsed
 import Tzimtzum.CheckSentinelElevateTaint
+import Tzimtzum.CheckSentinelDegradeIntegrity
 import Tzimtzum.CheckSentinelCreditBudget
 import Tzimtzum.CheckGrantOverride
 import Tzimtzum.Audit

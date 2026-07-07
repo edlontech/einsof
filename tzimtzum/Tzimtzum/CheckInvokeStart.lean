@@ -49,4 +49,44 @@ private def invsB4 : List (Kav.Invariant KSt) :=
 
 #kav_check_action invStart invsB4
 
+-- Acceptance criterion (Task 11): CHECK 4a is unsatisfiable for an untrusted-tainted agent
+-- against a trusted-floor tool — the ALLOW arm fails the rank comparison and the INSPECT
+-- band (also pinned to `trusted`) fails it too, regardless of any vouch.
+theorem invoke_start_check4a_untrusted_denied
+    (a : KAgent) (tool : KTool) (inv : KInv) (s : KSt)
+    (hheld : s.integ_levels a IntegLevel.untrusted)
+    (hfloor : s.tool_integ_floor tool = IntegLevel.trusted)
+    (hinspect : s.tool_integ_inspect_floor tool = IntegLevel.trusted) :
+    ¬ (invStart a tool inv).guard s := by
+  unfold invStart invoke_start
+  intro ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, h4a, _, _⟩
+  have hspec : speculative_integ s a IntegLevel.untrusted := Or.inl hheld
+  rcases h4a IntegLevel.untrusted hspec with hallow | ⟨hinsp, _⟩
+  · unfold St.integ_allows le_integ integRank at hallow
+    rw [hfloor] at hallow
+    simp at hallow
+  · unfold St.integ_inspects le_integ integRank at hinsp
+    rw [hinspect] at hinsp
+    simp at hinsp
+
+-- Acceptance criterion (Task 11): CHECK 4b is unsatisfiable for an untrusted-emission tool
+-- against an in-flight invocation whose tool's floor is `trusted` — the "web_fetch completes
+-- while delete_repo is in flight" hazard, structurally blocked regardless of any vouch.
+theorem invoke_start_check4b_untrusted_emission_denied
+    (a : KAgent) (tool : KTool) (inv I : KInv) (s : KSt)
+    (hinflight : s.in_flight a I)
+    (hemission : s.tool_output_integ tool = IntegLevel.untrusted)
+    (hfloor : s.tool_integ_floor (s.invocation_tool I) = IntegLevel.trusted)
+    (hinspect : s.tool_integ_inspect_floor (s.invocation_tool I) = IntegLevel.trusted) :
+    ¬ (invStart a tool inv).guard s := by
+  unfold invStart invoke_start
+  intro ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, h4b, _⟩
+  rcases h4b I hinflight with hallow | ⟨hinsp, _⟩
+  · unfold St.integ_allows le_integ integRank at hallow
+    rw [hemission, hfloor] at hallow
+    simp at hallow
+  · unfold St.integ_inspects le_integ integRank at hinsp
+    rw [hemission, hinspect] at hinsp
+    simp at hinsp
+
 end Tzimtzum

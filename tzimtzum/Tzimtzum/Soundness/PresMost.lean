@@ -1,6 +1,6 @@
 import Tzimtzum.Soundness.Common
 
-/-! # C0 — initiation + the ten cascade-discharged actions
+/-! # C0 — initiation + the eleven cascade-discharged actions
 
 Every action whose preservation VCs the `kav_discharge` cascade closes outright (no budget
 witness to reconstruct). The budget-touching actions (`invoke_complete_endorsed`,
@@ -94,5 +94,12 @@ theorem pres_sentinel_elevate_taint (s s' : St AgentId ToolId InvocationId CapKi
   simp only [Kav.close2] at hn
   obtain ⟨a, l, hg, hn⟩ := hn
   kav_discharge sentinel_elevate_taint
+
+theorem pres_sentinel_degrade_integrity (s s' : St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId)
+    (hinv : allInv s)
+    (hn : (Kav.close2 sentinel_degrade_integrity).next s s') : allInv s' := by
+  simp only [Kav.close2] at hn
+  obtain ⟨a, l, hg, hn⟩ := hn
+  kav_discharge sentinel_degrade_integrity
 
 end Tzimtzum

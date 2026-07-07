@@ -23,7 +23,7 @@ theorem hpres_bundle : ∀ na ∈ ksystem.actions, ∀ s s',
   intro na hmem s s' hinv _hg hn
   simp only [ksystem, system, List.mem_cons, List.not_mem_nil, or_false] at hmem
   rcases hmem with
-    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact pres_register_tool s s' hinv hn
   · exact pres_unregister_tool s s' hinv hn
   · exact pres_load_instruction s s' hinv hn
@@ -37,6 +37,7 @@ theorem hpres_bundle : ∀ na ∈ ksystem.actions, ∀ s s',
   · exact pres_return_endorsed s s' hinv hn
   · exact pres_return_unendorsed s s' hinv hn
   · exact pres_sentinel_elevate_taint s s' hinv hn
+  · exact pres_sentinel_degrade_integrity s s' hinv hn
   · exact pres_sentinel_credit_budget s s' hinv hn
   · exact pres_grant_override s s' hinv hn
 
@@ -70,7 +71,7 @@ theorem hpres_bundleP :
   intro na hmem s s' hinv _hg hn
   simp only [system, List.mem_cons, List.not_mem_nil, or_false] at hmem
   rcases hmem with
-    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact pres_register_tool s s' hinv hn
   · exact pres_unregister_tool s s' hinv hn
   · exact pres_load_instruction s s' hinv hn
@@ -84,6 +85,7 @@ theorem hpres_bundleP :
   · exact pres_return_endorsed s s' hinv hn
   · exact pres_return_unendorsed s s' hinv hn
   · exact pres_sentinel_elevate_taint s s' hinv hn
+  · exact pres_sentinel_degrade_integrity s s' hinv hn
   · exact pres_sentinel_credit_budget s s' hinv hn
   · exact pres_grant_override s s' hinv hn
 

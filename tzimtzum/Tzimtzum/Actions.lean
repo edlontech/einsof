@@ -108,8 +108,8 @@ kav_action cascade_revoke (child prnt : AgentId) :
   flow_override := fun A T L => s.flow_override A T L ∧ A ≠ child
 
 -- invoke_start (Veil lines 550-606). THE BIG ONE: freshness + attestation guards,
--- CHECK 1 + 2a + 2b + 2c + 3, override_used full-redefinition (clauses 2a/2c/2b), and the
--- in_flight point-set.
+-- CHECK 1 + 2a + 2b + 2c + 3 + 4a + 4b + 4c, override_used full-redefinition (clauses
+-- 2a/2c/2b), and the in_flight point-set.
 -- Eager consumption (design doc "Override consumption semantics"): an armed override is
 -- marked used whenever the gate examined a pair it was armed for, regardless of whether
 -- another arm (ALLOW / INSPECT+gate) would have admitted the flow — no negated gate arms,
@@ -118,6 +118,10 @@ kav_action cascade_revoke (child prnt : AgentId) :
 -- `invocation_egress` attestation ride a new call; narrowing/coverage keep the attested
 -- egress anchored to (and, on egress-bearing tools, non-vacuously covering) the tool's
 -- declared set, so CHECK 2 can gate over the attested set instead of the static one.
+-- CHECK 4 a/b/c (design §5.3) mirror CHECK 2's three sub-checks on the integrity side; all
+-- three needed for inductiveness of the pairwise in-flight invariant including the self-pair
+-- (Task 14). The "web_fetch completes while delete_repo is in flight" hazard is CHECK 4b. No
+-- override arm anywhere — endorsement is the only way up.
 kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
     St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
   require s.agent_active a
@@ -160,6 +164,26 @@ kav_action invoke_start (a : AgentId) (tool : ToolId) (inv : InvocationId) :
           ∧ ¬ s.override_used a tool (s.tool_conf_floor tool))
   -- CHECK 3: Authorizer gate, keyed on this invocation.
   require s.invocation_authorized inv
+  -- CHECK 4 a/b/c: integrity gate (mirrors CHECK 2's three sub-checks on the integrity
+  -- side — all three needed for inductiveness of the pairwise in-flight invariant
+  -- including the self-pair, Task 14). NO override arm anywhere: endorsement is the only
+  -- way up (design §3 non-goal, §5.3).
+  -- CHECK 4a: speculative integrity (existing + in-flight emissions) × new tool's floor.
+  require ∀ L,
+    Tzimtzum.speculative_integ s a L →
+      s.integ_allows L tool ∨ (s.integ_inspects L tool ∧ s.invocation_gate_passes inv)
+  -- CHECK 4b: new tool's emission × every in-flight tool's floor (the "web_fetch
+  -- completes while delete_repo is in flight" hazard). The vouch keys the IN-FLIGHT
+  -- invocation I — the one whose floor is being crossed, mirroring CHECK 2b's vouch of I.
+  require ∀ I,
+    s.in_flight a I →
+      s.integ_allows (s.tool_output_integ tool) (s.invocation_tool I)
+      ∨ (s.integ_inspects (s.tool_output_integ tool) (s.invocation_tool I)
+          ∧ s.invocation_gate_passes I)
+  -- CHECK 4c: new tool's own emission × its own floor.
+  require
+    s.integ_allows (s.tool_output_integ tool) tool
+    ∨ (s.integ_inspects (s.tool_output_integ tool) tool ∧ s.invocation_gate_passes inv)
   override_used := fun A T L =>
     s.override_used A T L
     -- 2a: new tool armed against existing speculative taint L
@@ -298,6 +322,21 @@ kav_action sentinel_elevate_taint (a : AgentId) (l : ConfLevel) :
            ∧ s.flow_override a (s.invocation_tool I) l))
   taint_levels := fun A L => s.taint_levels A L ∨ (A = a ∧ L = l)
 
+-- sentinel_degrade_integrity (design §5.6, dual of `sentinel_elevate_taint`). The platform
+-- reports ingestion at level `l` (an LLM completion over degraded context, or content
+-- delivery) — inserts `l` into `integ_levels`, gated against every in-flight tool's floor
+-- (graduated, vouchable). Blocked degrade = the Warden must HOLD the ingestion, never skip
+-- the record (design §6 platform obligation: an in-flight invocation's parameters predate
+-- the ingestion). NO override arm — endorsement is the only way up.
+kav_action sentinel_degrade_integrity (a : AgentId) (l : IntegLevel) :
+    St AgentId ToolId InvocationId CapKind EgressKind IssuerId InstructionId where
+  require s.agent_active a
+  require ∀ I,
+    s.in_flight a I →
+      s.integ_allows l (s.invocation_tool I)
+      ∨ (s.integ_inspects l (s.invocation_tool I) ∧ s.invocation_gate_passes I)
+  integ_levels := fun A L => s.integ_levels A L ∨ (A = a ∧ L = l)
+
 -- sentinel_credit_budget (Veil lines 780-784). Capability-gated budget credit of `n`,
 -- saturating at capacity (a full refresh = credit `budget_capacity`).
 open Classical in
@@ -351,6 +390,7 @@ def system : Kav.TransitionSystem
       , ("return_endorsed",            Kav.close3 return_endorsed)
       , ("return_unendorsed",          Kav.close2 return_unendorsed)
       , ("sentinel_elevate_taint",     Kav.close2 sentinel_elevate_taint)
+      , ("sentinel_degrade_integrity", Kav.close2 sentinel_degrade_integrity)
       , ("sentinel_credit_budget",     Kav.close2 sentinel_credit_budget)
       , ("grant_override",             Kav.close4 grant_override) ] }
 
