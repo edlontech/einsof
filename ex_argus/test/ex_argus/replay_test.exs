@@ -12,7 +12,10 @@ defmodule ExArgus.ReplayTest do
           egress: [:network_external],
           conf_floor: :public,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: allow_ceiling,
@@ -27,7 +30,7 @@ defmodule ExArgus.ReplayTest do
     {:delegate, ["root", "a1"]},
     {:grant_capability, ["root", "a1", :network_egress]},
     {:sentinel_elevate_taint, ["a1", :sensitive, %{}]},
-    {:invoke_start, ["a1", "send_email", "i1", true, %{}]}
+    {:invoke_start, ["a1", "send_email", "i1", true, %{}, [:network_external]]}
   ]
 
   test "run returns one outcome per entry and threads state through" do

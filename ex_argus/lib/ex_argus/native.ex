@@ -37,8 +37,17 @@ defmodule ExArgus.Native do
   def grant_override(_state, _bg, _granter, _target, _tool, _level),
     do: :erlang.nif_error(:nif_not_loaded)
 
-  def invoke_start(_s, _bg, _agent, _tool, _inv, _authorizer_allows, _content_gate, _attested_egress),
-    do: :erlang.nif_error(:nif_not_loaded)
+  def invoke_start(
+        _s,
+        _bg,
+        _agent,
+        _tool,
+        _inv,
+        _authorizer_allows,
+        _content_gate,
+        _attested_egress
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
 
   def invoke_complete(_s, _bg, _agent, _inv, _conformance_conforms),
     do: :erlang.nif_error(:nif_not_loaded)
@@ -52,8 +61,17 @@ defmodule ExArgus.Native do
   def sentinel_degrade_integrity(_s, _bg, _agent, _level, _content_gate),
     do: :erlang.nif_error(:nif_not_loaded)
 
-  def explain_invoke(_s, _bg, _agent, _tool, _inv, _authorizer_allows, _content_gate, _attested_egress),
-    do: :erlang.nif_error(:nif_not_loaded)
+  def explain_invoke(
+        _s,
+        _bg,
+        _agent,
+        _tool,
+        _inv,
+        _authorizer_allows,
+        _content_gate,
+        _attested_egress
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
 
   def explain_return_unendorsed(_s, _bg, _child, _parent, _content_gate),
     do: :erlang.nif_error(:nif_not_loaded)

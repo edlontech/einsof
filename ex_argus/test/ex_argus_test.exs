@@ -17,7 +17,7 @@ defmodule ExArgusTest do
     # the NIF encode/decode, and this golden list together.
     @golden_fields ~w(
       agent_active agent_budget agent_cap agent_instruction agent_parent
-      gh_taint_invoked gh_taint_received in_flight invocation_tool
+      integ_levels in_flight invocation_egress invocation_tool invocation_used
       flow_override override_used taint_levels tool_registered
     )a
 

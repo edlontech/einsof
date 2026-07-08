@@ -10,10 +10,11 @@ defmodule ExArgus.Offline do
 
   Each function returns `{:ok, new_state, action}` or `{:error, reason}`. Oracle verdicts
   for the oracle-consuming transitions are passed in: `invoke_start` takes a boolean
-  authorizer verdict, `invoke_complete` and `return_endorsed` take a boolean conformance
-  verdict, and the gate-consuming transitions take a `%{tool => boolean}` content-gate
-  decision map. Use `content_gate_targets/2` or `content_gate_map/3` to compute exactly
-  which tools need a verdict.
+  authorizer verdict plus the invocation's attested egress kinds, `invoke_complete` and
+  `return_endorsed` take a boolean conformance verdict (`return_endorsed` also takes the
+  declared `clvl`/`ilvl` levels), and the gate-consuming transitions take a
+  `%{invocation_id => boolean}` content-gate decision map. Use `content_gate_targets/2` or
+  `content_gate_map/3` to compute exactly which invocations need a verdict.
   """
 
   alias ExArgus.Kernel.State
@@ -55,7 +56,14 @@ defmodule ExArgus.Offline do
   | `:not_conforming` | A cross-boundary endorsed return failed the runtime conformance oracle. |
   | `:budget_exhausted` | The declassification budget is exhausted. |
   | `:missing_tool_binding` | An in-flight invocation has no tool binding. |
+  | `:invocation_replayed` | This invocation id has been used before (freshness). |
+  | `:attestation_invalid` | The attested egress is not a subset of the tool's declared egress, or an egress-bearing tool was attested empty (narrowing/coverage). |
+  | `:integrity_floor_denied` | The dual integrity gate (CHECK 4a/4b/4c) denied on a below-floor level. |
+  | `:lever_integrity_denied` | The declassifying child's held integrity is below the shared lever floor. |
+  | `:declaration_not_covering` | The `return_endorsed` declared `(clvl, ilvl)` does not bound the child's held taint/integrity sets. |
+  | `:tool_in_flight` | The tool has an in-flight invocation (blocks `unregister_tool`). |
   | `:event_store` | The event store failed to persist an event. |
+  | `:state_version_mismatch` | Binding-level: an event log or state snapshot is not stamped for the current `ExArgus.state_version/0` (see `ExArgus.Instance.recover/2`). |
   """
   @type error_reason ::
           :tool_not_in_theory
@@ -79,58 +87,95 @@ defmodule ExArgus.Offline do
           | :not_conforming
           | :budget_exhausted
           | :missing_tool_binding
+          | :invocation_replayed
+          | :attestation_invalid
+          | :integrity_floor_denied
+          | :lever_integrity_denied
+          | :declaration_not_covering
+          | :tool_in_flight
           | :event_store
+          | :state_version_mismatch
 
   @type outcome :: {:ok, state, tuple} | {:error, error_reason}
 
   defdelegate initial_state(), to: Native
   defdelegate register_tool(state, bg, tool), to: Native
+  defdelegate unregister_tool(state, bg, tool), to: Native
   defdelegate load_instruction(state, bg, agent, instr), to: Native
   defdelegate delegate(state, bg, grantor, grantee), to: Native
   defdelegate grant_capability(state, bg, parent, child, cap), to: Native
   defdelegate revoke(state, bg, parent, target), to: Native
   defdelegate cascade_revoke(state, bg, child, parent), to: Native
-  defdelegate return_endorsed(state, bg, child, parent, return_conforms), to: Native
   defdelegate sentinel_credit_budget(state, bg, agent, amount), to: Native
   defdelegate grant_override(state, bg, granter, target, tool, level), to: Native
 
-  defdelegate invoke_start(state, bg, agent, tool, inv, authorizer_allows, content_gate),
-    to: Native
+  @doc """
+  Cross-boundary endorsed return, declaring the confidentiality/integrity levels `clvl`/`ilvl`
+  the parent accepts responsibility for; debits the parent's budget by
+  `declass_weight(clvl) + integ_weight(ilvl)`.
+  """
+  defdelegate return_endorsed(state, bg, child, parent, return_conforms, clvl, ilvl), to: Native
+
+  @doc """
+  Starts an invocation. `attested_egress` is the egress kinds this call actually attests to
+  (narrowing: must be a subset of the tool's declared egress; coverage: an egress-bearing
+  tool cannot be admitted on an empty attestation).
+
+  A reused invocation id surfaces `:invocation_exists`, not `:invocation_replayed`: the
+  invocation-tool binding check fires first because `invocation_tool` persists.
+  `:invocation_replayed` is reachable at the transition level (an id present in
+  `invocation_used` but absent from `invocation_tool`). Replay is denied either way; a
+  reused id through `ExArgus.Instance` observes `:invocation_exists` (design §6).
+  """
+  defdelegate invoke_start(
+                state,
+                bg,
+                agent,
+                tool,
+                inv,
+                authorizer_allows,
+                content_gate,
+                attested_egress
+              ),
+              to: Native
 
   defdelegate invoke_complete(state, bg, agent, inv, conformance_conforms), to: Native
   defdelegate return_unendorsed(state, bg, child, parent, content_gate), to: Native
   defdelegate sentinel_elevate_taint(state, bg, agent, level, content_gate), to: Native
+  defdelegate sentinel_degrade_integrity(state, bg, agent, level, content_gate), to: Native
 
   @doc """
-  The `{agent, tools}` the content gate will be queried for, for a gate-consuming action.
-  The agent is fixed; only the tool varies. Returns `{agent, [tool]}`.
+  The `{agent, invocations}` the content gate will be queried for, for a gate-consuming
+  action. The agent is fixed; only the invocation id varies -- the same tool can be in
+  flight at multiple invocations with different vouches simultaneously, so the gate is keyed
+  by invocation id, never by tool. Returns `{agent, [invocation_id]}`.
   """
   @spec content_gate_targets(state, tuple) :: {id, [id]}
-  def content_gate_targets(%State{} = s, {:invoke_start, agent, tool, _inv}) do
-    {agent, Enum.uniq([tool | in_flight_tools(s, agent)])}
+  def content_gate_targets(%State{} = s, {:invoke_start, agent, _tool, inv}) do
+    {agent, [inv | in_flight_invs(s, agent)]}
   end
 
   def content_gate_targets(%State{} = s, {:return_unendorsed, _child, parent}) do
-    {parent, in_flight_tools(s, parent)}
+    {parent, in_flight_invs(s, parent)}
   end
 
   def content_gate_targets(%State{} = s, {:sentinel_elevate_taint, agent, _level}) do
-    {agent, in_flight_tools(s, agent)}
+    {agent, in_flight_invs(s, agent)}
+  end
+
+  def content_gate_targets(%State{} = s, {:sentinel_degrade_integrity, agent, _level}) do
+    {agent, in_flight_invs(s, agent)}
   end
 
   @doc """
-  Build the `%{tool => boolean}` content-gate map for an action by evaluating `fun.(agent, tool)`
-  over `content_gate_targets/2`.
+  Build the `%{invocation_id => boolean}` content-gate map for an action by evaluating
+  `fun.(agent, invocation_id)` over `content_gate_targets/2`.
   """
   @spec content_gate_map(state, tuple, (id, id -> boolean)) :: %{id => boolean}
   def content_gate_map(%State{} = s, action, fun) when is_function(fun, 2) do
-    {agent, tools} = content_gate_targets(s, action)
-    Map.new(tools, fn tool -> {tool, fun.(agent, tool)} end)
+    {agent, invs} = content_gate_targets(s, action)
+    Map.new(invs, fn inv -> {inv, fun.(agent, inv)} end)
   end
 
-  defp in_flight_tools(%State{} = s, agent) do
-    s.in_flight
-    |> Map.get(agent, [])
-    |> Enum.map(&Map.fetch!(s.invocation_tool, &1))
-  end
+  defp in_flight_invs(%State{} = s, agent), do: Map.get(s.in_flight, agent, [])
 end

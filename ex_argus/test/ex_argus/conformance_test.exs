@@ -14,7 +14,10 @@ defmodule ExArgus.ConformanceTest do
           egress: [],
           conf_floor: :internal,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{},
@@ -56,7 +59,7 @@ defmodule ExArgus.ConformanceTest do
   defp apply_action(state, bg, {:delegate, g, c}), do: Offline.delegate(state, bg, g, c)
 
   defp apply_action(state, bg, {:invoke_start, a, t, i}),
-    do: Offline.invoke_start(state, bg, a, t, i, true, %{t => true})
+    do: Offline.invoke_start(state, bg, a, t, i, true, %{i => true}, [])
 
   defp apply_action(state, bg, {:invoke_complete, a, i}),
     do: Offline.invoke_complete(state, bg, a, i, true)

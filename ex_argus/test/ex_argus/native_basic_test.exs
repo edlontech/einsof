@@ -12,7 +12,10 @@ defmodule ExArgus.NativeBasicTest do
           egress: [],
           conf_floor: :public,
           output_bounded: true,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{},

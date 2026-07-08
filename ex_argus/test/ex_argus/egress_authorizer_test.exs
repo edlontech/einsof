@@ -19,7 +19,10 @@ defmodule ExArgus.EgressAuthorizerTest do
           egress: [:network_external],
           conf_floor: :public,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{network_external: :restricted},
@@ -65,7 +68,9 @@ defmodule ExArgus.EgressAuthorizerTest do
       assert allow
 
       assert {:ok, s4, {:invoke_start, "a1", "http_get", "inv-1"}} =
-               Native.invoke_start(s3, bg, "a1", "http_get", "inv-1", allow, %{})
+               Native.invoke_start(s3, bg, "a1", "http_get", "inv-1", allow, %{}, [
+                 :network_external
+               ])
 
       assert "inv-1" in Map.fetch!(s4.in_flight, "a1")
     end
@@ -80,7 +85,9 @@ defmodule ExArgus.EgressAuthorizerTest do
       refute allow
 
       assert {:error, :authorizer_denied} =
-               Native.invoke_start(s3, bg, "a1", "http_get", "inv-1", allow, %{})
+               Native.invoke_start(s3, bg, "a1", "http_get", "inv-1", allow, %{}, [
+                 :network_external
+               ])
     end
   end
 end

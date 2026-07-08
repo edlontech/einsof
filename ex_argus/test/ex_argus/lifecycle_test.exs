@@ -12,7 +12,10 @@ defmodule ExArgus.LifecycleTest do
           egress: [],
           conf_floor: :sensitive,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{network_external: :public},
@@ -32,16 +35,16 @@ defmodule ExArgus.LifecycleTest do
     {:ok, s, _} = Offline.grant_capability(s, bg, "root", "a1", :declassify)
 
     {:ok, s, _} =
-      Offline.invoke_start(s, bg, "a1", "read_file", "inv-1", true, %{"read_file" => true})
+      Offline.invoke_start(s, bg, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
 
     {:ok, s, _} = Offline.invoke_complete(s, bg, "a1", "inv-1", true)
     # bounded=false => not the zero-taint path => taint at the tool floor
     assert :sensitive in Map.fetch!(s.taint_levels, "a1")
 
-    {:ok, s, {:return_endorsed, "a1", "root"}} =
-      Offline.return_endorsed(s, bg, "a1", "root", true)
+    {:ok, s, {:return_endorsed, "a1", "root", :sensitive, :attested}} =
+      Offline.return_endorsed(s, bg, "a1", "root", true, :sensitive, :attested)
 
-    # return_endorsed debits the recipient (root) by the flat declassification cost of 2.
+    # return_endorsed debits the recipient (root) by declass_weight(:sensitive) + integ_weight(:attested) = 2 + 0.
     assert Map.get(s.agent_budget, "root", 16) == 14
 
     {:ok, s, {:revoke, "root", "a1"}} = Offline.revoke(s, bg, "root", "a1")

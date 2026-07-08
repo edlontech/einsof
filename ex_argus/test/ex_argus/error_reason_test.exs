@@ -10,7 +10,8 @@ defmodule ExArgus.ErrorReasonTest do
   alias ExArgus.Native
 
   # The closed set of kernel-transition denials, mirrored from argus-kernel/src/error.rs
-  # (the `KernelError` enum, the single source of truth). Keep in sync with that enum.
+  # (the `KernelError` enum, the single source of truth) plus the binding-level
+  # `:state_version_mismatch`. Keep in sync with that enum.
   @error_reasons ~w(
     tool_not_in_theory tool_already_registered tool_not_registered
     untrusted_issuer instruction_issuer_unknown
@@ -19,7 +20,9 @@ defmodule ExArgus.ErrorReasonTest do
     capability_missing
     invocation_exists invocation_in_flight not_in_flight child_has_in_flight target_has_in_flight
     flow_gate_blocked authorizer_denied budget_exhausted not_conforming
-    missing_tool_binding event_store
+    missing_tool_binding invocation_replayed attestation_invalid integrity_floor_denied
+    lever_integrity_denied declaration_not_covering tool_in_flight event_store
+    state_version_mismatch
   )a
 
   defp bg do
@@ -30,21 +33,30 @@ defmodule ExArgus.ErrorReasonTest do
           egress: [],
           conf_floor: :sensitive,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         },
         "send_email" => %{
           capabilities: [:network_egress],
           egress: [:network_external],
           conf_floor: :public,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         },
         "evil_tool" => %{
           capabilities: [],
           egress: [],
           conf_floor: :public,
           output_bounded: false,
-          issuer: "untrusted"
+          issuer: "untrusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{network_external: :public},
@@ -55,9 +67,9 @@ defmodule ExArgus.ErrorReasonTest do
   end
 
   describe "the error_reason contract" do
-    test "documents exactly 22 denial atoms" do
-      assert length(@error_reasons) == 22
-      assert length(Enum.uniq(@error_reasons)) == 22
+    test "documents exactly 29 denial atoms" do
+      assert length(@error_reasons) == 29
+      assert length(Enum.uniq(@error_reasons)) == 29
     end
 
     test "ExArgus.Offline.error_reason/0 declares exactly the documented closed set" do
@@ -101,7 +113,8 @@ defmodule ExArgus.ErrorReasonTest do
                  "read_file",
                  "i",
                  true,
-                 %{}
+                 %{},
+                 []
                )
     end
 
@@ -119,7 +132,7 @@ defmodule ExArgus.ErrorReasonTest do
       {:ok, s1, _} = Native.delegate(Native.initial_state(), bg(), "root", "a1")
 
       assert {:error, :tool_not_registered} =
-               Native.invoke_start(s1, bg(), "a1", "read_file", "i", true, %{})
+               Native.invoke_start(s1, bg(), "a1", "read_file", "i", true, %{}, [])
     end
 
     test "capability_missing: crediting budget without the credit-budget capability" do
@@ -136,21 +149,39 @@ defmodule ExArgus.ErrorReasonTest do
       s = authorized_agent_state()
 
       {:ok, s, _} =
-        Native.invoke_start(s, bg(), "a1", "read_file", "inv-1", true, %{"read_file" => true})
+        Native.invoke_start(s, bg(), "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
 
       assert {:error, :invocation_exists} =
-               Native.invoke_start(s, bg(), "a1", "read_file", "inv-1", true, %{
-                 "read_file" => true
-               })
+               Native.invoke_start(
+                 s,
+                 bg(),
+                 "a1",
+                 "read_file",
+                 "inv-1",
+                 true,
+                 %{
+                   "inv-1" => true
+                 },
+                 []
+               )
     end
 
     test "authorizer_denied: invoke_start with a denying authorizer" do
       s = authorized_agent_state()
 
       assert {:error, :authorizer_denied} =
-               Native.invoke_start(s, bg(), "a1", "read_file", "inv-1", false, %{
-                 "read_file" => true
-               })
+               Native.invoke_start(
+                 s,
+                 bg(),
+                 "a1",
+                 "read_file",
+                 "inv-1",
+                 false,
+                 %{
+                   "inv-1" => true
+                 },
+                 []
+               )
     end
 
     test "parent_still_active: cascade_revoke under a still-active parent" do
@@ -163,7 +194,7 @@ defmodule ExArgus.ErrorReasonTest do
       s = authorized_agent_state()
 
       {:ok, s, _} =
-        Native.invoke_start(s, bg(), "a1", "read_file", "inv-1", true, %{"read_file" => true})
+        Native.invoke_start(s, bg(), "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
 
       assert {:error, :child_has_in_flight} = Native.return_unendorsed(s, bg(), "a1", "root", %{})
     end
@@ -175,15 +206,22 @@ defmodule ExArgus.ErrorReasonTest do
 
       # Complete a non-bounded, non-conforming read => a1 is tainted at :sensitive.
       {:ok, s, _} =
-        Native.invoke_start(s, bg(), "a1", "read_file", "inv-r", true, %{"read_file" => true})
+        Native.invoke_start(s, bg(), "a1", "read_file", "inv-r", true, %{"inv-r" => true}, [])
 
       {:ok, s, _} = Native.invoke_complete(s, bg(), "a1", "inv-r", false)
 
       # Sensitive egress to network_external is DENY (default), so the gate blocks send_email.
       assert {:error, :flow_gate_blocked} =
-               Native.invoke_start(s, bg(), "a1", "send_email", "inv-e", true, %{
-                 "send_email" => false
-               })
+               Native.invoke_start(
+                 s,
+                 bg(),
+                 "a1",
+                 "send_email",
+                 "inv-e",
+                 true,
+                 %{"inv-e" => false},
+                 [:network_external]
+               )
     end
   end
 

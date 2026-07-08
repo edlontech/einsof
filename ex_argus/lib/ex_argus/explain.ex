@@ -19,8 +19,17 @@ defmodule ExArgus.Explain do
           authorizer_denied: boolean
         }
 
-  defdelegate explain_invoke(state, bg, agent, tool, inv, authorizer_allows, content_gate),
-    to: Native
+  defdelegate explain_invoke(
+                state,
+                bg,
+                agent,
+                tool,
+                inv,
+                authorizer_allows,
+                content_gate,
+                attested_egress
+              ),
+              to: Native
 
   defdelegate explain_return_unendorsed(state, bg, child, parent, content_gate), to: Native
 

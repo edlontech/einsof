@@ -11,7 +11,10 @@ defmodule ExArgus.ExplainTest do
         egress: [:network_external],
         conf_floor: :public,
         output_bounded: false,
-        issuer: "trusted"
+        issuer: "trusted",
+        integ_floor: :untrusted,
+        integ_inspect_floor: :untrusted,
+        output_integ: :attested
       }
     },
     allow_ceiling: %{network_external: :public},
@@ -33,9 +36,15 @@ defmodule ExArgus.ExplainTest do
     state = tainted_state()
 
     assert {:error, :flow_gate_blocked} =
-             Offline.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{})
+             Offline.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{}, [
+               :network_external
+             ])
 
-    report = Explain.explain_invoke(state, @bg, "a1", "send_email", "i1", true, %{})
+    report =
+      Explain.explain_invoke(state, @bg, "a1", "send_email", "i1", true, %{}, [
+        :network_external
+      ])
+
     assert report.verdict == :flow_gate_blocked
     assert Explain.denied?(report)
 
@@ -53,9 +62,16 @@ defmodule ExArgus.ExplainTest do
     {:ok, state, _} = Offline.delegate(state, @bg, "root", "a1")
     {:ok, state, _} = Offline.grant_capability(state, @bg, "root", "a1", :network_egress)
 
-    assert {:ok, _, _} = Offline.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{})
+    assert {:ok, _, _} =
+             Offline.invoke_start(state, @bg, "a1", "send_email", "i1", true, %{}, [
+               :network_external
+             ])
 
-    report = Explain.explain_invoke(state, @bg, "a1", "send_email", "i1", true, %{})
+    report =
+      Explain.explain_invoke(state, @bg, "a1", "send_email", "i1", true, %{}, [
+        :network_external
+      ])
+
     assert report.verdict == nil
     refute Explain.denied?(report)
   end

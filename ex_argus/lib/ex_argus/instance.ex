@@ -25,9 +25,9 @@ defmodule ExArgus.Instance do
   @type outcome :: {:ok, non_neg_integer, tuple} | {:error, Offline.error_reason()}
 
   @recoverable_transitions ~w(
-    register_tool load_instruction delegate grant_capability revoke cascade_revoke
-    return_endorsed sentinel_credit_budget grant_override invoke_start invoke_complete
-    return_unendorsed sentinel_elevate_taint
+    register_tool unregister_tool load_instruction delegate grant_capability revoke
+    cascade_revoke return_endorsed sentinel_credit_budget grant_override invoke_start
+    invoke_complete return_unendorsed sentinel_elevate_taint sentinel_degrade_integrity
   )a
 
   @doc "Create a fresh instance at the initial state, with `bg` bound for its lifetime."
@@ -54,7 +54,7 @@ defmodule ExArgus.Instance do
   state, audit completeness -- is hash-chain / mesh territory.) For the lenient
   skip-and-continue mode, use offline `ExArgus.Replay.run/2`.
 
-  An entry whose `fun` is not one of the 13 kernel transitions aborts immediately with
+  An entry whose `fun` is not one of the 15 kernel transitions aborts immediately with
   `reason: :unknown_transition`; no `apply` is attempted.
   """
   @spec recover(background, [entry]) :: {:ok, t} | {:error, recovery_error}
@@ -90,6 +90,7 @@ defmodule ExArgus.Instance do
   defdelegate seq(handle), to: Native, as: :instance_seq
 
   defdelegate register_tool(handle, tool), to: Native, as: :instance_register_tool
+  defdelegate unregister_tool(handle, tool), to: Native, as: :instance_unregister_tool
   defdelegate load_instruction(handle, agent, instr), to: Native, as: :instance_load_instruction
   defdelegate delegate(handle, grantor, grantee), to: Native, as: :instance_delegate
 
@@ -100,7 +101,7 @@ defmodule ExArgus.Instance do
   defdelegate revoke(handle, parent, target), to: Native, as: :instance_revoke
   defdelegate cascade_revoke(handle, child, parent), to: Native, as: :instance_cascade_revoke
 
-  defdelegate return_endorsed(handle, child, parent, return_conforms),
+  defdelegate return_endorsed(handle, child, parent, return_conforms, clvl, ilvl),
     to: Native,
     as: :instance_return_endorsed
 
@@ -112,9 +113,17 @@ defmodule ExArgus.Instance do
     to: Native,
     as: :instance_grant_override
 
-  defdelegate invoke_start(handle, agent, tool, inv, authorizer_allows, content_gate),
-    to: Native,
-    as: :instance_invoke_start
+  defdelegate invoke_start(
+                handle,
+                agent,
+                tool,
+                inv,
+                authorizer_allows,
+                content_gate,
+                attested_egress
+              ),
+              to: Native,
+              as: :instance_invoke_start
 
   defdelegate invoke_complete(handle, agent, inv, conformance_conforms),
     to: Native,
@@ -128,22 +137,35 @@ defmodule ExArgus.Instance do
     to: Native,
     as: :instance_sentinel_elevate_taint
 
+  defdelegate sentinel_degrade_integrity(handle, agent, level, content_gate),
+    to: Native,
+    as: :instance_sentinel_degrade_integrity
+
   @doc """
-  The `{agent, tools}` the content gate will be queried for, for a gate-consuming action,
-  computed over the live state projection. Delegates to the pure `ExArgus.Offline` logic.
+  The `{agent, invocations}` the content gate will be queried for, for a gate-consuming
+  action, computed over the live state projection. Delegates to the pure `ExArgus.Offline`
+  logic.
   """
   @spec content_gate_targets(t, tuple) :: {id, [id]}
   def content_gate_targets(handle, action),
     do: Offline.content_gate_targets(state(handle), action)
 
-  @doc "Build the `%{tool => boolean}` content-gate map over the live state projection."
+  @doc "Build the `%{invocation_id => boolean}` content-gate map over the live state projection."
   @spec content_gate_map(t, tuple, (id, id -> boolean)) :: %{id => boolean}
   def content_gate_map(handle, action, fun) when is_function(fun, 2),
     do: Offline.content_gate_map(state(handle), action, fun)
 
-  defdelegate explain_invoke(handle, agent, tool, inv, authorizer_allows, content_gate),
-    to: Native,
-    as: :instance_explain_invoke
+  defdelegate explain_invoke(
+                handle,
+                agent,
+                tool,
+                inv,
+                authorizer_allows,
+                content_gate,
+                attested_egress
+              ),
+              to: Native,
+              as: :instance_explain_invoke
 
   defdelegate explain_return_unendorsed(handle, child, parent, content_gate),
     to: Native,

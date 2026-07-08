@@ -13,7 +13,10 @@ defmodule ExArgus.NativeOracleTest do
           egress: [],
           conf_floor: :sensitive,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{},
@@ -31,7 +34,7 @@ defmodule ExArgus.NativeOracleTest do
     {:ok, s3, _} = Native.grant_capability(s2, bg, "root", "a1", :filesystem_read)
 
     assert {:ok, s4, {:invoke_start, "a1", "read_file", "inv-1"}} =
-             Native.invoke_start(s3, bg, "a1", "read_file", "inv-1", true, %{"read_file" => true})
+             Native.invoke_start(s3, bg, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
 
     assert "inv-1" in Map.fetch!(s4.in_flight, "a1")
     assert Map.fetch!(s4.invocation_tool, "inv-1") == "read_file"
@@ -45,7 +48,16 @@ defmodule ExArgus.NativeOracleTest do
     {:ok, s3, _} = Native.grant_capability(s2, bg, "root", "a1", :filesystem_read)
 
     assert {:error, :authorizer_denied} =
-             Native.invoke_start(s3, bg, "a1", "read_file", "inv-1", false, %{"read_file" => true})
+             Native.invoke_start(
+               s3,
+               bg,
+               "a1",
+               "read_file",
+               "inv-1",
+               false,
+               %{"inv-1" => true},
+               []
+             )
   end
 
   test "invoke_complete on a non-conforming non-bounded tool adds taint" do
@@ -56,9 +68,9 @@ defmodule ExArgus.NativeOracleTest do
     {:ok, s3, _} = Native.grant_capability(s2, bg, "root", "a1", :filesystem_read)
 
     {:ok, s4, _} =
-      Native.invoke_start(s3, bg, "a1", "read_file", "inv-1", true, %{"read_file" => true})
+      Native.invoke_start(s3, bg, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
 
-    assert {:ok, s5, {:invoke_complete, "a1", "inv-1"}} =
+    assert {:ok, s5, {:invoke_complete, "a1", "inv-1", false}} =
              Native.invoke_complete(s4, bg, "a1", "inv-1", false)
 
     assert :sensitive in Map.fetch!(s5.taint_levels, "a1")

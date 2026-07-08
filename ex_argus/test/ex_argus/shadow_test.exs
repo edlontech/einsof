@@ -12,7 +12,10 @@ defmodule ExArgus.ShadowTest do
           egress: [:network_external],
           conf_floor: :public,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: allow_ceiling,
@@ -40,7 +43,7 @@ defmodule ExArgus.ShadowTest do
 
     result =
       Shadow.compare(live_bg, candidate_bg, fn b ->
-        Offline.invoke_start(state, b, "a1", "send_email", "i1", true, %{})
+        Offline.invoke_start(state, b, "a1", "send_email", "i1", true, %{}, [:network_external])
       end)
 
     assert {:error, :flow_gate_blocked} = result.live
@@ -54,7 +57,7 @@ defmodule ExArgus.ShadowTest do
 
     result =
       Shadow.compare(live_bg, live_bg, fn b ->
-        Offline.invoke_start(state, b, "a1", "send_email", "i1", true, %{})
+        Offline.invoke_start(state, b, "a1", "send_email", "i1", true, %{}, [:network_external])
       end)
 
     assert result.decision == :same

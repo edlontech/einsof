@@ -20,7 +20,7 @@ defmodule ExArgus.InstanceTest do
     {:delegate, ["root", "a1"]},
     {:grant_capability, ["root", "a1", :filesystem_read]},
     {:grant_capability, ["root", "a1", :declassify]},
-    {:invoke_start, ["a1", "read_file", "inv-1", true, %{"read_file" => true}]},
+    {:invoke_start, ["a1", "read_file", "inv-1", true, %{"inv-1" => true}, []]},
     {:invoke_complete, ["a1", "inv-1", true]}
   ]
 
@@ -32,7 +32,10 @@ defmodule ExArgus.InstanceTest do
           egress: [],
           conf_floor: :sensitive,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{network_external: :public},
@@ -52,7 +55,7 @@ defmodule ExArgus.InstanceTest do
     assert {:ok, 4, _} = Instance.grant_capability(h, "root", "a1", :declassify)
 
     assert {:ok, 5, _} =
-             Instance.invoke_start(h, "a1", "read_file", "inv-1", true, %{"read_file" => true})
+             Instance.invoke_start(h, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
 
     assert {:ok, 6, _} = Instance.invoke_complete(h, "a1", "inv-1", true)
 
@@ -127,15 +130,93 @@ defmodule ExArgus.InstanceTest do
     {:ok, _, _} = Instance.delegate(h, "root", "a1")
 
     snapshot = Instance.state(h)
-    gate = %{"read_file" => true}
+    gate = %{"inv-1" => true}
 
-    live = Instance.explain_invoke(h, "a1", "read_file", "inv-1", true, gate)
+    live = Instance.explain_invoke(h, "a1", "read_file", "inv-1", true, gate, [])
 
     offline =
-      ExArgus.Explain.explain_invoke(snapshot, bg(), "a1", "read_file", "inv-1", true, gate)
+      ExArgus.Explain.explain_invoke(snapshot, bg(), "a1", "read_file", "inv-1", true, gate, [])
 
     assert live == offline
     assert Instance.denied?(live) == (live.verdict != nil)
+  end
+
+  test "invoke_start with a reused invocation id returns :invocation_exists" do
+    h = Instance.new(bg())
+    {:ok, _, _} = Instance.register_tool(h, "read_file")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :filesystem_read)
+
+    {:ok, _, _} =
+      Instance.invoke_start(h, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
+
+    assert {:error, :invocation_exists} =
+             Instance.invoke_start(h, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
+  end
+
+  test "unregister_tool removes a registered, idle tool" do
+    h = Instance.new(bg())
+    {:ok, _, _} = Instance.register_tool(h, "read_file")
+
+    assert {:ok, _, {:unregister_tool, "read_file"}} = Instance.unregister_tool(h, "read_file")
+    refute "read_file" in Instance.state(h).tool_registered
+  end
+
+  test "unregister_tool is denied with :tool_in_flight while the tool has an in-flight invocation" do
+    h = Instance.new(bg())
+    {:ok, _, _} = Instance.register_tool(h, "read_file")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :filesystem_read)
+
+    {:ok, _, _} =
+      Instance.invoke_start(h, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
+
+    assert {:error, :tool_in_flight} = Instance.unregister_tool(h, "read_file")
+  end
+
+  test "sentinel_degrade_integrity degrades an idle agent's held integrity" do
+    h = Instance.new(bg())
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+
+    assert {:ok, _, {:sentinel_degrade_integrity, "a1", :standard}} =
+             Instance.sentinel_degrade_integrity(h, "a1", :standard, %{})
+
+    assert :standard in Map.fetch!(Instance.state(h).integ_levels, "a1")
+  end
+
+  test "sentinel_degrade_integrity is denied when an in-flight tool's floor would be violated" do
+    h = Instance.new(integ_bg())
+    {:ok, _, _} = Instance.register_tool(h, "delete_repo")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+
+    {:ok, _, _} =
+      Instance.invoke_start(h, "a1", "delete_repo", "inv-1", true, %{"inv-1" => true}, [])
+
+    # "delete_repo"'s integ_floor and integ_inspect_floor are both :trusted; degrading a1 to
+    # :untrusted sits below both, so no gate vouch could rescue it.
+    assert {:error, :integrity_floor_denied} =
+             Instance.sentinel_degrade_integrity(h, "a1", :untrusted, %{})
+  end
+
+  defp integ_bg do
+    %Background{
+      tools: %{
+        "delete_repo" => %{
+          capabilities: [],
+          egress: [],
+          conf_floor: :public,
+          output_bounded: true,
+          issuer: "trusted",
+          integ_floor: :trusted,
+          integ_inspect_floor: :trusted,
+          output_integ: :attested
+        }
+      },
+      allow_ceiling: %{},
+      inspect_ceiling: %{},
+      trusted_issuers: ["trusted"],
+      instruction_issuer: %{}
+    }
   end
 
   defp offline_decision({:ok, _state, action}), do: {:ok, action}
@@ -157,7 +238,7 @@ defmodule ExArgus.InstanceTest do
       end),
       StreamData.bind(agent, fn g ->
         StreamData.constant(
-          {:invoke_start, [g, "read_file", "inv-#{g}", true, %{"read_file" => true}]}
+          {:invoke_start, [g, "read_file", "inv-#{g}", true, %{"inv-#{g}" => true}, []]}
         )
       end),
       StreamData.bind(agent, fn g ->
@@ -201,7 +282,10 @@ defmodule ExArgus.InstanceTest do
           egress: [:network_external],
           conf_floor: :public,
           output_bounded: false,
-          issuer: "trusted"
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
         }
       },
       allow_ceiling: %{network_external: :public},
@@ -221,12 +305,16 @@ defmodule ExArgus.InstanceTest do
     {:ok, _, _} = Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
 
     assert {:ok, _, {:invoke_start, "a1", "send_email", _}} =
-             Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"send_email" => true})
+             Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"inv-1" => true}, [
+               :network_external
+             ])
 
     {:ok, _, _} = Instance.invoke_complete(h, "a1", "inv-1", true)
 
     assert {:error, :flow_gate_blocked} =
-             Instance.invoke_start(h, "a1", "send_email", "inv-2", true, %{"send_email" => true})
+             Instance.invoke_start(h, "a1", "send_email", "inv-2", true, %{"inv-2" => true}, [
+               :network_external
+             ])
   end
 
   test "grant_override re-arm refused while target has in-flight invocation" do
@@ -238,7 +326,9 @@ defmodule ExArgus.InstanceTest do
     {:ok, _, _} = Instance.sentinel_elevate_taint(h, "a1", :sensitive, %{})
 
     {:ok, _, _} =
-      Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"send_email" => true})
+      Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"inv-1" => true}, [
+        :network_external
+      ])
 
     assert {:error, :target_has_in_flight} =
              Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
@@ -253,14 +343,18 @@ defmodule ExArgus.InstanceTest do
     {:ok, _, _} = Instance.sentinel_elevate_taint(h, "a1", :sensitive, %{})
 
     {:ok, _, _} =
-      Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"send_email" => true})
+      Instance.invoke_start(h, "a1", "send_email", "inv-1", true, %{"inv-1" => true}, [
+        :network_external
+      ])
 
     {:ok, _, _} = Instance.invoke_complete(h, "a1", "inv-1", true)
 
     {:ok, _, _} = Instance.grant_override(h, "root", "a1", "send_email", :sensitive)
 
     assert {:ok, _, {:invoke_start, "a1", "send_email", _}} =
-             Instance.invoke_start(h, "a1", "send_email", "inv-2", true, %{"send_email" => true})
+             Instance.invoke_start(h, "a1", "send_email", "inv-2", true, %{"inv-2" => true}, [
+               :network_external
+             ])
   end
 
   test "recovery replays a log containing grant_override and reproduces state" do
