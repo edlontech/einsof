@@ -95,9 +95,10 @@ theorem init_chars (c0 : state.KernelState) (hc0 : state.KernelState.initial = .
       (∀ N C, vmsMemLast c0.agent_cap N C ↔ N = root) ∧
       vmNodupKeys c0.agent_cap ∧
       c0.agent_parent.entries.val = [] ∧ c0.taint_levels.entries.val = [] ∧
+      c0.integ_levels.entries.val = [] ∧
       c0.in_flight.entries.val = [] ∧ c0.invocation_tool.entries.val = [] ∧
-      c0.tool_registered.items.val = [] ∧ c0.gh_taint_invoked.entries.val = [] ∧
-      c0.gh_taint_received.entries.val = [] ∧ c0.agent_instruction.entries.val = [] ∧
+      c0.invocation_used.items.val = [] ∧ c0.invocation_egress.entries.val = [] ∧
+      c0.tool_registered.items.val = [] ∧ c0.agent_instruction.entries.val = [] ∧
       c0.override_used.entries.val = [] ∧ c0.flow_override.entries.val = [] ∧
       c0.agent_budget.entries.val = [] := by
   simp only [state.KernelState.initial, collections.VecSet.new, collections.VecMap.new,
@@ -133,7 +134,7 @@ theorem init_chars (c0 : state.KernelState) (hc0 : state.KernelState.initial = .
   rw [hacapEq] at hc0
   simp only [bind_tc_ok, Result.ok.injEq] at hc0
   subst hc0
-  refine ⟨root, hroot, ?_, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨root, hroot, ?_, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   · intro y; rw [haaMem y]; simp [vsMem]
   · intro N C
     show vmsMemLast acap N C ↔ N = root
@@ -151,28 +152,40 @@ theorem init_chars (c0 : state.KernelState) (hc0 : state.KernelState.initial = .
     relations (those are not constrained by `R` — they relate to the `Kernel` oracle params). The
     `return_conforms` oracle (Campaign B P2) takes its own `(child, parent)`-keyed relation `rcRel`. -/
 noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.AgentId)
-    (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop)
-    (rcRel : types.AgentId → types.AgentId → Prop) : AbsState where
+    (cgRel auRel cfRel : types.InvocationId → Prop)
+    (rcRel : types.AgentId → types.AgentId → Prop)
+    (egRel : types.InvocationId → types.EgressKind → Prop) : AbsState where
   agent_active := fun A => A = root
   agent_parent := fun _ _ => False
   agent_cap := fun A _ => A = root
   agent_instruction := fun _ _ => False
   taint_levels := fun _ _ => False
-  agent_budget := fun A L => A = root ∧ L = Tzimtzum.budget_capacity
+  integ_levels := fun _ _ => False
+  agent_budget := fun _ => Tzimtzum.budget_capacity
   in_flight := fun _ _ => False
+  invocation_used := fun _ => False
   tool_registered := fun _ => False
-  gh_taint_invoked := fun _ _ => False
-  gh_taint_received := fun _ _ => False
   override_used := fun _ _ _ => False
   tool_cap := fun t C => ∃ tm, toolMetaC bg t = some tm ∧ C ∈ tm.capabilities.items.val
   tool_egress := fun T E => E ∈ egItems bg T
   tool_conf_floor := fun t => match toolMetaC bg t with
     | some tm => confA tm.conf_floor
     | none => Tzimtzum.ConfLevel.«public»
+  tool_integ_floor := fun t => match toolMetaC bg t with
+    | some tm => integA tm.integ_floor
+    | none => Tzimtzum.IntegLevel.untrusted
+  tool_integ_inspect_floor := fun t => match toolMetaC bg t with
+    | some tm => integA tm.integ_inspect_floor
+    | none => Tzimtzum.IntegLevel.untrusted
+  tool_output_integ := fun t => match toolMetaC bg t with
+    | some tm => integA tm.output_integ
+    | none => Tzimtzum.IntegLevel.untrusted
+  lever_integ_floor := integA bg.lever_integ_floor
+  lever_integ_inspect_floor := integA bg.lever_integ_inspect_floor
   tool_output_bounded := fun t => ∃ tm, toolMetaC bg t = some tm ∧ tm.output_bounded = true
   tool_issuer := fun t => match toolMetaC bg t with | some tm => tm.issuer | none => default
   trusted_issuer := fun i => vsMem bg.trusted_issuers i
-  output_conforms := cfRel
+  invocation_conforms := cfRel
   return_conforms := rcRel
   instruction_issuer := fun i => match background.BackgroundTheory.impl.instruction_issuer bg i with
     | .ok (some iss) => iss
@@ -180,9 +193,10 @@ noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.Ag
   egress_allow_ceiling := fun E => (ceilC bg.allow_ceiling E).map confA
   egress_inspect_ceiling := fun E => (ceilC bg.inspect_ceiling E).map confA
   flow_override := fun _ _ _ => False
-  authorizer_allows := auRel
-  content_gate_passes := cgRel
+  invocation_authorized := auRel
+  invocation_gate_passes := cgRel
   invocation_tool := fun _ => default
+  invocation_egress := egRel
   root_agent := root
   cap_declassify := capability.CapKind.Declassify
   cap_credit_budget := capability.CapKind.CreditBudget
@@ -192,44 +206,46 @@ noncomputable def absInitial (bg : background.BackgroundTheory) (root : types.Ag
     which satisfies `Tzimtzum.initial`. The runtime-oracle relations are free parameters (the caller
     supplies the abstract oracle interpretation that the fidelity hypothesis pins to reality). -/
 theorem init_refines (bg : background.BackgroundTheory)
-    (cgRel auRel cfRel : types.AgentId → types.ToolId → Prop)
+    (cgRel auRel cfRel : types.InvocationId → Prop)
     (rcRel : types.AgentId → types.AgentId → Prop)
+    (egRel : types.InvocationId → types.EgressKind → Prop)
     (c0 : state.KernelState) (hc0 : state.KernelState.initial = .ok c0) :
     ∃ a0 : AbsState, Tzimtzum.initial a0 ∧ R c0 bg a0 ∧
-      a0.content_gate_passes = cgRel ∧ a0.authorizer_allows = auRel ∧ a0.output_conforms = cfRel ∧
-      a0.return_conforms = rcRel := by
-  obtain ⟨root, hroot, hactive, hcap, hcapNd, hpar, htaint, hinf, hinv, htool, hghi, hghr, hinstr,
-    hovr, hflow, hbud⟩ := init_chars c0 hc0
-  refine ⟨absInitial bg root cgRel auRel cfRel rcRel, ?_, ?_, rfl, rfl, rfl, rfl⟩
-  · -- Tzimtzum.initial
+      a0.invocation_gate_passes = cgRel ∧ a0.invocation_authorized = auRel ∧
+      a0.invocation_conforms = cfRel ∧ a0.return_conforms = rcRel := by
+  obtain ⟨root, hroot, hactive, hcap, hcapNd, hpar, htaint, hinteg, hinf, hinv, hused, hegr,
+    htool, hinstr, hovr, hflow, hbud⟩ := init_chars c0 hc0
+  refine ⟨absInitial bg root cgRel auRel cfRel rcRel egRel, ?_, ?_, rfl, rfl, rfl, rfl⟩
+  · -- Tzimtzum.initial (12 conjuncts, all definitional at `absInitial`)
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [absInitial]
-  · -- R
+  · -- R (41 conjuncts)
     refine ⟨hroot, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro x; exact (hactive x).symm
     · intro t; simp [absInitial, vsMem, htool]
     · intro C P; simp [absInitial, hpar, vmLastEntry]
     · intro N C; exact (hcap N C).symm
     · intro ag ins; simp [absInitial, vmsMemLast, hinstr, vmLastEntry]
     · intro ag L; simp [absInitial, vmsMemLast, htaint, vmLastEntry]
+    · intro ag L; simp [absInitial, vmsMemLast, hinteg, vmLastEntry]
     · intro ag I; simp [absInitial, vmsMemLast, hinf, vmLastEntry]
-    · intro ag L; simp [absInitial, vmsMemLast, hghi, vmLastEntry]
-    · intro ag L; simp [absInitial, vmsMemLast, hghr, vmLastEntry]
     · intro ag t L; simp [absInitial, vmsMemLast, hovr, vmLastEntry]
-    · intro G L hG
-      have hGr : G = root := hG
-      subst hGr
-      simp only [absInitial, budgetReadC, hbud, vmLastEntry, List.filter_nil, List.getLast?_nil,
-        budgetCapacity_val, true_and]
-      constructor
-      · rintro rfl; rfl
-      · intro h; exact h.symm
+    · -- budget: capacity everywhere, both sides
+      intro G
+      simp [absInitial, budgetReadC, hbud, vmLastEntry]
+    · -- invocation_used: both empty
+      intro I; simp [absInitial, vsMem, hused]
+    · -- invocation_egress: vacuous (nothing used)
+      intro I hI; exact absurd hI (by simp [absInitial])
     · intro t tmeta C htm
       simp only [absInitial]
       constructor
       · rintro ⟨tm, htm2, hC⟩; rw [htm, Option.some.injEq] at htm2; subst htm2; exact hC
       · intro hC; exact ⟨tmeta, htm, hC⟩
     · intro T E; exact Iff.rfl
+    · intro t tmeta htm; simp only [absInitial, htm]
+    · intro t tmeta htm; simp only [absInitial, htm]
+    · intro t tmeta htm; simp only [absInitial, htm]
     · intro t tmeta htm; simp only [absInitial, htm]
     · intro t tmeta htm
       simp only [absInitial]
@@ -255,9 +271,8 @@ theorem init_refines (bg : background.BackgroundTheory)
     · exact hcapNd
     · simp [vmNodupKeys, hinstr]
     · simp [vmNodupKeys, htaint]
+    · simp [vmNodupKeys, hinteg]
     · simp [vmNodupKeys, hinf]
-    · simp [vmNodupKeys, hghi]
-    · simp [vmNodupKeys, hghr]
     · simp [vmNodupKeys, hovr]
     · simp [vmNodupKeys, hflow]
     · simp [vmNodupKeys, hbud]
