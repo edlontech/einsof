@@ -6,7 +6,7 @@ use crate::event::KernelAction;
 use crate::state::KernelState;
 use crate::traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle};
 use crate::types::{
-    AgentId, ConfLevel, EgressKind, InstructionId, InvocationId, OverrideKey, ToolId,
+    AgentId, ConfLevel, EgressKind, InstructionId, IntegLevel, InvocationId, OverrideKey, ToolId,
     declass_weight,
 };
 
@@ -50,6 +50,33 @@ fn flow_decision(
             }
         }
     }
+}
+
+/// Outcome of an integrity-gate check at `invoke_start`'s CHECK 4 (a/b/c). ALLOW clears the
+/// floor outright; INSPECT admits with a passing vouch from the content gate; DENY otherwise.
+/// No override arm anywhere -- endorsement is the only way up (design §3 non-goal, §5.3).
+enum IntegDecision {
+    Allowed,
+    Denied,
+}
+
+/// Graduated two-verdict + vouch integrity check (dual of `flow_decision`, minus the override
+/// arm): ALLOW iff `floor.le(level)` (the level clears the floor), else INSPECT iff
+/// `inspect_floor.le(level)` and the vouched invocation's content gate passes, else DENY.
+fn integ_decision(
+    content_gate: &impl ContentGateOracle,
+    agent: &AgentId,
+    tool: &ToolId,
+    vouch_inv: &InvocationId,
+    st: &KernelState,
+    bg: &BackgroundTheory,
+    floor: IntegLevel,
+    inspect_floor: IntegLevel,
+    level: IntegLevel,
+) -> IntegDecision {
+    let allowed = floor.le(level)
+        || (inspect_floor.le(level) && content_gate.passes(agent, tool, vouch_inv, st, bg));
+    if allowed { IntegDecision::Allowed } else { IntegDecision::Denied }
 }
 
 fn clear_agent_state(st: &mut KernelState, agent: &AgentId) {
@@ -399,6 +426,78 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     // CHECK 3: authorizer gate, keyed on this invocation.
     if !authorizer.allows(&agent, &tool, &inv, &st, bg) {
         return Err(KernelError::AuthorizerDenied);
+    }
+
+    // CHECK 4 a/b/c: integrity gate (mirrors CHECK 2's three sub-checks on the integrity
+    // side). NO override arm anywhere -- endorsement is the only way up.
+    let mut integ_denied = false;
+
+    // CHECK 4a: every speculative-integrity level the agent carries against the new tool's
+    // floor. The vouch is the NEW invocation's content-gate verdict.
+    let spec_integ = st.speculative_integ(&agent, bg);
+    let mut igi = 0;
+    while igi < spec_integ.len() {
+        let level = *spec_integ.at(igi);
+        if let IntegDecision::Denied = integ_decision(
+            content_gate,
+            &agent,
+            &tool,
+            &inv,
+            &st,
+            bg,
+            tool_meta.integ_floor,
+            tool_meta.integ_inspect_floor,
+            level,
+        ) {
+            integ_denied = true;
+        }
+        igi += 1;
+    }
+
+    // CHECK 4b: the new tool's emission against every in-flight tool's floor (the "web_fetch
+    // completes while delete_repo is in flight" hazard). The vouch is the IN-FLIGHT
+    // invocation whose floor is being crossed.
+    let mut fbi = 0;
+    while fbi < agent_flights.len() {
+        let flight_inv = agent_flights.at(fbi);
+        if let Some(flight_tool_id) = st.invocation_tool.get_cloned(flight_inv) {
+            if let Some(flight_meta) = bg.tool_metadata(&flight_tool_id) {
+                if let IntegDecision::Denied = integ_decision(
+                    content_gate,
+                    &agent,
+                    &flight_tool_id,
+                    flight_inv,
+                    &st,
+                    bg,
+                    flight_meta.integ_floor,
+                    flight_meta.integ_inspect_floor,
+                    tool_meta.output_integ,
+                ) {
+                    integ_denied = true;
+                }
+            }
+        }
+        fbi += 1;
+    }
+
+    // CHECK 4c: the new tool's own emission against its own floor. The vouch is again the
+    // NEW invocation.
+    if let IntegDecision::Denied = integ_decision(
+        content_gate,
+        &agent,
+        &tool,
+        &inv,
+        &st,
+        bg,
+        tool_meta.integ_floor,
+        tool_meta.integ_inspect_floor,
+        tool_meta.output_integ,
+    ) {
+        integ_denied = true;
+    }
+
+    if integ_denied {
+        return Err(KernelError::IntegrityFloorDenied);
     }
 
     // Eager override consumption (Actions.lean:187-196): an armed override is marked used
@@ -2654,6 +2753,375 @@ mod tests {
             )
             .is_err(),
             "with a matching stored attestation, CHECK 2b still blocks"
+        );
+    }
+
+    // --- invoke_start: CHECK 4 (integrity gate) ---
+
+    #[test]
+    fn invoke_start_check_4a_denies_untrusted_agent_below_trusted_floor() {
+        let mut st = state_with_agent("a1", &[]);
+        st.tool_registered.insert(ToolId::new("trusted_tool"));
+        st.integ_levels.insert(AgentId::new("a1"), VecSet::from([IntegLevel::Untrusted]));
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("trusted_tool"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Trusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        let bg = builder.build();
+
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &FailAll,
+            AgentId::new("a1"),
+            ToolId::new("trusted_tool"),
+            InvocationId::new("inv-1"),
+            VecSet::new(),
+        );
+        assert_eq!(result.unwrap_err(), KernelError::IntegrityFloorDenied);
+    }
+
+    #[test]
+    fn invoke_start_check_4a_inspect_band_allows_with_passing_vouch() {
+        let mut st = state_with_agent("a1", &[]);
+        st.tool_registered.insert(ToolId::new("trusted_tool"));
+        st.integ_levels.insert(AgentId::new("a1"), VecSet::from([IntegLevel::Untrusted]));
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("trusted_tool"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        let bg = builder.build();
+
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &PassAll,
+                AgentId::new("a1"),
+                ToolId::new("trusted_tool"),
+                InvocationId::new("inv-1"),
+                VecSet::new(),
+            )
+            .is_ok(),
+            "inspect band + a passing content-gate vouch admits below the floor"
+        );
+    }
+
+    #[test]
+    fn invoke_start_check_4a_speculative_blocks_before_completion() {
+        // 4a speculative: an in-flight tool's UNTRUSTED emission counts even before it
+        // completes (worst-case speculative_integ), not just held integ_levels.
+        let mut st = state_with_agent("a1", &[]);
+        st.tool_registered.insert(ToolId::new("web_fetch"));
+        st.tool_registered.insert(ToolId::new("delete_repo"));
+        let flight_inv = InvocationId::new("wf-inv");
+        st.in_flight.insert_into(AgentId::new("a1"), flight_inv.clone());
+        st.invocation_tool.insert(flight_inv, ToolId::new("web_fetch"));
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("web_fetch"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Untrusted,
+            },
+        );
+        builder.register_tool(
+            ToolId::new("delete_repo"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Trusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        let bg = builder.build();
+
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &FailAll,
+            AgentId::new("a1"),
+            ToolId::new("delete_repo"),
+            InvocationId::new("dr-inv"),
+            VecSet::new(),
+        );
+        assert_eq!(result.unwrap_err(), KernelError::IntegrityFloorDenied);
+    }
+
+    #[test]
+    fn invoke_start_check_4b_new_emission_vs_inflight_floor_denies() {
+        // 4b: the "web_fetch completes while delete_repo is in flight" hazard, from the other
+        // side -- delete_repo (Trusted floor) already in flight, THEN invoking web_fetch
+        // (Untrusted emission) is denied: the in-flight tool's floor gates the new emission.
+        let mut st = state_with_agent("a1", &[]);
+        st.tool_registered.insert(ToolId::new("delete_repo"));
+        st.tool_registered.insert(ToolId::new("web_fetch"));
+        let flight_inv = InvocationId::new("dr-inv");
+        st.in_flight.insert_into(AgentId::new("a1"), flight_inv.clone());
+        st.invocation_tool.insert(flight_inv, ToolId::new("delete_repo"));
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("delete_repo"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Trusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        builder.register_tool(
+            ToolId::new("web_fetch"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Untrusted,
+            },
+        );
+        let bg = builder.build();
+
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &FailAll,
+            AgentId::new("a1"),
+            ToolId::new("web_fetch"),
+            InvocationId::new("wf-inv"),
+            VecSet::new(),
+        );
+        assert_eq!(result.unwrap_err(), KernelError::IntegrityFloorDenied);
+    }
+
+    #[test]
+    fn invoke_start_check_4b_vouch_keys_the_in_flight_invocation() {
+        // Oracle verdict keying pin (integrity dual of the CHECK 2b vouch-keying pin): CHECK
+        // 4b's content-gate vouch must key the IN-FLIGHT invocation whose floor is being
+        // crossed, not the invocation being started.
+        struct PassesOnly(InvocationId);
+        impl ContentGateOracle for PassesOnly {
+            fn passes(
+                &self,
+                _: &AgentId,
+                _: &ToolId,
+                inv: &InvocationId,
+                _: &KernelState,
+                _: &BackgroundTheory,
+            ) -> bool {
+                *inv == self.0
+            }
+        }
+
+        fn setup() -> (KernelState, BackgroundTheory) {
+            let mut st = state_with_agent("a1", &[]);
+            st.tool_registered.insert(ToolId::new("delete_repo"));
+            st.tool_registered.insert(ToolId::new("web_fetch"));
+            let flight_inv = InvocationId::new("dr-inv");
+            st.in_flight.insert_into(AgentId::new("a1"), flight_inv.clone());
+            st.invocation_tool.insert(flight_inv, ToolId::new("delete_repo"));
+
+            let mut builder = BackgroundTheoryBuilder::new();
+            builder.trust_issuer(IssuerId::new("trusted"));
+            builder.register_tool(
+                ToolId::new("delete_repo"),
+                ToolMetadata {
+                    capabilities: VecSet::new(),
+                    egress: VecSet::new(),
+                    conf_floor: ConfLevel::Public,
+                    output_bounded: false,
+                    issuer: IssuerId::new("trusted"),
+                    integ_floor: IntegLevel::Trusted,
+                    // Inspect band open down to Untrusted -- CHECK 4b's admission depends
+                    // entirely on the content-gate vouch.
+                    integ_inspect_floor: IntegLevel::Untrusted,
+                    output_integ: IntegLevel::Attested,
+                },
+            );
+            builder.register_tool(
+                ToolId::new("web_fetch"),
+                ToolMetadata {
+                    capabilities: VecSet::new(),
+                    egress: VecSet::new(),
+                    conf_floor: ConfLevel::Public,
+                    output_bounded: false,
+                    issuer: IssuerId::new("trusted"),
+                    integ_floor: IntegLevel::Untrusted,
+                    integ_inspect_floor: IntegLevel::Untrusted,
+                    output_integ: IntegLevel::Untrusted,
+                },
+            );
+            (st, builder.build())
+        }
+
+        let new_inv = InvocationId::new("wf-inv");
+        let flight_inv = InvocationId::new("dr-inv");
+
+        // The oracle accepts only the FLIGHT invocation: correct keying admits the flow.
+        let (st, bg) = setup();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &PassesOnly(flight_inv),
+                AgentId::new("a1"),
+                ToolId::new("web_fetch"),
+                new_inv.clone(),
+                VecSet::new(),
+            )
+            .is_ok(),
+            "CHECK 4b must vouch with the in-flight invocation's content-gate verdict"
+        );
+
+        // The oracle accepts only the NEW invocation: keying on the new invocation must not
+        // rescue the crossing.
+        let (st, bg) = setup();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &PassesOnly(new_inv.clone()),
+                AgentId::new("a1"),
+                ToolId::new("web_fetch"),
+                new_inv,
+                VecSet::new(),
+            )
+            .is_err(),
+            "CHECK 4b must not accept a vouch keyed on the new invocation"
+        );
+    }
+
+    #[test]
+    fn invoke_start_check_4c_self_pair_denies_even_for_clean_agent() {
+        // 4c: a tool whose own emission fails its own floor is denied even for a clean agent
+        // with nothing in flight (the self-pair, needed for inductiveness of the pairwise
+        // in-flight invariant).
+        let mut st = state_with_agent("a1", &[]);
+        st.tool_registered.insert(ToolId::new("self_conflicted"));
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("self_conflicted"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Trusted,
+                output_integ: IntegLevel::Untrusted,
+            },
+        );
+        let bg = builder.build();
+
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &FailAll,
+            AgentId::new("a1"),
+            ToolId::new("self_conflicted"),
+            InvocationId::new("inv-1"),
+            VecSet::new(),
+        );
+        assert_eq!(result.unwrap_err(), KernelError::IntegrityFloorDenied);
+    }
+
+    #[test]
+    fn invoke_start_check_4_denial_not_rescued_by_flow_override() {
+        // No-override pin: CHECK 4 has no override arm anywhere -- an armed flow_override for
+        // the tool's own (tool, conf_floor) pair does not rescue an integrity-floor denial.
+        let mut st = state_with_agent("a1", &[]);
+        st.tool_registered.insert(ToolId::new("trusted_tool"));
+        st.integ_levels.insert(AgentId::new("a1"), VecSet::from([IntegLevel::Untrusted]));
+        st.flow_override.insert_into(
+            AgentId::new("a1"),
+            OverrideKey { tool: ToolId::new("trusted_tool"), level: ConfLevel::Public },
+        );
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("trusted_tool"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Trusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        let bg = builder.build();
+
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &FailAll,
+            AgentId::new("a1"),
+            ToolId::new("trusted_tool"),
+            InvocationId::new("inv-1"),
+            VecSet::new(),
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            KernelError::IntegrityFloorDenied,
+            "an armed flow_override must not rescue a CHECK 4 denial"
         );
     }
 

@@ -51,6 +51,9 @@ pub enum KernelError {
     /// The attested egress fails narrowing (a kind outside the tool's declared set) or
     /// coverage (an empty attestation on an egress-bearing tool).
     AttestationInvalid,
+    /// An integrity floor was not cleared (CHECK 4 a/b/c) -- no override arm rescues this;
+    /// endorsement is the only way up.
+    IntegrityFloorDenied,
     /// The event store failed to persist an event.
     EventStore,
 }

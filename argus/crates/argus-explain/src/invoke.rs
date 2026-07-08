@@ -1,6 +1,6 @@
 use argus_kernel::{
     AgentId, AuthorizerOracle, BackgroundTheory, ConfLevel, ContentGateOracle, EgressKind,
-    FlowMode, InvocationId, KernelError, KernelState, ToolId, VecSet,
+    FlowMode, IntegLevel, InvocationId, KernelError, KernelState, ToolId, VecSet,
 };
 
 use crate::report::{CheckOutcome, ExplainReport, GateCheck, GateFinding, Rescue};
@@ -49,6 +49,29 @@ pub(crate) fn gate_finding(
         }
     }
     GateFinding { check, tool: tool.0.clone(), level, egress, mode, outcome, rescues }
+}
+
+/// Verdict-level mirror of the kernel's `integ_decision` (CHECK 4 a/b/c): boolean denial only,
+/// no findings or rescues -- full integrity diagnostics are Task 16. ALLOW iff `floor.le(level)`,
+/// else INSPECT iff `inspect_floor.le(level)` and the vouched invocation's content gate passes,
+/// else DENY. No override arm -- endorsement is the only way up.
+#[allow(clippy::too_many_arguments)]
+fn integ_check_denied(
+    content_gate: &impl ContentGateOracle,
+    st: &KernelState,
+    bg: &BackgroundTheory,
+    agent: &AgentId,
+    tool: &ToolId,
+    vouch_inv: &InvocationId,
+    floor: IntegLevel,
+    inspect_floor: IntegLevel,
+    level: IntegLevel,
+) -> bool {
+    if floor.le(level) {
+        false
+    } else {
+        !(inspect_floor.le(level) && content_gate.passes(agent, tool, vouch_inv, st, bg))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -158,12 +181,57 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
 
     report.authorizer_denied = !authorizer.allows(agent, tool, inv, st, bg);
 
+    // CHECK 4 a/b/c: integrity gate mirror (verdict-level only; Task 16 adds full findings).
+    let mut integ_denied = false;
+
+    // CHECK 4a: every speculative-integrity level the agent carries against the new tool's
+    // floor, vouched by the NEW invocation.
+    let spec_integ = st.speculative_integ(agent, bg);
+    for li in 0..spec_integ.len() {
+        let level = *spec_integ.at(li);
+        if integ_check_denied(
+            content_gate, st, bg, agent, tool, inv,
+            tool_meta.integ_floor, tool_meta.integ_inspect_floor, level,
+        ) {
+            integ_denied = true;
+        }
+    }
+
+    // CHECK 4b: the new tool's emission against every in-flight tool's floor, vouched by the
+    // IN-FLIGHT invocation whose floor is being crossed.
+    for fi in 0..flights.len() {
+        let flight_inv = flights.at(fi);
+        let Some(flight_tool) = st.invocation_tool.get_cloned(flight_inv) else {
+            continue;
+        };
+        let Some(flight_meta) = bg.tool_metadata(&flight_tool) else {
+            continue;
+        };
+        if integ_check_denied(
+            content_gate, st, bg, agent, &flight_tool, flight_inv,
+            flight_meta.integ_floor, flight_meta.integ_inspect_floor, tool_meta.output_integ,
+        ) {
+            integ_denied = true;
+        }
+    }
+
+    // CHECK 4c: the new tool's own emission against its own floor, vouched by the NEW
+    // invocation.
+    if integ_check_denied(
+        content_gate, st, bg, agent, tool, inv,
+        tool_meta.integ_floor, tool_meta.integ_inspect_floor, tool_meta.output_integ,
+    ) {
+        integ_denied = true;
+    }
+
     report.verdict = if !report.missing_caps.is_empty() {
         Some(KernelError::CapabilityMissing)
     } else if report.denied_findings().next().is_some() {
         Some(KernelError::FlowGateBlocked)
     } else if report.authorizer_denied {
         Some(KernelError::AuthorizerDenied)
+    } else if integ_denied {
+        Some(KernelError::IntegrityFloorDenied)
     } else {
         None
     };
