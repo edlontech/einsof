@@ -46,6 +46,11 @@ pub enum KernelError {
     BudgetExhausted,
     /// An in-flight invocation has no tool binding.
     MissingToolBinding,
+    /// The invocation id has already been used (freshness violation).
+    InvocationReplayed,
+    /// The attested egress fails narrowing (a kind outside the tool's declared set) or
+    /// coverage (an empty attestation on an egress-bearing tool).
+    AttestationInvalid,
     /// The event store failed to persist an event.
     EventStore,
 }

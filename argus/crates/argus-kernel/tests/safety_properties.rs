@@ -105,6 +105,7 @@ fn tainted_agent_cannot_egress_when_denied() {
         AgentId::new("a1"),
         ToolId::new("read_file"),
         InvocationId::new("i1"),
+        VecSet::new(),
     )
     .unwrap();
     k.invoke_complete(AgentId::new("a1"), InvocationId::new("i1"))
@@ -114,6 +115,7 @@ fn tainted_agent_cannot_egress_when_denied() {
         AgentId::new("a1"),
         ToolId::new("send_email"),
         InvocationId::new("i2"),
+        VecSet::from([EgressKind::NetworkExternal]),
     );
     assert!(result.is_err());
 }
@@ -154,6 +156,7 @@ fn fresh_child_has_no_taint() {
         AgentId::new("a1"),
         ToolId::new("read_file"),
         InvocationId::new("i1"),
+        VecSet::new(),
     )
     .unwrap();
     k.invoke_complete(AgentId::new("a1"), InvocationId::new("i1"))
@@ -200,6 +203,7 @@ fn endorsed_tool_no_taint() {
         AgentId::new("a1"),
         ToolId::new("check_exists"),
         InvocationId::new("i1"),
+        VecSet::new(),
     )
     .unwrap();
     k.invoke_complete(AgentId::new("a1"), InvocationId::new("i1"))
@@ -233,6 +237,7 @@ fn return_unendorsed_propagates_taint_to_parent() {
         AgentId::new("child"),
         ToolId::new("read_file"),
         InvocationId::new("i1"),
+        VecSet::new(),
     )
     .unwrap();
     k.invoke_complete(AgentId::new("child"), InvocationId::new("i1"))
@@ -259,6 +264,7 @@ fn root_cannot_invoke() {
         AgentId::root(),
         ToolId::new("read_file"),
         InvocationId::new("i1"),
+        VecSet::new(),
     );
     assert!(result.is_err());
 }
@@ -279,6 +285,7 @@ fn speculative_taint_blocks_parallel_exfil() {
         AgentId::new("a1"),
         ToolId::new("read_file"),
         InvocationId::new("i1"),
+        VecSet::new(),
     )
     .unwrap();
 
@@ -286,6 +293,7 @@ fn speculative_taint_blocks_parallel_exfil() {
         AgentId::new("a1"),
         ToolId::new("send_email"),
         InvocationId::new("i2"),
+        VecSet::from([EgressKind::NetworkExternal]),
     );
     assert!(result.is_err());
 }
@@ -312,6 +320,7 @@ fn deep_delegation_chain() {
         AgentId::new("c"),
         ToolId::new("read_file"),
         InvocationId::new("i1"),
+        VecSet::new(),
     )
     .unwrap();
     k.invoke_complete(AgentId::new("c"), InvocationId::new("i1"))
@@ -349,6 +358,7 @@ fn return_endorsed_does_not_propagate_taint() {
         AgentId::new("c"),
         ToolId::new("read_file"),
         InvocationId::new("i1"),
+        VecSet::new(),
     )
     .unwrap();
     k.invoke_complete(AgentId::new("c"), InvocationId::new("i1"))
@@ -449,6 +459,7 @@ fn sentinel_elevate_taint_flow_incompatible_rejected() {
         AgentId::new("a1"),
         ToolId::new("send_email"),
         InvocationId::new("i1"),
+        VecSet::from([EgressKind::NetworkExternal]),
     )
     .unwrap();
 
@@ -488,6 +499,7 @@ fn flow_confinement_holds_after_sentinel_taint() {
         AgentId::new("a1"),
         ToolId::new("send_email"),
         InvocationId::new("i1"),
+        VecSet::from([EgressKind::NetworkExternal]),
     );
     assert!(result.is_err());
 }
@@ -612,7 +624,7 @@ fn budget_exhausted_falls_to_full_taint() {
     let mut i = 0u8;
     while i < 8 {
         let inv = InvocationId::new(&format!("inv-{i}"));
-        k.invoke_start(AgentId::new("a1"), ToolId::new("check_exists"), inv.clone()).unwrap();
+        k.invoke_start(AgentId::new("a1"), ToolId::new("check_exists"), inv.clone(), VecSet::new()).unwrap();
         k.invoke_complete(AgentId::new("a1"), inv).unwrap();
         i += 1;
     }
@@ -620,7 +632,7 @@ fn budget_exhausted_falls_to_full_taint() {
     assert!(k.state().taint_levels.get(&AgentId::new("a1")).is_none(), "no taint before exhaustion");
 
     // 9th cycle: affordable(2) == false → full-taint branch.
-    k.invoke_start(AgentId::new("a1"), ToolId::new("check_exists"), InvocationId::new("inv-8")).unwrap();
+    k.invoke_start(AgentId::new("a1"), ToolId::new("check_exists"), InvocationId::new("inv-8"), VecSet::new()).unwrap();
     k.invoke_complete(AgentId::new("a1"), InvocationId::new("inv-8")).unwrap();
     assert_eq!(k.state().budget(&AgentId::new("a1")), 0);
     assert!(
@@ -677,8 +689,13 @@ fn grant_override_preserves_single_use_across_rearm() {
     .expect("root can arm override");
 
     // Start an invocation so sentinel_elevate_taint has a DENY-mode in-flight to check.
-    k.invoke_start(agent.clone(), ToolId::new("send_email"), InvocationId::new("inv-1"))
-        .unwrap();
+    k.invoke_start(
+        agent.clone(),
+        ToolId::new("send_email"),
+        InvocationId::new("inv-1"),
+        VecSet::from([EgressKind::NetworkExternal]),
+    )
+    .unwrap();
 
     // First sentinel raise: override rescues and is consumed.
     k.sentinel_elevate_taint(agent.clone(), ConfLevel::Sensitive)
@@ -715,8 +732,13 @@ fn grant_override_preserves_single_use_across_rearm() {
 
     // Agent now has Sensitive taint (from the sentinel raise). invoke_start on send_email triggers
     // CHECK 2a: Sensitive/NetworkExternal = DENY; the re-armed override rescues exactly once.
-    k.invoke_start(agent.clone(), ToolId::new("send_email"), InvocationId::new("inv-2"))
-        .expect("invoke_start passes via re-armed override (CHECK 2a)");
+    k.invoke_start(
+        agent.clone(),
+        ToolId::new("send_email"),
+        InvocationId::new("inv-2"),
+        VecSet::from([EgressKind::NetworkExternal]),
+    )
+    .expect("invoke_start passes via re-armed override (CHECK 2a)");
     assert!(
         k.state().override_consumed(&agent, &ToolId::new("send_email"), ConfLevel::Sensitive),
         "re-armed override consumed by invoke_start"
@@ -727,6 +749,7 @@ fn grant_override_preserves_single_use_across_rearm() {
         agent.clone(),
         ToolId::new("send_email"),
         InvocationId::new("inv-3"),
+        VecSet::from([EgressKind::NetworkExternal]),
     );
     assert!(blocked.is_err(), "invoke_start must fail: re-armed override also single-use");
 }

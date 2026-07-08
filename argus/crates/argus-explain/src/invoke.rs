@@ -51,6 +51,7 @@ pub(crate) fn gate_finding(
     GateFinding { check, tool: tool.0.clone(), level, egress, mode, outcome, rescues }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
     st: &KernelState,
     bg: &BackgroundTheory,
@@ -59,6 +60,7 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
     agent: &AgentId,
     tool: &ToolId,
     inv: &InvocationId,
+    attested_egress: &VecSet<EgressKind>,
 ) -> ExplainReport {
     let mut report = ExplainReport {
         verdict: None,
@@ -76,6 +78,8 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         Some(KernelError::InvocationExists)
     } else if st.in_flight.any_value_contains(inv) {
         Some(KernelError::InvocationInFlight)
+    } else if st.invocation_used.contains(inv) {
+        Some(KernelError::InvocationReplayed)
     } else {
         None
     };
@@ -88,6 +92,20 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         return report;
     };
     let conf_floor = tool_meta.conf_floor;
+
+    // Narrowing: the attested egress cannot exceed the tool's declared set. Coverage: an
+    // egress-bearing tool cannot be admitted on an empty attestation.
+    let mut narrowing_violated = false;
+    for i in 0..attested_egress.len() {
+        if !tool_meta.egress.contains(attested_egress.at(i)) {
+            narrowing_violated = true;
+        }
+    }
+    let coverage_violated = !tool_meta.egress.is_empty() && attested_egress.is_empty();
+    if narrowing_violated || coverage_violated {
+        report.verdict = Some(KernelError::AttestationInvalid);
+        return report;
+    }
 
     for i in 0..tool_meta.capabilities.len() {
         let cap = *tool_meta.capabilities.at(i);
@@ -103,26 +121,24 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
     let spec_taint = st.speculative_taint(agent, bg);
     for li in 0..spec_taint.len() {
         let level = *spec_taint.at(li);
-        for ei in 0..tool_meta.egress.len() {
+        for ei in 0..attested_egress.len() {
             report.findings.push(gate_finding(
                 bg, st, new_tool_gate, GateCheck::SpecTaintVsNewEgress,
-                agent, tool, level, *tool_meta.egress.at(ei), None,
+                agent, tool, level, *attested_egress.at(ei), None,
             ));
         }
     }
 
     // CHECK 2b. The vouch is the IN-FLIGHT invocation's content-gate verdict (re-examined
-    // against the new floor), computed per flight invocation -- not per flight tool.
+    // against the new floor), computed per flight invocation -- not per flight tool. The
+    // egress source is the flight invocation's STORED attestation, not the tool's static set.
     let flights = st.in_flight.get_set_or_empty(agent);
     for fi in 0..flights.len() {
         let flight_inv = flights.at(fi);
         let Some(flight_tool) = st.invocation_tool.get_cloned(flight_inv) else {
             continue;
         };
-        let egress: VecSet<EgressKind> = match bg.tool_metadata(&flight_tool) {
-            Some(m) => m.egress,
-            None => VecSet::new(),
-        };
+        let egress = st.invocation_egress.get_set_or_empty(flight_inv);
         let flight_gate = content_gate.passes(agent, &flight_tool, flight_inv, st, bg);
         for ei in 0..egress.len() {
             report.findings.push(gate_finding(
@@ -133,10 +149,10 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
     }
 
     // CHECK 2c
-    for ei in 0..tool_meta.egress.len() {
+    for ei in 0..attested_egress.len() {
         report.findings.push(gate_finding(
             bg, st, new_tool_gate, GateCheck::SelfFloor,
-            agent, tool, conf_floor, *tool_meta.egress.at(ei), Some(conf_floor),
+            agent, tool, conf_floor, *attested_egress.at(ei), Some(conf_floor),
         ));
     }
 
@@ -208,13 +224,16 @@ mod tests {
     }
 
     fn agree(st: &KernelState, b: &BackgroundTheory, auth: bool, gate: bool) -> ExplainReport {
+        let attested_egress = VecSet::from([EgressKind::NetworkExternal]);
         let report = explain_invoke(
             st, b, &ConstAuth(auth), &ConstGate(gate),
             &AgentId::new("a1"), &ToolId::new("send_email"), &InvocationId::new("i1"),
+            &attested_egress,
         );
         let real = transitions::invoke_start(
             st.clone(), b, &ConstAuth(auth), &ConstGate(gate),
             AgentId::new("a1"), ToolId::new("send_email"), InvocationId::new("i1"),
+            attested_egress,
         );
         match &real {
             Ok(_) => assert_eq!(report.verdict, None, "explain says deny, kernel succeeded"),

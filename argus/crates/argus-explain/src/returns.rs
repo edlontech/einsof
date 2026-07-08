@@ -1,6 +1,4 @@
-use argus_kernel::{
-    AgentId, BackgroundTheory, ContentGateOracle, KernelError, KernelState, VecSet,
-};
+use argus_kernel::{AgentId, BackgroundTheory, ContentGateOracle, KernelError, KernelState};
 
 use crate::invoke::gate_finding;
 use crate::report::{ExplainReport, GateCheck};
@@ -41,10 +39,7 @@ pub fn explain_return_unendorsed<C: ContentGateOracle>(
             let Some(flight_tool) = st.invocation_tool.get_cloned(flight_inv) else {
                 continue;
             };
-            let egress = match bg.tool_metadata(&flight_tool) {
-                Some(m) => m.egress,
-                None => VecSet::new(),
-            };
+            let egress = st.invocation_egress.get_set_or_empty(flight_inv);
             // Vouch is the parent's in-flight invocation being gated.
             let gate = content_gate.passes(parent, &flight_tool, flight_inv, st, bg);
             for ei in 0..egress.len() {
@@ -91,6 +86,9 @@ mod tests {
         st.taint_levels.insert(child, VecSet::from([ConfLevel::Sensitive]));
         st.in_flight.insert_into(parent, InvocationId::new("pi"));
         st.invocation_tool.insert(InvocationId::new("pi"), ToolId::new("egress_tool"));
+        st
+            .invocation_egress
+            .insert(InvocationId::new("pi"), VecSet::from([EgressKind::NetworkExternal]));
 
         let mut b = BackgroundTheoryBuilder::new();
         b.trust_issuer(IssuerId::new("trusted"));

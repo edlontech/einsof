@@ -286,6 +286,7 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     agent: AgentId,
     tool: ToolId,
     inv: InvocationId,
+    attested_egress: VecSet<EgressKind>,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if !st.agent_active.contains(&agent) {
         return Err(KernelError::AgentInactive);
@@ -302,6 +303,10 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     if st.in_flight.any_value_contains(&inv) {
         return Err(KernelError::InvocationInFlight);
     }
+    // Freshness: this invocation id has never been used before (design §5.3).
+    if st.invocation_used.contains(&inv) {
+        return Err(KernelError::InvocationReplayed);
+    }
 
     // Clone the tool's metadata to an owned local: holding the `bg` borrow while it is read across
     // the gate loops and used to clone egress sets keeps the extractor's region analysis happy.
@@ -310,6 +315,23 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         None => return Err(KernelError::ToolNotInTheory),
     };
     let conf_floor = tool_meta.conf_floor;
+
+    // Narrowing: the attested egress cannot exceed the tool's declared set.
+    let mut narrowing_violated = false;
+    let mut nai = 0;
+    while nai < attested_egress.len() {
+        if !tool_meta.egress.contains(attested_egress.at(nai)) {
+            narrowing_violated = true;
+        }
+        nai += 1;
+    }
+    if narrowing_violated {
+        return Err(KernelError::AttestationInvalid);
+    }
+    // Coverage: an egress-bearing tool cannot be admitted on an empty attestation.
+    if !tool_meta.egress.is_empty() && attested_egress.is_empty() {
+        return Err(KernelError::AttestationInvalid);
+    }
 
     let mut missing_cap = false;
     let mut ci = 0;
@@ -329,30 +351,28 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     // it is eager (design "Override consumption semantics"), not tied to gate admission.
     let mut denied = false;
 
-    // CHECK 2a: the new tool's egress against every speculative-taint level the agent carries.
-    // The vouch is the NEW invocation's content-gate verdict.
+    // CHECK 2a: the new tool's attested egress against every speculative-taint level the agent
+    // carries. The vouch is the NEW invocation's content-gate verdict.
     let spec_taint = st.speculative_taint(&agent, bg);
     let mut li = 0;
     while li < spec_taint.len() {
         let level = *spec_taint.at(li);
-        denied = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, level, &tool_meta.egress, denied);
+        denied = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, level, &attested_egress, denied);
         li += 1;
     }
 
     // CHECK 2b/2c run for ALL tools -- bounded is NOT excluded. With conformance-gating a bounded
     // tool may still add taint on completion (if it fails conformance), so its floor must be
     // flow-compatible just like a non-bounded tool (worst-case / fail-closed).
-    // CHECK 2b: the new tool's floor against every in-flight invocation's egress. The vouch is
-    // the IN-FLIGHT invocation's content-gate verdict (being re-examined against the new floor).
+    // CHECK 2b: the new tool's floor against every in-flight invocation's STORED (attested)
+    // egress. The vouch is the IN-FLIGHT invocation's content-gate verdict (being re-examined
+    // against the new floor).
     let agent_flights = st.in_flight.get_set_or_empty(&agent);
     let mut fi = 0;
     while fi < agent_flights.len() {
         let flight_inv = agent_flights.at(fi);
         if let Some(flight_tool_id) = st.invocation_tool.get_cloned(flight_inv) {
-            let flight_egress = match bg.tool_metadata(&flight_tool_id) {
-                Some(m) => m.egress.clone(),
-                None => VecSet::new(),
-            };
+            let flight_egress = st.invocation_egress.get_set_or_empty(flight_inv);
             denied = gate_egress(
                 bg,
                 content_gate,
@@ -368,9 +388,9 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         fi += 1;
     }
 
-    // CHECK 2c: the new tool's own egress at its own floor. The vouch is again the NEW
+    // CHECK 2c: the new tool's own attested egress at its own floor. The vouch is again the NEW
     // invocation's content-gate verdict.
-    denied = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, conf_floor, &tool_meta.egress, denied);
+    denied = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, conf_floor, &attested_egress, denied);
 
     if denied {
         return Err(KernelError::FlowGateBlocked);
@@ -419,6 +439,8 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
 
     st.invocation_tool.insert(inv.clone(), tool.clone());
     st.in_flight.insert_into(agent.clone(), inv.clone());
+    st.invocation_egress.insert(inv.clone(), attested_egress);
+    st.invocation_used.insert(inv.clone());
 
     Ok((st, KernelAction::InvokeStart { agent, tool, inv }))
 }
@@ -535,10 +557,7 @@ pub fn return_unendorsed<C: ContentGateOracle>(
         while fi < parent_flights.len() {
             let inv = parent_flights.at(fi);
             if let Some(tool_id) = st.invocation_tool.get_cloned(inv) {
-                let egress = match bg.tool_metadata(&tool_id) {
-                    Some(m) => m.egress.clone(),
-                    None => VecSet::new(),
-                };
+                let egress = st.invocation_egress.get_set_or_empty(inv);
                 // Vouch is the parent's in-flight invocation being gated.
                 denied = gate_egress(bg, content_gate, &parent, &tool_id, inv, &st, level, &egress, denied);
             }
@@ -600,10 +619,7 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
         let inv = in_flight_invs.at(fi);
         match st.invocation_tool.get_cloned(inv) {
             Some(tool) => {
-                let egress = match bg.tool_metadata(&tool) {
-                    Some(m) => m.egress.clone(),
-                    None => VecSet::new(),
-                };
+                let egress = st.invocation_egress.get_set_or_empty(inv);
                 // Vouch is the agent's in-flight invocation being gated.
                 denied = gate_egress(bg, content_gate, &agent, &tool, inv, &st, level, &egress, denied);
             }
@@ -1605,7 +1621,10 @@ mod tests {
             .insert_into(AgentId::root(), parent_inv.clone());
         st
             .invocation_tool
-            .insert(parent_inv, parent_tool.clone());
+            .insert(parent_inv.clone(), parent_tool.clone());
+        st
+            .invocation_egress
+            .insert(parent_inv, VecSet::from([EgressKind::NetworkExternal]));
 
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
@@ -1658,6 +1677,7 @@ mod tests {
             AgentId::new("a1"),
             ToolId::new("read_file"),
             InvocationId::new("inv-1"),
+            VecSet::new(),
         )
         .unwrap();
 
@@ -1698,6 +1718,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("read_file"),
                 InvocationId::new("inv-1"),
+                VecSet::new(),
             )
             .is_err()
         );
@@ -1716,6 +1737,7 @@ mod tests {
                 AgentId::root(),
                 ToolId::new("read_file"),
                 InvocationId::new("inv-1"),
+                VecSet::new(),
             )
             .is_err()
         );
@@ -1734,6 +1756,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("unregistered"),
                 InvocationId::new("inv-1"),
+                VecSet::new(),
             )
             .is_err()
         );
@@ -1755,6 +1778,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("read_file"),
                 InvocationId::new("inv-1"),
+                VecSet::new(),
             )
             .is_err()
         );
@@ -1786,6 +1810,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("read_file"),
                 InvocationId::new("inv-1"),
+                VecSet::new(),
             )
             .is_err()
         );
@@ -1807,6 +1832,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("send_email"),
                 InvocationId::new("inv-1"),
+                VecSet::from([EgressKind::NetworkExternal]),
             )
             .is_err()
         );
@@ -1851,6 +1877,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("send_email"),
                 InvocationId::new("inv-1"),
+                VecSet::from([EgressKind::NetworkExternal]),
             )
             .is_ok()
         );
@@ -1895,6 +1922,7 @@ mod tests {
             AgentId::new("a1"),
             ToolId::new("send_email"),
             InvocationId::new("inv-1"),
+            VecSet::from([EgressKind::NetworkExternal]),
         )
         .expect("first invoke_start should pass via override");
         assert!(
@@ -1925,6 +1953,7 @@ mod tests {
             AgentId::new("a1"),
             ToolId::new("send_email"),
             InvocationId::new("inv-2"),
+            VecSet::from([EgressKind::NetworkExternal]),
         );
         assert!(
             result.is_err(),
@@ -1974,6 +2003,7 @@ mod tests {
             AgentId::new("a1"),
             ToolId::new("send_email"),
             InvocationId::new("inv-1"),
+            VecSet::from([EgressKind::NetworkExternal]),
         )
         .expect("invoke_start should pass via ALLOW");
         assert!(
@@ -2055,6 +2085,7 @@ mod tests {
             AgentId::new("a1"),
             ToolId::new("no_egress_tool"),
             InvocationId::new("inv-1"),
+            VecSet::new(),
         )
         .expect("gates are vacuous with empty egress: invoke_start succeeds");
 
@@ -2102,7 +2133,10 @@ mod tests {
         st
             .invocation_tool
             .insert(inv.clone(), ToolId::new("send_email"));
-        st.in_flight.insert_into(parent.clone(), inv);
+        st.in_flight.insert_into(parent.clone(), inv.clone());
+        st
+            .invocation_egress
+            .insert(inv, VecSet::from([EgressKind::NetworkExternal]));
         st
             .taint_levels
             .insert(child.clone(), VecSet::from([ConfLevel::Sensitive]));
@@ -2157,7 +2191,10 @@ mod tests {
         st
             .invocation_tool
             .insert(inv.clone(), ToolId::new("send_email"));
-        st.in_flight.insert_into(agent.clone(), inv);
+        st.in_flight.insert_into(agent.clone(), inv.clone());
+        st
+            .invocation_egress
+            .insert(inv, VecSet::from([EgressKind::NetworkExternal]));
 
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
@@ -2206,7 +2243,10 @@ mod tests {
             .insert_into(AgentId::new("a1"), email_inv.clone());
         st
             .invocation_tool
-            .insert(email_inv, ToolId::new("send_email"));
+            .insert(email_inv.clone(), ToolId::new("send_email"));
+        st
+            .invocation_egress
+            .insert(email_inv, VecSet::from([EgressKind::NetworkExternal]));
 
         let mut builder = BackgroundTheoryBuilder::new();
         builder.trust_issuer(IssuerId::new("trusted"));
@@ -2247,6 +2287,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("read_file"),
                 InvocationId::new("inv-2"),
+                VecSet::new(),
             )
             .is_err()
         );
@@ -2281,7 +2322,10 @@ mod tests {
                 .insert_into(AgentId::new("a1"), email_inv.clone());
             st
                 .invocation_tool
-                .insert(email_inv, ToolId::new("send_email"));
+                .insert(email_inv.clone(), ToolId::new("send_email"));
+            st
+                .invocation_egress
+                .insert(email_inv, VecSet::from([EgressKind::NetworkExternal]));
 
             let mut builder = BackgroundTheoryBuilder::new();
             builder.trust_issuer(IssuerId::new("trusted"));
@@ -2335,6 +2379,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("read_file"),
                 new_inv.clone(),
+                VecSet::new(),
             )
             .is_ok(),
             "CHECK 2b must vouch with the in-flight invocation's content-gate verdict"
@@ -2352,9 +2397,263 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("read_file"),
                 new_inv,
+                VecSet::new(),
             )
             .is_err(),
             "CHECK 2b must not accept a vouch keyed on the new invocation"
+        );
+    }
+
+    #[test]
+    fn invoke_start_rejects_replayed_invocation() {
+        // Design §7 scenario 13: reusing an InvocationId that is already in `invocation_used`
+        // is rejected by freshness even though `invocation_tool` never recorded it (the id was
+        // never actually completed through invoke_start -- freshness is independent history).
+        let mut st = state_with_agent("a1", &[CapKind::FilesystemRead]);
+        st.invocation_used.insert(InvocationId::new("inv-1"));
+        let bg = bg_with_tools();
+
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &PassAll,
+            AgentId::new("a1"),
+            ToolId::new("read_file"),
+            InvocationId::new("inv-1"),
+            VecSet::new(),
+        );
+        assert_eq!(result.unwrap_err(), KernelError::InvocationReplayed);
+    }
+
+    #[test]
+    fn invoke_start_rejects_narrowing_violation() {
+        // Design §7 scenario 12 (narrowing): an attested egress kind outside the tool's
+        // declared set is rejected -- a lying classifier cannot mint egress kinds the tool
+        // never declared.
+        let st = state_with_agent("a1", &[CapKind::NetworkEgress]);
+        let bg = bg_with_tools();
+
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &PassAll,
+            AgentId::new("a1"),
+            ToolId::new("send_email"),
+            InvocationId::new("inv-1"),
+            VecSet::from([EgressKind::FilesystemWrite]),
+        );
+        assert_eq!(result.unwrap_err(), KernelError::AttestationInvalid);
+    }
+
+    #[test]
+    fn invoke_start_rejects_coverage_violation_but_allows_empty_on_no_egress_tool() {
+        // Design §7 scenario 12 (coverage): an egress-bearing tool cannot be admitted on an
+        // empty attestation (which would pass every flow gate vacuously); a no-egress tool is
+        // unaffected by an empty attestation.
+        let st = state_with_agent("a1", &[CapKind::NetworkEgress]);
+        let bg = bg_with_tools();
+        let result = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &PassAll,
+            AgentId::new("a1"),
+            ToolId::new("send_email"),
+            InvocationId::new("inv-1"),
+            VecSet::new(),
+        );
+        assert_eq!(result.unwrap_err(), KernelError::AttestationInvalid);
+
+        let st = state_with_agent("a1", &[CapKind::FilesystemRead]);
+        let bg = bg_with_tools();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &PassAll,
+                AgentId::new("a1"),
+                ToolId::new("check_exists"),
+                InvocationId::new("inv-1"),
+                VecSet::new(),
+            )
+            .is_ok(),
+            "empty attestation on a no-egress tool is fine"
+        );
+    }
+
+    #[test]
+    fn invoke_start_success_populates_invocation_used_and_egress() {
+        let st = state_with_agent("a1", &[CapKind::FilesystemRead]);
+        let bg = bg_with_tools();
+        let inv = InvocationId::new("inv-1");
+
+        let (new_state, _) = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &PassAll,
+            AgentId::new("a1"),
+            ToolId::new("read_file"),
+            inv.clone(),
+            VecSet::new(),
+        )
+        .unwrap();
+
+        assert!(new_state.invocation_used.contains(&inv));
+        assert_eq!(new_state.invocation_egress.get(&inv), Some(&VecSet::new()));
+    }
+
+    #[test]
+    fn invoke_start_precision_win_narrow_attestation_admits_where_full_set_denies() {
+        // Design §7 scenario 11: a tainted agent invoking a tool that declares two egress kinds
+        // is denied under the V2-equivalent full-set attestation (one of the kinds is DENY at
+        // the held taint level), but succeeds when the attestation narrows to only the ALLOWed
+        // kind -- the precision win per-invocation attestation buys over the static worst case.
+        fn setup() -> (KernelState, BackgroundTheory) {
+            let mut st = state_with_agent("a1", &[]);
+            st.taint_levels.insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+            st.tool_registered.insert(ToolId::new("dyn_tool"));
+
+            let mut builder = BackgroundTheoryBuilder::new();
+            builder.trust_issuer(IssuerId::new("trusted"));
+            builder.register_tool(
+                ToolId::new("dyn_tool"),
+                ToolMetadata {
+                    capabilities: VecSet::new(),
+                    egress: VecSet::from([EgressKind::NetworkExternal, EgressKind::NetworkInternal]),
+                    conf_floor: ConfLevel::Public,
+                    output_bounded: false,
+                    issuer: IssuerId::new("trusted"),
+                    integ_floor: IntegLevel::Untrusted,
+                    integ_inspect_floor: IntegLevel::Untrusted,
+                    output_integ: IntegLevel::Attested,
+                },
+            );
+            // NetworkExternal denies Sensitive; NetworkInternal allows it.
+            builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
+            builder.set_egress_ceilings(EgressKind::NetworkInternal, Some(ConfLevel::Sensitive), None);
+            (st, builder.build())
+        }
+
+        let (st, bg) = setup();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &FailAll,
+                AgentId::new("a1"),
+                ToolId::new("dyn_tool"),
+                InvocationId::new("inv-1"),
+                VecSet::from([EgressKind::NetworkExternal, EgressKind::NetworkInternal]),
+            )
+            .is_err(),
+            "the full declared egress set (V2-equivalent worst case) is denied"
+        );
+
+        let (st, bg) = setup();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &FailAll,
+                AgentId::new("a1"),
+                ToolId::new("dyn_tool"),
+                InvocationId::new("inv-1"),
+                VecSet::from([EgressKind::NetworkInternal]),
+            )
+            .is_ok(),
+            "a narrower attestation covering only the ALLOWed kind succeeds"
+        );
+    }
+
+    #[test]
+    fn invoke_start_check_2b_gates_over_stored_attestation_not_static_egress() {
+        // Design finding 4/6 precision pin: CHECK 2b must gate over the in-flight invocation's
+        // STORED attestation, not the flight tool's static declared egress set.
+        fn setup() -> (KernelState, BackgroundTheory) {
+            let mut st = state_with_agent("a1", &[]);
+            st.tool_registered.insert(ToolId::new("flight_tool"));
+            st.tool_registered.insert(ToolId::new("new_tool"));
+            let flight_inv = InvocationId::new("flight-inv");
+            st.in_flight.insert_into(AgentId::new("a1"), flight_inv.clone());
+            st.invocation_tool.insert(flight_inv, ToolId::new("flight_tool"));
+
+            let mut builder = BackgroundTheoryBuilder::new();
+            builder.trust_issuer(IssuerId::new("trusted"));
+            builder.register_tool(
+                ToolId::new("flight_tool"),
+                ToolMetadata {
+                    capabilities: VecSet::new(),
+                    egress: VecSet::from([EgressKind::NetworkExternal]),
+                    conf_floor: ConfLevel::Public,
+                    output_bounded: false,
+                    issuer: IssuerId::new("trusted"),
+                    integ_floor: IntegLevel::Untrusted,
+                    integ_inspect_floor: IntegLevel::Untrusted,
+                    output_integ: IntegLevel::Attested,
+                },
+            );
+            builder.register_tool(
+                ToolId::new("new_tool"),
+                ToolMetadata {
+                    capabilities: VecSet::new(),
+                    egress: VecSet::new(),
+                    conf_floor: ConfLevel::Sensitive,
+                    output_bounded: false,
+                    issuer: IssuerId::new("trusted"),
+                    integ_floor: IntegLevel::Untrusted,
+                    integ_inspect_floor: IntegLevel::Untrusted,
+                    output_integ: IntegLevel::Attested,
+                },
+            );
+            // Sensitive/NetworkExternal is DENY: the flight tool's static declared egress would
+            // have blocked CHECK 2b if it were still the gate's egress source.
+            builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
+            (st, builder.build())
+        }
+
+        // Stored attestation empty (narrower than flight_tool's declared set): CHECK 2b is
+        // vacuous, so the new invoke is NOT blocked by the flight's static egress.
+        let (st, bg) = setup();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &FailAll,
+                AgentId::new("a1"),
+                ToolId::new("new_tool"),
+                InvocationId::new("new-inv"),
+                VecSet::new(),
+            )
+            .is_ok(),
+            "CHECK 2b must gate over the stored attestation, not the flight tool's static egress"
+        );
+
+        // Contrast: a stored attestation matching the flight's declared egress still blocks.
+        let (mut st, bg) = setup();
+        st.invocation_egress.insert(
+            InvocationId::new("flight-inv"),
+            VecSet::from([EgressKind::NetworkExternal]),
+        );
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &FailAll,
+                AgentId::new("a1"),
+                ToolId::new("new_tool"),
+                InvocationId::new("new-inv"),
+                VecSet::new(),
+            )
+            .is_err(),
+            "with a matching stored attestation, CHECK 2b still blocks"
         );
     }
 
@@ -2583,6 +2882,9 @@ mod tests {
         // Now add the in-flight so sentinel_elevate_taint can trigger a DENY check.
         st2.invocation_tool.insert(inv.clone(), ToolId::new("send_email"));
         st2.in_flight.insert_into(agent.clone(), inv.clone());
+        st2
+            .invocation_egress
+            .insert(inv.clone(), VecSet::from([EgressKind::NetworkExternal]));
 
         // Consume via sentinel raise (Sensitive/NetworkExternal = DENY; override rescues once).
         let (st2, _) =
@@ -2625,7 +2927,10 @@ mod tests {
         let inv2 = InvocationId::new("a-inv-2");
         let mut st2 = st2;
         st2.invocation_tool.insert(inv2.clone(), ToolId::new("send_email"));
-        st2.in_flight.insert_into(agent.clone(), inv2);
+        st2.in_flight.insert_into(agent.clone(), inv2.clone());
+        st2
+            .invocation_egress
+            .insert(inv2, VecSet::from([EgressKind::NetworkExternal]));
 
         let (st2, _) =
             sentinel_elevate_taint(st2, &bg, &FailAll, agent.clone(), ConfLevel::Sensitive)

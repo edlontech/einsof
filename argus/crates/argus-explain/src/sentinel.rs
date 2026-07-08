@@ -1,5 +1,5 @@
 use argus_kernel::{
-    AgentId, BackgroundTheory, ConfLevel, ContentGateOracle, KernelError, KernelState, VecSet,
+    AgentId, BackgroundTheory, ConfLevel, ContentGateOracle, KernelError, KernelState,
 };
 
 use crate::invoke::gate_finding;
@@ -29,10 +29,7 @@ pub fn explain_sentinel_elevate_taint<C: ContentGateOracle>(
         let flight_inv = flights.at(fi);
         match st.invocation_tool.get_cloned(flight_inv) {
             Some(flight_tool) => {
-                let egress = match bg.tool_metadata(&flight_tool) {
-                    Some(m) => m.egress,
-                    None => VecSet::new(),
-                };
+                let egress = st.invocation_egress.get_set_or_empty(flight_inv);
                 // Vouch is the agent's in-flight invocation being gated.
                 let gate = content_gate.passes(agent, &flight_tool, flight_inv, st, bg);
                 for ei in 0..egress.len() {
@@ -78,6 +75,9 @@ mod tests {
         st.agent_active.insert(a.clone());
         st.in_flight.insert_into(a, InvocationId::new("i1"));
         st.invocation_tool.insert(InvocationId::new("i1"), ToolId::new("egress_tool"));
+        st
+            .invocation_egress
+            .insert(InvocationId::new("i1"), VecSet::from([EgressKind::NetworkExternal]));
 
         let mut b = BackgroundTheoryBuilder::new();
         b.trust_issuer(IssuerId::new("trusted"));

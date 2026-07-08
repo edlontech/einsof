@@ -1,11 +1,12 @@
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
+use crate::collections::VecSet;
 use crate::error::KernelError;
 use crate::event::{KernelAction, KernelEvent};
 use crate::state::KernelState;
 use crate::traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle, EventStore};
 use crate::transitions;
-use crate::types::{AgentId, ConfLevel, InstructionId, InvocationId, ToolId};
+use crate::types::{AgentId, ConfLevel, EgressKind, InstructionId, InvocationId, ToolId};
 
 pub struct Kernel<
     A: AuthorizerOracle,
@@ -123,6 +124,7 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
         agent: AgentId,
         tool: ToolId,
         inv: InvocationId,
+        attested_egress: VecSet<EgressKind>,
     ) -> Result<KernelEvent, KernelError> {
         let result = transitions::invoke_start(
             self.state.clone(),
@@ -132,6 +134,7 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
             agent,
             tool,
             inv,
+            attested_egress,
         );
         self.apply(result)
     }
@@ -321,6 +324,7 @@ mod tests {
                 AgentId::new("a1"),
                 ToolId::new("read_file"),
                 InvocationId::new("inv-1"),
+                VecSet::new(),
             )
             .unwrap();
         assert_eq!(e5.sequence, 5);

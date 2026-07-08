@@ -57,6 +57,18 @@ fn conf_level() -> impl Strategy<Value = ConfLevel> {
     prop::sample::select(LEVELS.to_vec())
 }
 
+fn arb_egress_subset() -> impl Strategy<Value = VecSet<EgressKind>> {
+    prop::collection::vec(any::<bool>(), EGRESS.len()).prop_map(|mask| {
+        let mut s = VecSet::new();
+        for (i, e) in EGRESS.iter().enumerate() {
+            if mask[i] {
+                s.insert(*e);
+            }
+        }
+        s
+    })
+}
+
 prop_compose! {
     fn arb_background()(
         floors in prop::collection::vec(conf_level(), TOOLS.len()),
@@ -104,6 +116,10 @@ prop_compose! {
         parent_edges in prop::collection::vec(any::<bool>(), AGENTS.len()),
         flights in prop::collection::vec(0usize..3, AGENTS.len()),
         bind_flight in prop::collection::vec(any::<bool>(), AGENTS.len() * 3),
+        flight_egress in prop::collection::vec(
+            prop::collection::vec(any::<bool>(), EGRESS.len()),
+            AGENTS.len() * 3,
+        ),
         used in prop::collection::vec(any::<bool>(), AGENTS.len() * TOOLS.len() * LEVELS.len()),
         flow_override in prop::collection::vec(any::<bool>(), AGENTS.len() * TOOLS.len() * LEVELS.len()),
     ) -> KernelState {
@@ -125,7 +141,14 @@ prop_compose! {
                 let inv = InvocationId::new(&format!("{a}-i{f}"));
                 st.in_flight.insert_into(agent.clone(), inv.clone());
                 if bind_flight[ai * 3 + f] {
-                    st.invocation_tool.insert(inv, ToolId::new(TOOLS[f % TOOLS.len()]));
+                    st.invocation_tool.insert(inv.clone(), ToolId::new(TOOLS[f % TOOLS.len()]));
+                    let mut egress = VecSet::new();
+                    for (ei, e) in EGRESS.iter().enumerate() {
+                        if flight_egress[ai * 3 + f][ei] {
+                            egress.insert(*e);
+                        }
+                    }
+                    st.invocation_egress.insert(inv, egress);
                 }
             }
         }
@@ -186,14 +209,17 @@ proptest! {
         agent in prop::sample::select(AGENTS.to_vec()),
         tool in prop::sample::select(TOOLS.to_vec()),
         auth in any::<bool>(), gate in arb_gate(),
+        attested_egress in arb_egress_subset(),
     ) {
         let report = explain_invoke(
             &st, &bg, &ConstAuth(auth), &gate,
             &AgentId::new(agent), &ToolId::new(tool), &InvocationId::new("fresh"),
+            &attested_egress,
         );
         let real = transitions::invoke_start(
             st.clone(), &bg, &ConstAuth(auth), &gate,
             AgentId::new(agent), ToolId::new(tool), InvocationId::new("fresh"),
+            attested_egress,
         );
         check_verdict(&report.verdict, &real);
     }
