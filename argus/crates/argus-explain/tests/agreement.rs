@@ -8,7 +8,7 @@ use proptest::prelude::*;
 
 struct ConstAuth(bool);
 impl AuthorizerOracle for ConstAuth {
-    fn allows(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+    fn allows(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
         self.0
     }
 }
@@ -21,7 +21,14 @@ struct KeyedGate {
     verdicts: Vec<bool>,
 }
 impl ContentGateOracle for KeyedGate {
-    fn passes(&self, agent: &AgentId, tool: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+    fn passes(
+        &self,
+        agent: &AgentId,
+        tool: &ToolId,
+        _: &InvocationId,
+        _: &KernelState,
+        _: &BackgroundTheory,
+    ) -> bool {
         let ai = AGENTS.iter().position(|a| agent.0 == *a);
         let ti = TOOLS.iter().position(|t| tool.0 == *t);
         match (ai, ti) {

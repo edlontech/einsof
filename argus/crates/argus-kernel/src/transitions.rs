@@ -28,6 +28,7 @@ fn flow_decision(
     content_gate: &impl ContentGateOracle,
     agent: &AgentId,
     tool: &ToolId,
+    vouch_inv: &InvocationId,
     st: &KernelState,
     level: ConfLevel,
     egress: EgressKind,
@@ -35,7 +36,7 @@ fn flow_decision(
     match bg.flow_mode(level, egress) {
         FlowMode::Allow => FlowDecision::Allowed,
         FlowMode::Inspect => {
-            if content_gate.passes(agent, tool, st, bg) {
+            if content_gate.passes(agent, tool, vouch_inv, st, bg) {
                 FlowDecision::Allowed
             } else {
                 FlowDecision::Denied
@@ -117,6 +118,7 @@ fn gate_egress<C: ContentGateOracle>(
     content_gate: &C,
     agent: &AgentId,
     tool: &ToolId,
+    vouch_inv: &InvocationId,
     st: &KernelState,
     level: ConfLevel,
     egress_set: &VecSet<EgressKind>,
@@ -125,7 +127,7 @@ fn gate_egress<C: ContentGateOracle>(
     let mut i = 0;
     while i < egress_set.len() {
         let egress = *egress_set.at(i);
-        match flow_decision(bg, content_gate, agent, tool, st, level, egress) {
+        match flow_decision(bg, content_gate, agent, tool, vouch_inv, st, level, egress) {
             FlowDecision::Allowed => {}
             FlowDecision::ConsumedOverride => {
                 acc.to_consume.insert(OverrideKey { tool: tool.clone(), level });
@@ -339,17 +341,20 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     let mut acc = GateAccum { denied: false, to_consume: VecSet::new() };
 
     // CHECK 2a: the new tool's egress against every speculative-taint level the agent carries.
+    // The vouch is the NEW invocation's content-gate verdict.
     let spec_taint = st.speculative_taint(&agent, bg);
     let mut li = 0;
     while li < spec_taint.len() {
         let level = *spec_taint.at(li);
-        acc = gate_egress(bg, content_gate, &agent, &tool, &st, level, &tool_meta.egress, acc);
+        acc = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, level, &tool_meta.egress, acc);
         li += 1;
     }
 
     // CHECK 2b/2c run for ALL tools -- bounded is NOT excluded. With conformance-gating a bounded
     // tool may still add taint on completion (if it fails conformance), so its floor must be
     // flow-compatible just like a non-bounded tool (worst-case / fail-closed).
+    // CHECK 2b: the new tool's floor against every in-flight invocation's egress. The vouch is
+    // the IN-FLIGHT invocation's content-gate verdict (being re-examined against the new floor).
     let agent_flights = st.in_flight.get_set_or_empty(&agent);
     let mut fi = 0;
     while fi < agent_flights.len() {
@@ -364,6 +369,7 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
                 content_gate,
                 &agent,
                 &flight_tool_id,
+                flight_inv,
                 &st,
                 conf_floor,
                 &flight_egress,
@@ -373,14 +379,16 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         fi += 1;
     }
 
-    // CHECK: the new tool's own egress at its floor.
-    acc = gate_egress(bg, content_gate, &agent, &tool, &st, conf_floor, &tool_meta.egress, acc);
+    // CHECK 2c: the new tool's own egress at its own floor. The vouch is again the NEW
+    // invocation's content-gate verdict.
+    acc = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, conf_floor, &tool_meta.egress, acc);
 
     if acc.denied {
         return Err(KernelError::FlowGateBlocked);
     }
 
-    if !authorizer.allows(&agent, &tool, &st, bg) {
+    // CHECK 3: authorizer gate, keyed on this invocation.
+    if !authorizer.allows(&agent, &tool, &inv, &st, bg) {
         return Err(KernelError::AuthorizerDenied);
     }
 
@@ -422,7 +430,7 @@ pub fn invoke_complete<F: ConformanceOracle>(
             // Zero-taint (endorsed) path: bounded + conforms + affordable AND the agent does not
             // already hold this floor (re-tainting buys nothing, so don't waste budget on it).
             let zero_taint = output_bounded
-                && conformance.conforms(&agent, &tool_id, &st, bg)
+                && conformance.conforms(&agent, &tool_id, &inv, &st, bg)
                 && st.affordable(&agent, weight)
                 && !already_tainted;
             if zero_taint {
@@ -510,7 +518,8 @@ pub fn return_unendorsed<C: ContentGateOracle>(
                     Some(m) => m.egress.clone(),
                     None => VecSet::new(),
                 };
-                acc = gate_egress(bg, content_gate, &parent, &tool_id, &st, level, &egress, acc);
+                // Vouch is the parent's in-flight invocation being gated.
+                acc = gate_egress(bg, content_gate, &parent, &tool_id, inv, &st, level, &egress, acc);
             }
             fi += 1;
         }
@@ -557,7 +566,8 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
                     Some(m) => m.egress.clone(),
                     None => VecSet::new(),
                 };
-                acc = gate_egress(bg, content_gate, &agent, &tool, &st, level, &egress, acc);
+                // Vouch is the agent's in-flight invocation being gated.
+                acc = gate_egress(bg, content_gate, &agent, &tool, inv, &st, level, &egress, acc);
             }
             None => {
                 missing_binding = true;
@@ -651,25 +661,25 @@ mod tests {
 
     struct AllowAll;
     impl AuthorizerOracle for AllowAll {
-        fn allows(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn allows(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             true
         }
     }
     struct PassAll;
     impl ContentGateOracle for PassAll {
-        fn passes(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn passes(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             true
         }
     }
     struct FailAll;
     impl ContentGateOracle for FailAll {
-        fn passes(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn passes(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             false
         }
     }
     struct ConformsAll;
     impl ConformanceOracle for ConformsAll {
-        fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn conforms(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             true
         }
         fn return_conforms(
@@ -684,7 +694,7 @@ mod tests {
     }
     struct ConformsNone;
     impl ConformanceOracle for ConformsNone {
-        fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn conforms(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             false
         }
         fn return_conforms(
@@ -1707,6 +1717,7 @@ mod tests {
                 &self,
                 _: &AgentId,
                 _: &ToolId,
+                _: &InvocationId,
                 _: &KernelState,
                 _: &BackgroundTheory,
             ) -> bool {
@@ -2101,6 +2112,112 @@ mod tests {
                 InvocationId::new("inv-2"),
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn invoke_start_check_2b_vouch_keys_the_in_flight_invocation_not_the_new_one() {
+        // Oracle verdict keying pin (design finding 13): CHECK 2b's content-gate vouch must
+        // key the IN-FLIGHT invocation being re-examined against the new floor, not the
+        // invocation being started. A ContentGateOracle that passes for exactly one
+        // InvocationId distinguishes correct per-invocation keying from the old per-tool
+        // keying, which would have keyed on the new invocation instead.
+        struct PassesOnly(InvocationId);
+        impl ContentGateOracle for PassesOnly {
+            fn passes(
+                &self,
+                _: &AgentId,
+                _: &ToolId,
+                inv: &InvocationId,
+                _: &KernelState,
+                _: &BackgroundTheory,
+            ) -> bool {
+                *inv == self.0
+            }
+        }
+
+        fn setup() -> (KernelState, BackgroundTheory) {
+            let mut st = state_with_agent("a1", &[CapKind::FilesystemRead, CapKind::NetworkEgress]);
+            let email_inv = InvocationId::new("email-inv");
+            st
+                .in_flight
+                .insert_into(AgentId::new("a1"), email_inv.clone());
+            st
+                .invocation_tool
+                .insert(email_inv, ToolId::new("send_email"));
+
+            let mut builder = BackgroundTheoryBuilder::new();
+            builder.trust_issuer(IssuerId::new("trusted"));
+            builder.register_tool(
+                ToolId::new("read_file"),
+                ToolMetadata {
+                    capabilities: VecSet::from([CapKind::FilesystemRead]),
+                    egress: VecSet::new(),
+                    conf_floor: ConfLevel::Sensitive,
+                    output_bounded: false,
+                    issuer: IssuerId::new("trusted"),
+                    integ_floor: IntegLevel::Untrusted,
+                    integ_inspect_floor: IntegLevel::Untrusted,
+                    output_integ: IntegLevel::Attested,
+                },
+            );
+            builder.register_tool(
+                ToolId::new("send_email"),
+                ToolMetadata {
+                    capabilities: VecSet::from([CapKind::NetworkEgress]),
+                    egress: VecSet::from([EgressKind::NetworkExternal]),
+                    conf_floor: ConfLevel::Public,
+                    output_bounded: false,
+                    issuer: IssuerId::new("trusted"),
+                    integ_floor: IntegLevel::Untrusted,
+                    integ_inspect_floor: IntegLevel::Untrusted,
+                    output_integ: IntegLevel::Attested,
+                },
+            );
+            // (Sensitive, NetworkExternal) sits in the inspect band, so CHECK 2b's admission
+            // depends entirely on the content-gate vouch.
+            builder.set_egress_ceilings(
+                EgressKind::NetworkExternal,
+                Some(ConfLevel::Public),
+                Some(ConfLevel::Sensitive),
+            );
+            (st, builder.build())
+        }
+
+        let new_inv = InvocationId::new("new-inv");
+        let email_inv = InvocationId::new("email-inv");
+
+        // The oracle accepts only the FLIGHT invocation: correct keying admits the flow.
+        let (st, bg) = setup();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &PassesOnly(email_inv),
+                AgentId::new("a1"),
+                ToolId::new("read_file"),
+                new_inv.clone(),
+            )
+            .is_ok(),
+            "CHECK 2b must vouch with the in-flight invocation's content-gate verdict"
+        );
+
+        // The oracle accepts only the NEW invocation: the old per-tool keying would have
+        // wrongly admitted this flow.
+        let (st, bg) = setup();
+        assert!(
+            invoke_start(
+                st,
+                &bg,
+                &AllowAll,
+                &PassesOnly(new_inv.clone()),
+                AgentId::new("a1"),
+                ToolId::new("read_file"),
+                new_inv,
+            )
+            .is_err(),
+            "CHECK 2b must not accept a vouch keyed on the new invocation"
         );
     }
 

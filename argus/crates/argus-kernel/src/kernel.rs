@@ -236,19 +236,19 @@ mod tests {
 
     struct AllowAll;
     impl AuthorizerOracle for AllowAll {
-        fn allows(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn allows(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             true
         }
     }
     struct PassAll;
     impl ContentGateOracle for PassAll {
-        fn passes(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn passes(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             true
         }
     }
     struct ConformsAll;
     impl ConformanceOracle for ConformsAll {
-        fn conforms(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn conforms(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             true
         }
         fn return_conforms(

@@ -96,7 +96,8 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         }
     }
 
-    let new_tool_gate = content_gate.passes(agent, tool, st, bg);
+    // CHECK 2a/2c vouch the NEW invocation's content-gate verdict.
+    let new_tool_gate = content_gate.passes(agent, tool, inv, st, bg);
 
     // CHECK 2a
     let spec_taint = st.speculative_taint(agent, bg);
@@ -110,17 +111,19 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         }
     }
 
-    // CHECK 2b
+    // CHECK 2b. The vouch is the IN-FLIGHT invocation's content-gate verdict (re-examined
+    // against the new floor), computed per flight invocation -- not per flight tool.
     let flights = st.in_flight.get_set_or_empty(agent);
     for fi in 0..flights.len() {
-        let Some(flight_tool) = st.invocation_tool.get_cloned(flights.at(fi)) else {
+        let flight_inv = flights.at(fi);
+        let Some(flight_tool) = st.invocation_tool.get_cloned(flight_inv) else {
             continue;
         };
         let egress: VecSet<EgressKind> = match bg.tool_metadata(&flight_tool) {
             Some(m) => m.egress,
             None => VecSet::new(),
         };
-        let flight_gate = content_gate.passes(agent, &flight_tool, st, bg);
+        let flight_gate = content_gate.passes(agent, &flight_tool, flight_inv, st, bg);
         for ei in 0..egress.len() {
             report.findings.push(gate_finding(
                 bg, st, flight_gate, GateCheck::NewFloorVsInFlight,
@@ -137,7 +140,7 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         ));
     }
 
-    report.authorizer_denied = !authorizer.allows(agent, tool, st, bg);
+    report.authorizer_denied = !authorizer.allows(agent, tool, inv, st, bg);
 
     report.verdict = if !report.missing_caps.is_empty() {
         Some(KernelError::CapabilityMissing)
@@ -162,13 +165,13 @@ mod tests {
 
     struct ConstAuth(bool);
     impl AuthorizerOracle for ConstAuth {
-        fn allows(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn allows(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             self.0
         }
     }
     struct ConstGate(bool);
     impl ContentGateOracle for ConstGate {
-        fn passes(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn passes(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             self.0
         }
     }

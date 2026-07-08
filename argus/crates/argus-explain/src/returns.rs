@@ -37,14 +37,16 @@ pub fn explain_return_unendorsed<C: ContentGateOracle>(
     for li in 0..child_taint.len() {
         let level = *child_taint.at(li);
         for fi in 0..flights.len() {
-            let Some(flight_tool) = st.invocation_tool.get_cloned(flights.at(fi)) else {
+            let flight_inv = flights.at(fi);
+            let Some(flight_tool) = st.invocation_tool.get_cloned(flight_inv) else {
                 continue;
             };
             let egress = match bg.tool_metadata(&flight_tool) {
                 Some(m) => m.egress,
                 None => VecSet::new(),
             };
-            let gate = content_gate.passes(parent, &flight_tool, st, bg);
+            // Vouch is the parent's in-flight invocation being gated.
+            let gate = content_gate.passes(parent, &flight_tool, flight_inv, st, bg);
             for ei in 0..egress.len() {
                 report.findings.push(gate_finding(
                     bg, st, gate, GateCheck::ChildTaintVsParentFlight,
@@ -73,7 +75,7 @@ mod tests {
 
     struct ConstGate(bool);
     impl ContentGateOracle for ConstGate {
-        fn passes(&self, _: &AgentId, _: &ToolId, _: &KernelState, _: &BackgroundTheory) -> bool {
+        fn passes(&self, _: &AgentId, _: &ToolId, _: &InvocationId, _: &KernelState, _: &BackgroundTheory) -> bool {
             self.0
         }
     }
