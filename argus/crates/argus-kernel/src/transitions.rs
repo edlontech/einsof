@@ -59,7 +59,6 @@ fn clear_agent_state(st: &mut KernelState, agent: &AgentId) {
     st.agent_instruction.remove(agent);
     st.override_used.remove(agent);
     st.flow_override.remove(agent);
-    st.agent_budget.remove(agent);
 }
 
 /// Drop every `agent_parent` edge that touches `dropped` on either endpoint (the stale-edge
@@ -203,6 +202,7 @@ pub fn delegate(
     st.agent_parent.insert(grantee.clone(), grantor.clone());
     st.agent_cap.insert(grantee.clone(), VecSet::new());
     clear_agent_state(&mut st, &grantee);
+    st.agent_budget.insert(grantee.clone(), 0);
 
     Ok((st, KernelAction::Delegate { grantor, grantee }))
 }
@@ -845,6 +845,99 @@ mod tests {
             !new_state
                 .agent_parent
                 .contains_key(&AgentId::new("phantom"))
+        );
+    }
+
+    #[test]
+    fn delegate_spawns_grantee_at_budget_zero() {
+        let st = KernelState::initial();
+        let bg = BackgroundTheoryBuilder::new().build();
+        let grantee = AgentId::new("child-1");
+
+        let (new_state, _) = delegate(st, &bg, AgentId::root(), grantee.clone()).unwrap();
+        assert_eq!(new_state.budget(&grantee), 0);
+        assert!(!new_state.affordable(&grantee, 1));
+    }
+
+    #[test]
+    fn delegate_child_cannot_endorse_until_credited() {
+        // Design finding 5 regression: a delegated child cannot self-fund an endorsed
+        // completion (bounded + conforming) until sentinel_credit_budget faucets it.
+        let st = KernelState::initial();
+        let bg_delegate = BackgroundTheoryBuilder::new().build();
+        let grantee = AgentId::new("child-1");
+        let (mut st, _) =
+            delegate(st, &bg_delegate, AgentId::root(), grantee.clone()).unwrap();
+
+        st.agent_cap.insert(grantee.clone(), VecSet::from([CapKind::CreditBudget]));
+
+        let tool = ToolId::new("bounded");
+        let inv = InvocationId::new("binv");
+        st.invocation_tool.insert(inv.clone(), tool.clone());
+        st.in_flight.insert_into(grantee.clone(), inv.clone());
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            tool,
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Sensitive,
+                output_bounded: true,
+                issuer: IssuerId::new("trusted"),
+            },
+        );
+        let bg = builder.build();
+
+        // Before credit: budget 0 cannot afford the Sensitive weight (2), so the endorsed
+        // path is skipped and full taint applies -- laundering requires an explicit credit.
+        let (st, _) = invoke_complete(st, &bg, &ConformsAll, grantee.clone(), inv.clone())
+            .expect("invoke_complete succeeds even when endorsement is unaffordable");
+        assert!(
+            st.taint_levels.get(&grantee).unwrap().contains(&ConfLevel::Sensitive),
+            "uncredited child cannot self-fund the endorsed path"
+        );
+        assert_eq!(st.budget(&grantee), 0, "no debit on the unendorsed path");
+
+        // After credit: same shape completes endorsed with a debit.
+        let (mut st, _) = sentinel_credit_budget(st, &bg, grantee.clone(), 4)
+            .expect("credit succeeds with cap_credit_budget");
+        st.taint_levels.remove(&grantee);
+        st.in_flight.insert_into(grantee.clone(), inv.clone());
+
+        let (st, _) = invoke_complete(st, &bg, &ConformsAll, grantee.clone(), inv)
+            .expect("invoke_complete succeeds");
+        assert!(
+            st.taint_levels.get(&grantee).is_none(),
+            "credited child affords the endorsed path"
+        );
+        assert_eq!(st.budget(&grantee), 4 - 2, "endorsed debit applied");
+    }
+
+    #[test]
+    fn revoke_does_not_reset_budget_on_id_reuse() {
+        let st = KernelState::initial();
+        let bg = BackgroundTheoryBuilder::new().build();
+        let child = AgentId::new("child-1");
+
+        let (mut st, _) = delegate(st, &bg, AgentId::root(), child.clone()).unwrap();
+        st.agent_cap.insert(child.clone(), VecSet::from([CapKind::CreditBudget]));
+        let (st, _) = sentinel_credit_budget(st, &bg, child.clone(), 5).unwrap();
+        assert_eq!(st.budget(&child), 5);
+
+        let (st, _) = revoke(st, &bg, AgentId::root(), child.clone()).unwrap();
+        assert_eq!(
+            st.budget(&child),
+            5,
+            "revoke leaves the budget entry framed, not reset to capacity"
+        );
+
+        let (st, _) = delegate(st, &bg, AgentId::root(), child.clone()).unwrap();
+        assert_eq!(
+            st.budget(&child),
+            0,
+            "re-delegating the same id zeroes the budget explicitly, not via capacity absence"
         );
     }
 

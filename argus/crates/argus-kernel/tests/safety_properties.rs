@@ -180,6 +180,12 @@ fn endorsed_tool_no_taint() {
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
     k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead)
         .unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::CreditBudget)
+        .unwrap();
+    // Delegated children spawn at budget 0 (design finding 5); credit before the endorsed
+    // path can be afforded.
+    k.sentinel_credit_budget(AgentId::new("a1"), BUDGET_CAPACITY)
+        .unwrap();
 
     k.invoke_start(
         AgentId::new("a1"),
@@ -343,6 +349,13 @@ fn return_endorsed_does_not_propagate_taint() {
     k.grant_capability(AgentId::root(), AgentId::new("p"), CapKind::Declassify)
         .unwrap();
     k.grant_capability(AgentId::new("p"), AgentId::new("c"), CapKind::Declassify)
+        .unwrap();
+
+    // `p` is delegated (design finding 5: children spawn at budget 0); credit it so it can
+    // afford the recipient-side debit `return_endorsed` charges.
+    k.grant_capability(AgentId::root(), AgentId::new("p"), CapKind::CreditBudget)
+        .unwrap();
+    k.sentinel_credit_budget(AgentId::new("p"), BUDGET_CAPACITY)
         .unwrap();
 
     k.return_endorsed(AgentId::new("c"), AgentId::new("p"))
@@ -569,8 +582,12 @@ fn budget_exhausted_falls_to_full_taint() {
     k.register_tool(ToolId::new("check_exists")).unwrap();
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
     k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead).unwrap();
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::CreditBudget).unwrap();
+    // Delegated children spawn at budget 0 (design finding 5); credit to capacity to exercise
+    // the exhaustion behavior this test is about.
+    k.sentinel_credit_budget(AgentId::new("a1"), BUDGET_CAPACITY).unwrap();
 
-    // 8 cycles × weight-2 = 16 debits; budget starts at 16 (absence == capacity).
+    // 8 cycles × weight-2 = 16 debits; budget starts at 16 (explicitly credited).
     let mut i = 0u8;
     while i < 8 {
         let inv = InvocationId::new(&format!("inv-{i}"));

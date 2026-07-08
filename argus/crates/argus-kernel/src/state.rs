@@ -22,9 +22,14 @@ pub struct KernelState {
     /// `clear_agent_state`.
     pub flow_override: VecMap<AgentId, VecSet<OverrideKey>>,
     /// Per-agent declassification budget (TzimtzumV2 `agent_budget`). Absence == capacity
-    /// (`BUDGET_CAPACITY`): a fresh or budget-credited agent has no entry. Debited by the
+    /// (`BUDGET_CAPACITY`) only for an agent that has never been delegated (root, or the
+    /// initial state) -- the spec's `initial` gives capacity everywhere. `delegate` spawns
+    /// every grantee with an explicit `0` entry instead: budget conservation means delegation
+    /// mints nothing, and `sentinel_credit_budget` is the only faucet. Debited by the
     /// sensitivity weight on each endorsement; an unaffordable debit forces the fail-closed
-    /// full-taint / refusal path. Reset to capacity by `clear_agent_state`.
+    /// full-taint / refusal path. `revoke`/`cascade_revoke` leave the entry framed (inert --
+    /// a revoked agent cannot act); `delegate` deterministically zeroes it again if the id is
+    /// ever reused as a grantee.
     pub agent_budget: VecMap<AgentId, u8>,
 }
 
