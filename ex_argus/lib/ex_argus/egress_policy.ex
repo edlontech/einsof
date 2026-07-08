@@ -1,17 +1,19 @@
 defmodule ExArgus.EgressPolicy do
   @moduledoc """
-  Pure, fail-closed URL allowlist for network-egress admission.
+  Pure, fail-closed URL egress-kind classifier.
 
   This is the **unverified** refinement that lives outside the proven kernel (per the
-  guest-model split): it narrows *which* destinations an agent may reach, on top of the
-  verified capability + flow gates. It can only ever subtract from what the kernel already
-  permits -- it never widens access. The verified kernel never sees a URL; this decision is
-  computed here and folded into the single authorizer boolean `invoke_start` consumes (see
-  `ExArgus.EgressAuthorizer`).
+  guest-model split): it classifies *which* egress kinds a URL attests to, on top of the
+  verified capability + flow + narrowing/coverage gates. It can only ever subtract from what
+  the kernel already permits -- it never widens access. The verified kernel never sees a URL;
+  this decision is computed here and folded into the attested-egress list `invoke_start`
+  consumes (see `ExArgus.EgressAuthorizer`).
 
-  A policy is `%{agent_id => [rule]}`. A URL is admitted for an agent iff some rule for that
-  agent matches. No rule, no agent entry, an unparseable URL, or anything that fails
-  canonicalization => denied.
+  A policy is a per-agent rule set: `%{agent_id => [rule]}`. `classify/2` operates on the
+  already-selected rule set for one agent. A URL attests to the **union** of every matching
+  rule's kind -- every attested kind must still clear the kernel's flow gate, so a union is
+  strictly more restrictive than any single rule, never less. No matching rule, an
+  unparseable URL, or anything that fails canonicalization => denied (fail-closed).
 
   ## Rule
 
@@ -19,7 +21,8 @@ defmodule ExArgus.EgressPolicy do
         scheme: "https",                 # required; matched exactly (case-insensitive)
         host: "api.example.com",         # required; exact host (configure in punycode)
         port: 443,                       # required; matched exactly
-        path_prefixes: ["/v1/", "/v2/"]  # optional; [] / absent => any path
+        path_prefixes: ["/v1/", "/v2/"], # optional; [] / absent => any path
+        kind: :network_external          # required; the egress_kind this rule attests
       }
 
   Path prefixes match at **segment** granularity: `"/v1/"` admits `/v1` and `/v1/users` but
@@ -35,32 +38,40 @@ defmodule ExArgus.EgressPolicy do
   fails closed.
   """
 
+  alias ExArgus.Kernel.Types
+
   @allowed_schemes ~w(http https)
 
   @type rule :: %{
           required(:scheme) => String.t(),
           required(:host) => String.t(),
           required(:port) => :inet.port_number(),
+          required(:kind) => Types.egress_kind(),
           optional(:path_prefixes) => [String.t()]
         }
   @type policy :: %{optional(String.t()) => [rule]}
 
   @doc """
-  `true` iff `url` is admissible for `agent` under `policy`. Total and fail-closed: any input
-  it cannot positively match (including unparseable or malformed URLs) returns `false`.
+  Classifies `url` against `rules` (the already-selected rule set for one agent). Returns
+  `{:ok, kinds}` with the deduplicated union of every matching rule's `:kind`, or `:deny`.
+  Total and fail-closed: any input it cannot positively match (including unparseable or
+  malformed URLs) returns `:deny`.
   """
-  @spec allows?(policy, String.t(), String.t()) :: boolean()
-  def allows?(policy, agent, url)
-      when is_map(policy) and is_binary(agent) and is_binary(url) do
-    with [_ | _] = rules <- Map.get(policy, agent, []),
-         {:ok, canon} <- canonicalize(url) do
-      Enum.any?(rules, &match_rule?(&1, canon))
-    else
-      _ -> false
+  @spec classify([rule], String.t()) :: {:ok, [Types.egress_kind()]} | :deny
+  def classify(rules, url) when is_list(rules) and is_binary(url) do
+    case canonicalize(url) do
+      {:ok, canon} ->
+        case Enum.filter(rules, &match_rule?(&1, canon)) do
+          [] -> :deny
+          matches -> {:ok, matches |> Enum.map(& &1.kind) |> Enum.uniq()}
+        end
+
+      :error ->
+        :deny
     end
   end
 
-  def allows?(_policy, _agent, _url), do: false
+  def classify(_rules, _url), do: :deny
 
   @spec canonicalize(String.t()) :: {:ok, map} | :error
   defp canonicalize(url) do

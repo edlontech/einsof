@@ -122,6 +122,32 @@ defmodule ExArgus.OfflineTest do
     assert :standard in Map.fetch!(s.integ_levels, "a1")
   end
 
+  test "invoke_start/7 threads an {authorized?, attested} tuple from attest/4" do
+    bg = bg()
+    s = Offline.initial_state()
+    {:ok, s, _} = Offline.register_tool(s, bg, "read_file")
+    {:ok, s, _} = Offline.delegate(s, bg, "root", "a1")
+
+    assert {:ok, s, {:invoke_start, "a1", "read_file", "inv-1"}} =
+             Offline.invoke_start(s, bg, "a1", "read_file", "inv-1", {true, []}, %{
+               "inv-1" => true
+             })
+
+    assert "inv-1" in Map.fetch!(s.in_flight, "a1")
+  end
+
+  test "invoke_start/7 propagates a denied authorized? through the underlying call" do
+    bg = bg()
+    s = Offline.initial_state()
+    {:ok, s, _} = Offline.register_tool(s, bg, "read_file")
+    {:ok, s, _} = Offline.delegate(s, bg, "root", "a1")
+
+    assert {:error, :authorizer_denied} =
+             Offline.invoke_start(s, bg, "a1", "read_file", "inv-1", {false, []}, %{
+               "inv-1" => true
+             })
+  end
+
   test "sentinel_degrade_integrity is denied when an in-flight tool's floor would be violated" do
     bg = integ_bg()
     s = Offline.initial_state()

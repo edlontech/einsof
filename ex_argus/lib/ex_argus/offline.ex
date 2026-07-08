@@ -18,6 +18,7 @@ defmodule ExArgus.Offline do
   """
 
   alias ExArgus.Kernel.State
+  alias ExArgus.Kernel.Types
   alias ExArgus.Native
 
   @type state :: State.t()
@@ -138,6 +139,16 @@ defmodule ExArgus.Offline do
                 attested_egress
               ),
               to: Native
+
+  @doc """
+  Convenience arity threading `ExArgus.EgressAuthorizer.attest/4`'s `{authorized?, attested}`
+  output directly, instead of unpacking it at each call site.
+  """
+  @spec invoke_start(state, background, id, id, id, {boolean, [Types.egress_kind()]}, map) ::
+          outcome
+  def invoke_start(state, bg, agent, tool, inv, {authorized?, attested_egress}, content_gate) do
+    Native.invoke_start(state, bg, agent, tool, inv, authorized?, content_gate, attested_egress)
+  end
 
   defdelegate invoke_complete(state, bg, agent, inv, conformance_conforms), to: Native
   defdelegate return_unendorsed(state, bg, child, parent, content_gate), to: Native

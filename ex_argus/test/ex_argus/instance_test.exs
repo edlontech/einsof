@@ -64,6 +64,30 @@ defmodule ExArgus.InstanceTest do
     assert Instance.seq(h) == 6
   end
 
+  test "invoke_start/6 threads an {authorized?, attested} tuple from attest/4" do
+    h = Instance.new(bg())
+    {:ok, _, _} = Instance.register_tool(h, "read_file")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :filesystem_read)
+
+    assert {:ok, _, {:invoke_start, "a1", "read_file", "inv-1"}} =
+             Instance.invoke_start(h, "a1", "read_file", "inv-1", {true, []}, %{"inv-1" => true})
+
+    assert "inv-1" in Map.fetch!(Instance.state(h).in_flight, "a1")
+  end
+
+  test "invoke_start/6 propagates a denied authorized? through the underlying call" do
+    h = Instance.new(bg())
+    {:ok, _, _} = Instance.register_tool(h, "read_file")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :filesystem_read)
+
+    assert {:error, :authorizer_denied} =
+             Instance.invoke_start(h, "a1", "read_file", "inv-1", {false, []}, %{
+               "inv-1" => true
+             })
+  end
+
   test "a refused transition leaves state and seq unchanged" do
     h = Instance.new(bg())
     {:ok, 1, _} = Instance.register_tool(h, "read_file")

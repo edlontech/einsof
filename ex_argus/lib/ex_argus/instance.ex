@@ -17,6 +17,7 @@ defmodule ExArgus.Instance do
   """
 
   alias ExArgus.Kernel.State
+  alias ExArgus.Kernel.Types
   alias ExArgus.{Native, Offline}
 
   @type t :: reference()
@@ -138,6 +139,23 @@ defmodule ExArgus.Instance do
               ),
               to: Native,
               as: :instance_invoke_start
+
+  @doc """
+  Convenience arity threading `ExArgus.EgressAuthorizer.attest/4`'s `{authorized?, attested}`
+  output directly, instead of unpacking it at each call site.
+  """
+  @spec invoke_start(t, id, id, id, {boolean, [Types.egress_kind()]}, map) :: outcome
+  def invoke_start(handle, agent, tool, inv, {authorized?, attested_egress}, content_gate) do
+    Native.instance_invoke_start(
+      handle,
+      agent,
+      tool,
+      inv,
+      authorized?,
+      content_gate,
+      attested_egress
+    )
+  end
 
   defdelegate invoke_complete(handle, agent, inv, conformance_conforms),
     to: Native,

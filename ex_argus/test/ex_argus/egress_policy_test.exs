@@ -4,134 +4,152 @@ defmodule ExArgus.EgressPolicyTest do
 
   alias ExArgus.EgressPolicy
 
-  @policy %{
-    "a1" => [
-      %{scheme: "https", host: "api.example.com", port: 443, path_prefixes: ["/v1/"]},
-      %{scheme: "https", host: "cdn.example.com", port: 443}
-    ]
-  }
+  @rules [
+    %{
+      scheme: "https",
+      host: "api.example.com",
+      port: 443,
+      path_prefixes: ["/v1/"],
+      kind: :network_external
+    },
+    %{scheme: "https", host: "cdn.example.com", port: 443, kind: :network_external}
+  ]
 
-  describe "allows?/3 -- positive matches" do
-    test "admits a configured host + path prefix (URL X)" do
-      assert EgressPolicy.allows?(@policy, "a1", "https://api.example.com/v1/users")
+  describe "classify/2 -- positive matches" do
+    test "attests the rule's kind for a configured host + path prefix (URL X)" do
+      assert {:ok, [:network_external]} =
+               EgressPolicy.classify(@rules, "https://api.example.com/v1/users")
     end
 
-    test "admits the prefix boundary exactly" do
-      assert EgressPolicy.allows?(@policy, "a1", "https://api.example.com/v1")
+    test "attests at the prefix boundary exactly" do
+      assert {:ok, [:network_external]} =
+               EgressPolicy.classify(@rules, "https://api.example.com/v1")
     end
 
-    test "admits any path on a host whose rule has no path_prefixes" do
-      assert EgressPolicy.allows?(@policy, "a1", "https://cdn.example.com/anything/here")
+    test "attests any path on a host whose rule has no path_prefixes" do
+      assert {:ok, [:network_external]} =
+               EgressPolicy.classify(@rules, "https://cdn.example.com/anything/here")
     end
 
     test "host match is case-insensitive and ignores a trailing dot" do
-      assert EgressPolicy.allows?(@policy, "a1", "HTTPS://API.EXAMPLE.COM./v1/x")
+      assert {:ok, [:network_external]} =
+               EgressPolicy.classify(@rules, "HTTPS://API.EXAMPLE.COM./v1/x")
     end
 
     test "an explicit default port matches" do
-      assert EgressPolicy.allows?(@policy, "a1", "https://api.example.com:443/v1/x")
+      assert {:ok, [:network_external]} =
+               EgressPolicy.classify(@rules, "https://api.example.com:443/v1/x")
+    end
+
+    test "multiple matching rules attest the union of their kinds, deduplicated" do
+      rules = [
+        %{scheme: "https", host: "api.example.com", port: 443, kind: :network_external},
+        %{scheme: "https", host: "api.example.com", port: 443, kind: :filesystem_write},
+        %{scheme: "https", host: "api.example.com", port: 443, kind: :network_external}
+      ]
+
+      assert {:ok, kinds} = EgressPolicy.classify(rules, "https://api.example.com/anything")
+      assert Enum.sort(kinds) == [:filesystem_write, :network_external]
     end
   end
 
-  describe "allows?/3 -- denials" do
+  describe "classify/2 -- denials (fail-closed)" do
     test "denies a non-allowlisted host (URL Y)" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://evil.com/v1/users")
+      assert :deny = EgressPolicy.classify(@rules, "https://evil.com/v1/users")
     end
 
     test "denies a path outside the prefix" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://api.example.com/v2/users")
+      assert :deny = EgressPolicy.classify(@rules, "https://api.example.com/v2/users")
     end
 
     test "does not let /v1 prefix leak into /v10" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://api.example.com/v10/users")
+      assert :deny = EgressPolicy.classify(@rules, "https://api.example.com/v10/users")
     end
 
     test "denies a non-default / mismatched port" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://api.example.com:8443/v1/x")
+      assert :deny = EgressPolicy.classify(@rules, "https://api.example.com:8443/v1/x")
     end
 
     test "denies a scheme downgrade" do
-      refute EgressPolicy.allows?(@policy, "a1", "http://api.example.com/v1/x")
+      assert :deny = EgressPolicy.classify(@rules, "http://api.example.com/v1/x")
     end
 
     test "denies userinfo host spoofing" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://api.example.com@evil.com/v1/x")
+      assert :deny = EgressPolicy.classify(@rules, "https://api.example.com@evil.com/v1/x")
     end
 
     test "denies path traversal" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://api.example.com/v1/../../secret")
+      assert :deny = EgressPolicy.classify(@rules, "https://api.example.com/v1/../../secret")
     end
 
     test "denies encoded path traversal" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://api.example.com/v1/%2e%2e%2fsecret")
+      assert :deny = EgressPolicy.classify(@rules, "https://api.example.com/v1/%2e%2e%2fsecret")
     end
 
     test "denies an encoded slash in the path" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://api.example.com/v1%2fsecret")
+      assert :deny = EgressPolicy.classify(@rules, "https://api.example.com/v1%2fsecret")
     end
 
     test "denies a non-http(s) scheme" do
-      refute EgressPolicy.allows?(@policy, "a1", "file:///etc/passwd")
+      assert :deny = EgressPolicy.classify(@rules, "file:///etc/passwd")
     end
 
     test "denies a schemeless / relative url" do
-      refute EgressPolicy.allows?(@policy, "a1", "api.example.com/v1/x")
+      assert :deny = EgressPolicy.classify(@rules, "api.example.com/v1/x")
     end
 
     test "denies an unparseable url" do
-      refute EgressPolicy.allows?(@policy, "a1", "ht!tp://::::")
+      assert :deny = EgressPolicy.classify(@rules, "ht!tp://::::")
     end
 
     test "denies a unicode homograph host (must be configured in punycode)" do
-      refute EgressPolicy.allows?(@policy, "a1", "https://аpi.example.com/v1/x")
+      assert :deny = EgressPolicy.classify(@rules, "https://аpi.example.com/v1/x")
     end
 
-    test "denies an agent with no rules" do
-      refute EgressPolicy.allows?(@policy, "ghost", "https://api.example.com/v1/x")
-    end
-
-    test "denies under an empty policy" do
-      refute EgressPolicy.allows?(%{}, "a1", "https://api.example.com/v1/x")
+    test "denies under an empty rule list" do
+      assert :deny = EgressPolicy.classify([], "https://api.example.com/v1/x")
     end
 
     test "is fail-closed on non-binary inputs" do
-      refute EgressPolicy.allows?(@policy, "a1", nil)
-      refute EgressPolicy.allows?(@policy, :a1, "https://api.example.com/v1/x")
+      assert :deny = EgressPolicy.classify(@rules, nil)
+      assert :deny = EgressPolicy.classify(nil, "https://api.example.com/v1/x")
     end
   end
 
   describe "properties" do
-    property "is total: never raises and always returns a boolean for arbitrary urls" do
-      check all(
-              url <- string(:printable),
-              agent <- member_of(["a1", "cdn", "ghost"])
-            ) do
-        assert is_boolean(EgressPolicy.allows?(@policy, agent, url))
-      end
-    end
-
-    property "an empty policy denies every url" do
+    property "is total: never raises and returns :deny or {:ok, kinds} for arbitrary urls" do
       check all(url <- string(:printable)) do
-        refute EgressPolicy.allows?(%{}, "a1", url)
+        assert match?({:ok, _}, EgressPolicy.classify(@rules, url)) or
+                 EgressPolicy.classify(@rules, url) == :deny
       end
     end
 
-    property "adding rules never turns an allow into a deny (allowlist is monotone)" do
-      base = [%{scheme: "https", host: "api.example.com", port: 443}]
-      extra = [%{scheme: "https", host: "other.example.com", port: 443}]
+    property "an empty rule list denies every url" do
+      check all(url <- string(:printable)) do
+        assert :deny = EgressPolicy.classify([], url)
+      end
+    end
+
+    property "adding rules never turns an attest into a deny (allowlist is monotone)" do
+      base = [%{scheme: "https", host: "api.example.com", port: 443, kind: :network_external}]
+
+      extra = [
+        %{scheme: "https", host: "other.example.com", port: 443, kind: :network_external}
+      ]
 
       check all(url <- url_gen()) do
-        if EgressPolicy.allows?(%{"a1" => base}, "a1", url) do
-          assert EgressPolicy.allows?(%{"a1" => base ++ extra}, "a1", url)
+        case EgressPolicy.classify(base, url) do
+          {:ok, kinds} -> assert {:ok, ^kinds} = EgressPolicy.classify(base ++ extra, url)
+          :deny -> :ok
         end
       end
     end
 
-    property "an admitted url always lands on an allowlisted host" do
+    property "an attested url always lands on an allowlisted host" do
       hosts = ["api.example.com", "cdn.example.com"]
 
       check all(url <- url_gen()) do
-        if EgressPolicy.allows?(@policy, "a1", url) do
+        if match?({:ok, _}, EgressPolicy.classify(@rules, url)) do
           assert Enum.any?(hosts, &String.contains?(String.downcase(url), &1))
         end
       end
