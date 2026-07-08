@@ -83,4 +83,133 @@ defmodule ExArgus.ExplainTest do
     report = Explain.explain_sentinel_elevate_taint(state, @bg, "a1", :restricted, %{})
     assert report.verdict == nil
   end
+
+  defp lever_bg do
+    %Background{
+      tools: %{},
+      allow_ceiling: %{},
+      inspect_ceiling: %{},
+      trusted_issuers: ["trusted"],
+      instruction_issuer: %{},
+      lever_integ_floor: :trusted,
+      lever_integ_inspect_floor: :trusted
+    }
+  end
+
+  test "explain_return_endorsed agrees on a below-lever-floor denial" do
+    bg = lever_bg()
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.delegate(state, bg, "root", "c")
+    {:ok, state, _} = Offline.grant_capability(state, bg, "root", "c", :declassify)
+    {:ok, state, _} = Offline.sentinel_degrade_integrity(state, bg, "c", :untrusted, %{})
+
+    assert {:error, :lever_integrity_denied} =
+             Offline.return_endorsed(state, bg, "c", "root", true, :public, :attested)
+
+    report = Explain.explain_return_endorsed(state, bg, "c", "root", true, :public, :attested)
+
+    assert report.verdict == :lever_integrity_denied
+    assert [finding | _] = Enum.filter(report.lever_findings, &(&1.outcome == :denied))
+    assert finding.check == :child_integ_vs_lever_floor
+    assert {:raise_integrity, "c"} in finding.rescues
+    assert {:lever_floor_relabel, :trusted} in finding.rescues
+  end
+
+  test "explain_return_endorsed agrees on success" do
+    bg = lever_bg()
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.delegate(state, bg, "root", "c")
+    {:ok, state, _} = Offline.grant_capability(state, bg, "root", "c", :declassify)
+
+    assert {:ok, _, _} =
+             Offline.return_endorsed(state, bg, "c", "root", true, :public, :attested)
+
+    report = Explain.explain_return_endorsed(state, bg, "c", "root", true, :public, :attested)
+    assert report.verdict == nil
+    refute Explain.denied?(report)
+  end
+
+  test "explain_grant_override agrees on a degraded-granter denial" do
+    bg = lever_bg()
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.delegate(state, bg, "root", "target")
+    {:ok, state, _} = Offline.sentinel_degrade_integrity(state, bg, "root", :untrusted, %{})
+
+    assert {:error, :lever_integrity_denied} =
+             Offline.grant_override(state, bg, "root", "target", "some_tool", :sensitive)
+
+    report = Explain.explain_grant_override(state, bg, "root", "target", :sensitive)
+
+    assert report.verdict == :lever_integrity_denied
+    assert [finding | _] = Enum.filter(report.lever_findings, &(&1.outcome == :denied))
+    assert finding.check == :granter_integ_vs_lever_floor
+    assert finding.floor == finding.inspect_floor
+    assert {:raise_integrity, "root"} in finding.rescues
+  end
+
+  test "explain_grant_override agrees on success" do
+    bg = lever_bg()
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.delegate(state, bg, "root", "target")
+
+    assert {:ok, _, _} =
+             Offline.grant_override(state, bg, "root", "target", "some_tool", :sensitive)
+
+    report = Explain.explain_grant_override(state, bg, "root", "target", :sensitive)
+    assert report.verdict == nil
+    refute Explain.denied?(report)
+  end
+
+  defp integ_bg do
+    %Background{
+      tools: %{
+        "delete_repo" => %{
+          capabilities: [],
+          egress: [],
+          conf_floor: :public,
+          output_bounded: true,
+          issuer: "trusted",
+          integ_floor: :trusted,
+          integ_inspect_floor: :trusted,
+          output_integ: :attested
+        }
+      },
+      allow_ceiling: %{},
+      inspect_ceiling: %{},
+      trusted_issuers: ["trusted"],
+      instruction_issuer: %{}
+    }
+  end
+
+  test "explain_sentinel_degrade_integrity agrees on a blocked in-flight-floor denial" do
+    bg = integ_bg()
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.register_tool(state, bg, "delete_repo")
+    {:ok, state, _} = Offline.delegate(state, bg, "root", "a1")
+
+    {:ok, state, _} =
+      Offline.invoke_start(state, bg, "a1", "delete_repo", "inv-1", true, %{"inv-1" => true}, [])
+
+    assert {:error, :integrity_floor_denied} =
+             Offline.sentinel_degrade_integrity(state, bg, "a1", :untrusted, %{})
+
+    report = Explain.explain_sentinel_degrade_integrity(state, bg, "a1", :untrusted, %{})
+
+    assert report.verdict == :integrity_floor_denied
+    assert [finding | _] = Enum.filter(report.integ_findings, &(&1.outcome == :denied))
+    assert finding.check == :degrade_vs_in_flight_floor
+    assert finding.tool == "delete_repo"
+  end
+
+  test "explain_sentinel_degrade_integrity agrees on success" do
+    bg = integ_bg()
+    state = Offline.initial_state()
+    {:ok, state, _} = Offline.delegate(state, bg, "root", "a1")
+
+    assert {:ok, _, _} = Offline.sentinel_degrade_integrity(state, bg, "a1", :untrusted, %{})
+
+    report = Explain.explain_sentinel_degrade_integrity(state, bg, "a1", :untrusted, %{})
+    assert report.verdict == nil
+    refute Explain.denied?(report)
+  end
 end

@@ -16,6 +16,8 @@ defmodule ExArgus.Explain do
           verdict: ExArgus.Offline.error_reason() | nil,
           missing_caps: [atom],
           findings: [map],
+          integ_findings: [map],
+          lever_findings: [map],
           authorizer_denied: boolean
         }
 
@@ -34,6 +36,14 @@ defmodule ExArgus.Explain do
   defdelegate explain_return_unendorsed(state, bg, child, parent, content_gate), to: Native
 
   defdelegate explain_sentinel_elevate_taint(state, bg, agent, level, content_gate), to: Native
+
+  defdelegate explain_sentinel_degrade_integrity(state, bg, agent, level, content_gate),
+    to: Native
+
+  defdelegate explain_return_endorsed(state, bg, child, parent, return_conforms, clvl, ilvl),
+    to: Native
+
+  defdelegate explain_grant_override(state, bg, granter, target, level), to: Native
 
   @doc "True if the report's verdict is a denial."
   @spec denied?(report) :: boolean

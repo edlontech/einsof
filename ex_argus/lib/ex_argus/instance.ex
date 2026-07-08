@@ -189,6 +189,18 @@ defmodule ExArgus.Instance do
     to: Native,
     as: :instance_explain_sentinel_elevate_taint
 
+  defdelegate explain_sentinel_degrade_integrity(handle, agent, level, content_gate),
+    to: Native,
+    as: :instance_explain_sentinel_degrade_integrity
+
+  defdelegate explain_return_endorsed(handle, child, parent, return_conforms, clvl, ilvl),
+    to: Native,
+    as: :instance_explain_return_endorsed
+
+  defdelegate explain_grant_override(handle, granter, target, level),
+    to: Native,
+    as: :instance_explain_grant_override
+
   @doc "True if the report's verdict is a denial (delegates to `ExArgus.Explain.denied?/1`)."
   @spec denied?(ExArgus.Explain.report()) :: boolean
   defdelegate denied?(report), to: ExArgus.Explain

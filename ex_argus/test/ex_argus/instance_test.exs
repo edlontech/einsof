@@ -164,6 +164,63 @@ defmodule ExArgus.InstanceTest do
     assert Instance.denied?(live) == (live.verdict != nil)
   end
 
+  test "instance explain_sentinel_degrade_integrity matches offline explain on the projection" do
+    h = Instance.new(integ_bg())
+    {:ok, _, _} = Instance.register_tool(h, "delete_repo")
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+
+    {:ok, _, _} =
+      Instance.invoke_start(h, "a1", "delete_repo", "inv-1", true, %{"inv-1" => true}, [])
+
+    snapshot = Instance.state(h)
+
+    live = Instance.explain_sentinel_degrade_integrity(h, "a1", :untrusted, %{})
+
+    offline =
+      ExArgus.Explain.explain_sentinel_degrade_integrity(
+        snapshot,
+        integ_bg(),
+        "a1",
+        :untrusted,
+        %{}
+      )
+
+    assert live == offline
+    assert live.verdict == :integrity_floor_denied
+  end
+
+  test "instance explain_return_endorsed and explain_grant_override match offline explain" do
+    h = Instance.new(bg())
+    {:ok, _, _} = Instance.delegate(h, "root", "a1")
+    {:ok, _, _} = Instance.grant_capability(h, "root", "a1", :declassify)
+
+    snapshot = Instance.state(h)
+
+    live = Instance.explain_return_endorsed(h, "a1", "root", true, :public, :attested)
+
+    offline =
+      ExArgus.Explain.explain_return_endorsed(
+        snapshot,
+        bg(),
+        "a1",
+        "root",
+        true,
+        :public,
+        :attested
+      )
+
+    assert live == offline
+    assert live.verdict == nil
+
+    live_override = Instance.explain_grant_override(h, "root", "a1", :sensitive)
+
+    offline_override =
+      ExArgus.Explain.explain_grant_override(snapshot, bg(), "root", "a1", :sensitive)
+
+    assert live_override == offline_override
+    assert live_override.verdict == nil
+  end
+
   test "invoke_start with a reused invocation id returns :invocation_exists" do
     h = Instance.new(bg())
     {:ok, _, _} = Instance.register_tool(h, "read_file")
