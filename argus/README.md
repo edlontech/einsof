@@ -51,21 +51,21 @@ The protocol is verified in Lean 4 (see [`tzimtzum/`](../tzimtzum/), built on th
 [Kav](../kav/) framework): TzimtzumV3, 16 actions against 26 invariants (11 safety
 properties + 15 strengthening invariants), all kernel-checked.
 
-The Rust kernel implements TzimtzumV3, but the Lean refinement has not caught up: the
-Aeneas/Charon extraction (`argus_kernel.llbc`) and the proof under
-[`formal-lean/`](formal-lean/) still target the prior TzimtzumV2 kernel and are stale.
-`implementation_sound` -- every reachable state of the extracted kernel refines an
-abstract state satisfying all safety invariants, forward simulation composed with the Kav
-soundness theorem, kernel-checked -- holds only for that V2 extraction. Re-extracting
-against the V3 kernel and redoing the refinement is the next campaign step; until it
-lands, the V3 kernel itself is unverified.
+The Rust kernel implements TzimtzumV3, and the Lean refinement under
+[`formal-lean/`](formal-lean/) targets the same V3 kernel (extracted via Charon/Aeneas,
+`scripts/charon-aeneas-extract.sh`). `implementation_sound` -- every reachable state of
+the extracted kernel refines an abstract state satisfying all safety invariants, forward
+simulation composed with the Kav soundness theorem, kernel-checked -- holds over all 16
+V3 actions.
 
-The V2 refinement holds modulo the trusted Aeneas/Charon extractor and two explicit
-assumptions: `CapacityOK` (the `Vec`-capacity bounds each transition needs) and
-`OracleFidelity` (the runtime oracles agree with the abstract oracle fields). It does not
-prove the hand-written Rust source, the oracles, or the external SPIFFE/STS mesh and
-adapter correct. See [`formal-lean/README.md`](formal-lean/README.md) for the module map
-and the full trust base.
+The refinement holds modulo the trusted Aeneas/Charon extractor and two explicit
+assumptions: `CapacityOK` (the `Vec`-capacity bounds each transition needs, plus
+`invoke_start`'s per-invocation tool-binding and attested-egress predictions) and
+`OracleFidelity` (the runtime oracles agree with a fixed per-invocation abstract
+interpretation). It does not prove the hand-written Rust source, the oracles, or the
+external SPIFFE/STS mesh and adapter correct. See
+[`formal-lean/README.md`](formal-lean/README.md) for the module map and the full trust
+base.
 
 ## Building
 
