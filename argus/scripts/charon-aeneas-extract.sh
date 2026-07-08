@@ -19,9 +19,6 @@
 #
 # Prereqs: tools/aeneas built (bin/aeneas) and Charon set up (gmake setup-charon && gmake build-bin-dir).
 # Usage:   eval "$(opam env --switch=aeneas --set-switch)" && argus/scripts/charon-aeneas-extract.sh
-#
-# NOTE: the extracted model is currently PARTIAL and does not elaborate — see
-# argus/formal-lean/ArgusLean/Generated/COVERAGE.md for the enumerated gaps (Phase C entry).
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"

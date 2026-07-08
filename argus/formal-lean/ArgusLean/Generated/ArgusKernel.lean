@@ -52,7 +52,7 @@ axiom alloc.string.String.Insts.CoreCmpPartialEqString.eq
 axiom alloc.string.String.Insts.CoreCloneClone.clone : String → Result String
 
 /-- [argus_kernel::types::EgressKind]
-    Source: 'crates/argus-kernel/src/types.rs', lines 152:0-157:1
+    Source: 'crates/argus-kernel/src/types.rs', lines 212:0-217:1
     Visibility: public -/
 @[discriminant isize]
 inductive types.EgressKind where
@@ -60,6 +60,16 @@ inductive types.EgressKind where
 | NetworkInternal : types.EgressKind
 | FilesystemWrite : types.EgressKind
 | Ipc : types.EgressKind
+
+/-- [argus_kernel::types::IntegLevel]
+    Source: 'crates/argus-kernel/src/types.rs', lines 154:0-159:1
+    Visibility: public -/
+@[discriminant isize]
+inductive types.IntegLevel where
+| Untrusted : types.IntegLevel
+| Standard : types.IntegLevel
+| Trusted : types.IntegLevel
+| Attested : types.IntegLevel
 
 /-- [argus_kernel::types::ConfLevel]
     Source: 'crates/argus-kernel/src/types.rs', lines 83:0-88:1
@@ -108,7 +118,7 @@ inductive capability.CapKind where
 | GrantOverride : capability.CapKind
 
 /-- [argus_kernel::background::ToolMetadata]
-    Source: 'crates/argus-kernel/src/background.rs', lines 6:0-12:1
+    Source: 'crates/argus-kernel/src/background.rs', lines 6:0-21:1
     Visibility: public -/
 structure background.ToolMetadata where
   capabilities : collections.VecSet capability.CapKind
@@ -116,21 +126,31 @@ structure background.ToolMetadata where
   conf_floor : types.ConfLevel
   output_bounded : Bool
   issuer : types.IssuerId
+  integ_floor : types.IntegLevel
+  integ_inspect_floor : types.IntegLevel
+  output_integ : types.IntegLevel
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::EgressKind}::clone]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 151:9-151:14
+    Source: 'crates/argus-kernel/src/types.rs', lines 211:9-211:14
     Visibility: public -/
 def types.EgressKind.Insts.CoreCloneClone.clone
   (self : types.EgressKind) : Result types.EgressKind := do
   ok self
 
 /-- Trait implementation: [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::EgressKind}]
-    Source: 'crates/argus-kernel/src/types.rs', lines 151:9-151:14 -/
+    Source: 'crates/argus-kernel/src/types.rs', lines 211:9-211:14 -/
 @[reducible]
 def types.EgressKind.Insts.CoreCloneClone : core.clone.Clone types.EgressKind
   := {
   clone := types.EgressKind.Insts.CoreCloneClone.clone
 }
+
+/-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::IntegLevel}::clone]:
+    Source: 'crates/argus-kernel/src/types.rs', lines 153:9-153:14
+    Visibility: public -/
+def types.IntegLevel.Insts.CoreCloneClone.clone
+  (self : types.IntegLevel) : Result types.IntegLevel := do
+  ok self
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::ConfLevel}::clone]:
     Source: 'crates/argus-kernel/src/types.rs', lines 82:9-82:14
@@ -187,13 +207,20 @@ def background.ToolMetadata.Insts.CoreCloneClone.clone
   let cl ← types.ConfLevel.Insts.CoreCloneClone.clone self.conf_floor
   let b ← lift (core.clone.impls.CloneBool.clone self.output_bounded)
   let ii ← types.IssuerId.Insts.CoreCloneClone.clone self.issuer
+  let il ← types.IntegLevel.Insts.CoreCloneClone.clone self.integ_floor
+  let il1 ←
+    types.IntegLevel.Insts.CoreCloneClone.clone self.integ_inspect_floor
+  let il2 ← types.IntegLevel.Insts.CoreCloneClone.clone self.output_integ
   ok
     {
       capabilities := vs,
       egress := vs1,
       conf_floor := cl,
       output_bounded := b,
-      issuer := ii
+      issuer := ii,
+      integ_floor := il,
+      integ_inspect_floor := il1,
+      output_integ := il2
     }
 
 /-- Trait implementation: [argus_kernel::background::{impl core::clone::Clone for argus_kernel::background::ToolMetadata}]
@@ -205,7 +232,7 @@ def background.ToolMetadata.Insts.CoreCloneClone : core.clone.Clone
 }
 
 /-- [argus_kernel::background::FlowMode]
-    Source: 'crates/argus-kernel/src/background.rs', lines 15:0-19:1
+    Source: 'crates/argus-kernel/src/background.rs', lines 24:0-28:1
     Visibility: public -/
 @[discriminant isize]
 inductive background.FlowMode where
@@ -232,7 +259,7 @@ structure collections.VecMap (K : Type) (V : Type) where
   entries : alloc.vec.Vec (K × V)
 
 /-- [argus_kernel::background::BackgroundTheory]
-    Source: 'crates/argus-kernel/src/background.rs', lines 30:0-36:1
+    Source: 'crates/argus-kernel/src/background.rs', lines 39:0-47:1
     Visibility: public -/
 structure background.BackgroundTheory where
   tools : collections.VecMap types.ToolId background.ToolMetadata
@@ -240,6 +267,8 @@ structure background.BackgroundTheory where
   inspect_ceiling : collections.VecMap types.EgressKind types.ConfLevel
   trusted_issuers : collections.VecSet types.IssuerId
   instruction_issuer : collections.VecMap types.InstructionId types.IssuerId
+  lever_integ_floor : types.IntegLevel
+  lever_integ_inspect_floor : types.IntegLevel
 
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ToolId> for argus_kernel::types::ToolId}::ne]:
     Source: 'crates/argus-kernel/src/types.rs', lines 22:23-22:32
@@ -338,7 +367,7 @@ def collections.VecMap.get_cloned
   else ok none
 
 /-- [argus_kernel::background::{argus_kernel::background::BackgroundTheory}::tool_metadata]:
-    Source: 'crates/argus-kernel/src/background.rs', lines 43:4-45:5
+    Source: 'crates/argus-kernel/src/background.rs', lines 54:4-56:5
     Visibility: public -/
 def background.BackgroundTheory.tool_metadata
   (self : background.BackgroundTheory) (tool : types.ToolId) :
@@ -349,13 +378,13 @@ def background.BackgroundTheory.tool_metadata
     background.ToolMetadata.Insts.CoreCloneClone self.tools tool
 
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 151:29-151:38
+    Source: 'crates/argus-kernel/src/types.rs', lines 211:29-211:38
     Visibility: public -/
 axiom types.EgressKind.Insts.CoreCmpPartialEqEgressKind.ne
   : types.EgressKind → types.EgressKind → Result Bool
 
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}::eq]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 151:29-151:38
+    Source: 'crates/argus-kernel/src/types.rs', lines 211:29-211:38
     Visibility: public -/
 def types.EgressKind.Insts.CoreCmpPartialEqEgressKind.eq
   (self : types.EgressKind) (other : types.EgressKind) : Result Bool := do
@@ -364,7 +393,7 @@ def types.EgressKind.Insts.CoreCmpPartialEqEgressKind.eq
   ok (self1 = other1)
 
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}]
-    Source: 'crates/argus-kernel/src/types.rs', lines 151:29-151:38 -/
+    Source: 'crates/argus-kernel/src/types.rs', lines 211:29-211:38 -/
 @[reducible]
 def types.EgressKind.Insts.CoreCmpPartialEqEgressKind : core.cmp.PartialEq
   types.EgressKind types.EgressKind := {
@@ -399,7 +428,7 @@ def types.ConfLevel.Insts.CoreCloneClone : core.clone.Clone types.ConfLevel
 }
 
 /-- [argus_kernel::background::{argus_kernel::background::BackgroundTheory}::flow_mode]:
-    Source: 'crates/argus-kernel/src/background.rs', lines 50:4-63:5
+    Source: 'crates/argus-kernel/src/background.rs', lines 61:4-74:5
     Visibility: public -/
 def background.BackgroundTheory.flow_mode
   (self : background.BackgroundTheory) (level : types.ConfLevel)
@@ -507,7 +536,7 @@ def collections.VecSet.contains
   collections.VecSet.contains_loop corecmpPartialEqInst self x false 0#usize
 
 /-- [argus_kernel::background::{argus_kernel::background::BackgroundTheory}::is_trusted_issuer]:
-    Source: 'crates/argus-kernel/src/background.rs', lines 69:4-71:5
+    Source: 'crates/argus-kernel/src/background.rs', lines 80:4-82:5
     Visibility: public -/
 def background.BackgroundTheory.is_trusted_issuer
   (self : background.BackgroundTheory) (issuer : types.IssuerId) :
@@ -615,7 +644,7 @@ def collections.VecMap.get
   else ok none
 
 /-- [argus_kernel::background::{argus_kernel::background::BackgroundTheory}::instruction_issuer]:
-    Source: 'crates/argus-kernel/src/background.rs', lines 73:4-75:5
+    Source: 'crates/argus-kernel/src/background.rs', lines 84:4-86:5
     Visibility: public -/
 def background.BackgroundTheory.impl.instruction_issuer
   (self : background.BackgroundTheory) (instr : types.InstructionId) :
@@ -624,6 +653,20 @@ def background.BackgroundTheory.impl.instruction_issuer
   collections.VecMap.get types.InstructionId.Insts.CoreCloneClone
     types.InstructionId.Insts.CoreCmpPartialEqInstructionId
     types.IssuerId.Insts.CoreCloneClone self.instruction_issuer instr
+
+/-- [argus_kernel::background::{argus_kernel::background::BackgroundTheory}::lever_integ_floor]:
+    Source: 'crates/argus-kernel/src/background.rs', lines 89:4-91:5
+    Visibility: public -/
+def background.BackgroundTheory.impl.lever_integ_floor
+  (self : background.BackgroundTheory) : Result types.IntegLevel := do
+  ok self.lever_integ_floor
+
+/-- [argus_kernel::background::{argus_kernel::background::BackgroundTheory}::lever_integ_inspect_floor]:
+    Source: 'crates/argus-kernel/src/background.rs', lines 95:4-97:5
+    Visibility: public -/
+def background.BackgroundTheory.impl.lever_integ_inspect_floor
+  (self : background.BackgroundTheory) : Result types.IntegLevel := do
+  ok self.lever_integ_inspect_floor
 
 /-- [argus_kernel::capability::{impl core::cmp::PartialEq<argus_kernel::capability::CapKind> for argus_kernel::capability::CapKind}::ne]:
     Source: 'crates/argus-kernel/src/capability.rs', lines 4:29-4:38
@@ -1400,7 +1443,7 @@ def collections.VecSet.at
   alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice T) self.items i
 
 /-- [argus_kernel::error::KernelError]
-    Source: 'crates/argus-kernel/src/error.rs', lines 6:0-51:1
+    Source: 'crates/argus-kernel/src/error.rs', lines 6:0-67:1
     Visibility: public -/
 @[discriminant isize]
 inductive error.KernelError where
@@ -1425,6 +1468,12 @@ inductive error.KernelError where
 | NotConforming : error.KernelError
 | BudgetExhausted : error.KernelError
 | MissingToolBinding : error.KernelError
+| InvocationReplayed : error.KernelError
+| AttestationInvalid : error.KernelError
+| IntegrityFloorDenied : error.KernelError
+| LeverIntegrityDenied : error.KernelError
+| DeclarationNotCovering : error.KernelError
+| ToolInFlight : error.KernelError
 | EventStore : error.KernelError
 
 /-- [argus_kernel::types::InvocationId]
@@ -1440,11 +1489,12 @@ def types.InvocationId := String
 def types.AgentId := String
 
 /-- [argus_kernel::event::KernelAction]
-    Source: 'crates/argus-kernel/src/event.rs', lines 5:0-61:1
+    Source: 'crates/argus-kernel/src/event.rs', lines 5:0-71:1
     Visibility: public -/
 @[discriminant isize]
 inductive event.KernelAction where
 | RegisterTool : types.ToolId → event.KernelAction
+| UnregisterTool : types.ToolId → event.KernelAction
 | Delegate : types.AgentId → types.AgentId → event.KernelAction
 | GrantCapability :
   types.AgentId →
@@ -1458,12 +1508,25 @@ inductive event.KernelAction where
   types.ToolId →
   types.InvocationId →
   event.KernelAction
-| InvokeComplete : types.AgentId → types.InvocationId → event.KernelAction
-| ReturnEndorsed : types.AgentId → types.AgentId → event.KernelAction
+| InvokeComplete :
+  types.AgentId →
+  types.InvocationId →
+  Bool →
+  event.KernelAction
+| ReturnEndorsed :
+  types.AgentId →
+  types.AgentId →
+  types.ConfLevel →
+  types.IntegLevel →
+  event.KernelAction
 | ReturnUnendorsed : types.AgentId → types.AgentId → event.KernelAction
 | SentinelElevateTaint :
   types.AgentId →
   types.ConfLevel →
+  event.KernelAction
+| SentinelDegradeIntegrity :
+  types.AgentId →
+  types.IntegLevel →
   event.KernelAction
 | SentinelCreditBudget : types.AgentId → Std.U8 → event.KernelAction
 | LoadInstruction :
@@ -1485,7 +1548,7 @@ structure types.OverrideKey where
   level : types.ConfLevel
 
 /-- [argus_kernel::state::KernelState]
-    Source: 'crates/argus-kernel/src/state.rs', lines 7:0-31:1
+    Source: 'crates/argus-kernel/src/state.rs', lines 15:0-52:1
     Visibility: public -/
 structure state.KernelState where
   agent_active : collections.VecSet types.AgentId
@@ -1494,14 +1557,15 @@ structure state.KernelState where
     capability.CapKind)
   taint_levels : collections.VecMap types.AgentId (collections.VecSet
     types.ConfLevel)
+  integ_levels : collections.VecMap types.AgentId (collections.VecSet
+    types.IntegLevel)
   in_flight : collections.VecMap types.AgentId (collections.VecSet
     types.InvocationId)
   invocation_tool : collections.VecMap types.InvocationId types.ToolId
+  invocation_used : collections.VecSet types.InvocationId
+  invocation_egress : collections.VecMap types.InvocationId (collections.VecSet
+    types.EgressKind)
   tool_registered : collections.VecSet types.ToolId
-  gh_taint_invoked : collections.VecMap types.AgentId (collections.VecSet
-    types.ConfLevel)
-  gh_taint_received : collections.VecMap types.AgentId (collections.VecSet
-    types.ConfLevel)
   agent_instruction : collections.VecMap types.AgentId (collections.VecSet
     types.InstructionId)
   override_used : collections.VecMap types.AgentId (collections.VecSet
@@ -1509,6 +1573,14 @@ structure state.KernelState where
   flow_override : collections.VecMap types.AgentId (collections.VecSet
     types.OverrideKey)
   agent_budget : collections.VecMap types.AgentId Std.U8
+
+/-- Trait implementation: [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::IntegLevel}]
+    Source: 'crates/argus-kernel/src/types.rs', lines 153:9-153:14 -/
+@[reducible]
+def types.IntegLevel.Insts.CoreCloneClone : core.clone.Clone types.IntegLevel
+  := {
+  clone := types.IntegLevel.Insts.CoreCloneClone.clone
+}
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::OverrideKey}::clone]:
     Source: 'crates/argus-kernel/src/types.rs', lines 121:9-121:14
@@ -1610,7 +1682,7 @@ def types.AgentId.Insts.CoreCloneClone : core.clone.Clone types.AgentId := {
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::initial]: loop body 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-41:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-62:9
     Visibility: public -/
 @[rust_loop_body]
 def state.KernelState.initial_loop.body
@@ -1631,7 +1703,7 @@ def state.KernelState.initial_loop.body
   else ok (done all_caps)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::initial]: loop 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-41:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 0:0-62:9
     Visibility: public -/
 @[rust_loop]
 def state.KernelState.initial_loop
@@ -1643,7 +1715,7 @@ def state.KernelState.initial_loop
     (all_caps, i)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::initial]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 34:4-64:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 55:4-86:5
     Visibility: public -/
 def state.KernelState.initial : Result state.KernelState := do
   let root ← types.AgentId.root
@@ -1681,25 +1753,38 @@ def state.KernelState.initial : Result state.KernelState := do
     collections.VecMap.new types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
-      types.InvocationId.Insts.CoreCloneClone)
+      types.IntegLevel.Insts.CoreCloneClone)
   let vm3 ←
+    collections.VecMap.new types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId
+      (collections.VecSet.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCloneClone)
+  let vm4 ←
     collections.VecMap.new types.InvocationId.Insts.CoreCloneClone
       types.InvocationId.Insts.CoreCmpPartialEqInvocationId
       types.ToolId.Insts.CoreCloneClone
   let vs ←
+    collections.VecSet.new types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+  let vm5 ←
+    collections.VecMap.new types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+      (collections.VecSet.Insts.CoreCloneClone
+      types.EgressKind.Insts.CoreCloneClone)
+  let vs1 ←
     collections.VecSet.new types.ToolId.Insts.CoreCloneClone
       types.ToolId.Insts.CoreCmpPartialEqToolId
-  let vm4 ←
+  let vm6 ←
     collections.VecMap.new types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
       types.InstructionId.Insts.CoreCloneClone)
-  let vm5 ←
+  let vm7 ←
     collections.VecMap.new types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
       types.OverrideKey.Insts.CoreCloneClone)
-  let vm6 ←
+  let vm8 ←
     collections.VecMap.new types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
   ok
@@ -1708,15 +1793,16 @@ def state.KernelState.initial : Result state.KernelState := do
       agent_parent := vm,
       agent_cap := agent_cap1,
       taint_levels := vm1,
-      in_flight := vm2,
-      invocation_tool := vm3,
-      tool_registered := vs,
-      gh_taint_invoked := vm1,
-      gh_taint_received := vm1,
-      agent_instruction := vm4,
-      override_used := vm5,
-      flow_override := vm5,
-      agent_budget := vm6
+      integ_levels := vm2,
+      in_flight := vm3,
+      invocation_tool := vm4,
+      invocation_used := vs,
+      invocation_egress := vm5,
+      tool_registered := vs1,
+      agent_instruction := vm6,
+      override_used := vm7,
+      flow_override := vm7,
+      agent_budget := vm8
     }
 
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::OverrideKey> for argus_kernel::types::OverrideKey}::ne]:
@@ -1755,7 +1841,7 @@ def types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey : core.cmp.PartialEq
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::override_consumed]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 68:4-73:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 90:4-95:5
     Visibility: public -/
 def state.KernelState.override_consumed
   (self : state.KernelState) (agent : types.AgentId) (tool : types.ToolId)
@@ -1776,7 +1862,7 @@ def state.KernelState.override_consumed
       { tool := ti, level }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::has_flow_override]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 77:4-82:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 99:4-104:5
     Visibility: public -/
 def state.KernelState.has_flow_override
   (self : state.KernelState) (agent : types.AgentId) (tool : types.ToolId)
@@ -1802,7 +1888,7 @@ def state.KernelState.has_flow_override
 @[global_simps, irreducible] def types.BUDGET_CAPACITY : Std.U8 := 16#u8
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::budget]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 85:4-90:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 107:4-112:5
     Visibility: public -/
 def state.KernelState.budget
   (self : state.KernelState) (agent : types.AgentId) : Result Std.U8 := do
@@ -1815,7 +1901,7 @@ def state.KernelState.budget
   | some b => ok b
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::affordable]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 93:4-95:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 115:4-117:5
     Visibility: public -/
 def state.KernelState.affordable
   (self : state.KernelState) (agent : types.AgentId) (w : Std.U8) :
@@ -1825,7 +1911,7 @@ def state.KernelState.affordable
   ok (i >= w)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::debit_budget]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 98:4-101:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 120:4-123:5
     Visibility: public -/
 def state.KernelState.debit_budget
   (self : state.KernelState) (agent : types.AgentId) (w : Std.U8) :
@@ -1841,7 +1927,7 @@ def state.KernelState.debit_budget
   ok { self with agent_budget := vm }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::credit_budget]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 104:4-107:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 126:4-129:5
     Visibility: public -/
 def state.KernelState.credit_budget
   (self : state.KernelState) (agent : types.AgentId) (n : Std.U8) :
@@ -1873,7 +1959,7 @@ def types.ConfLevel.Insts.CoreCmpPartialEqConfLevel : core.cmp.PartialEq
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_taint]: loop body 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 117:8-125:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 139:8-147:9
     Visibility: public -/
 @[rust_loop_body]
 def state.KernelState.speculative_taint_loop.body
@@ -1913,7 +1999,7 @@ def state.KernelState.speculative_taint_loop.body
   else ok (done taint)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_taint]: loop 0:
-    Source: 'crates/argus-kernel/src/state.rs', lines 117:8-125:9
+    Source: 'crates/argus-kernel/src/state.rs', lines 139:8-147:9
     Visibility: public -/
 @[rust_loop]
 def state.KernelState.speculative_taint_loop
@@ -1929,7 +2015,7 @@ def state.KernelState.speculative_taint_loop
     (taint, j)
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_taint]:
-    Source: 'crates/argus-kernel/src/state.rs', lines 109:4-128:5
+    Source: 'crates/argus-kernel/src/state.rs', lines 131:4-150:5
     Visibility: public -/
 def state.KernelState.speculative_taint
   (self : state.KernelState) (agent : types.AgentId)
@@ -1952,43 +2038,147 @@ def state.KernelState.speculative_taint
   state.KernelState.speculative_taint_loop self.invocation_tool bg taint
     flights 0#usize
 
+/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IntegLevel> for argus_kernel::types::IntegLevel}::ne]:
+    Source: 'crates/argus-kernel/src/types.rs', lines 153:29-153:38
+    Visibility: public -/
+axiom types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.ne
+  : types.IntegLevel → types.IntegLevel → Result Bool
+
+/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IntegLevel> for argus_kernel::types::IntegLevel}::eq]:
+    Source: 'crates/argus-kernel/src/types.rs', lines 153:29-153:38
+    Visibility: public -/
+def types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.eq
+  (self : types.IntegLevel) (other : types.IntegLevel) : Result Bool := do
+  let self1 := read_discriminant self
+  let other1 := read_discriminant other
+  ok (self1 = other1)
+
+/-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IntegLevel> for argus_kernel::types::IntegLevel}]
+    Source: 'crates/argus-kernel/src/types.rs', lines 153:29-153:38 -/
+@[reducible]
+def types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel : core.cmp.PartialEq
+  types.IntegLevel types.IntegLevel := {
+  eq := types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.eq
+  ne := types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.ne
+}
+
+/-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_integ]: loop body 0:
+    Source: 'crates/argus-kernel/src/state.rs', lines 159:8-167:9
+    Visibility: public -/
+@[rust_loop_body]
+def state.KernelState.speculative_integ_loop.body
+  (vm : collections.VecMap types.InvocationId types.ToolId)
+  (bg : background.BackgroundTheory)
+  (flights : collections.VecSet types.InvocationId)
+  (integ : collections.VecSet types.IntegLevel) (j : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.IntegLevel) × Std.Usize)
+    (collections.VecSet types.IntegLevel))
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId flights
+  if j < i
+  then
+    let inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId flights j
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm inv
+    let integ1 ←
+      match o with
+      | none => ok integ
+      | some tool_id =>
+        do
+        let o1 ← background.BackgroundTheory.tool_metadata bg tool_id
+        match o1 with
+        | none => ok integ
+        | some tmeta =>
+          collections.VecSet.insert types.IntegLevel.Insts.CoreCloneClone
+            types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel integ
+            tmeta.output_integ
+    let j1 ← j + 1#usize
+    ok (cont (integ1, j1))
+  else ok (done integ)
+
+/-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_integ]: loop 0:
+    Source: 'crates/argus-kernel/src/state.rs', lines 159:8-167:9
+    Visibility: public -/
+@[rust_loop]
+def state.KernelState.speculative_integ_loop
+  (vm : collections.VecMap types.InvocationId types.ToolId)
+  (bg : background.BackgroundTheory)
+  (integ : collections.VecSet types.IntegLevel)
+  (flights : collections.VecSet types.InvocationId) (j : Std.Usize) :
+  Result (collections.VecSet types.IntegLevel)
+  := do
+  loop
+    (fun (integ1, j1) => state.KernelState.speculative_integ_loop.body vm bg
+      flights integ1 j1)
+    (integ, j)
+
+/-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_integ]:
+    Source: 'crates/argus-kernel/src/state.rs', lines 154:4-170:5
+    Visibility: public -/
+def state.KernelState.speculative_integ
+  (self : state.KernelState) (agent : types.AgentId)
+  (bg : background.BackgroundTheory) :
+  Result (collections.VecSet types.IntegLevel)
+  := do
+  let integ ←
+    collections.VecMapKVecSet.get_set_or_empty
+      types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId
+      types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel self.integ_levels agent
+  let flights ←
+    collections.VecMapKVecSet.get_set_or_empty
+      types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId
+      types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId self.in_flight
+      agent
+  state.KernelState.speculative_integ_loop self.invocation_tool bg integ
+    flights 0#usize
+
 /-- Trait declaration: [argus_kernel::traits::AuthorizerOracle]
-    Source: 'crates/argus-kernel/src/traits.rs', lines 7:0-15:1
+    Source: 'crates/argus-kernel/src/traits.rs', lines 10:0-19:1
     Visibility: public -/
 structure traits.AuthorizerOracle (Self : Type) where
-  allows : Self → types.AgentId → types.ToolId → state.KernelState →
-    background.BackgroundTheory → Result Bool
+  allows : Self → types.AgentId → types.ToolId → types.InvocationId →
+    state.KernelState → background.BackgroundTheory → Result Bool
 
 /-- Trait declaration: [argus_kernel::traits::ContentGateOracle]
-    Source: 'crates/argus-kernel/src/traits.rs', lines 17:0-25:1
+    Source: 'crates/argus-kernel/src/traits.rs', lines 24:0-33:1
     Visibility: public -/
 structure traits.ContentGateOracle (Self : Type) where
-  passes : Self → types.AgentId → types.ToolId → state.KernelState →
-    background.BackgroundTheory → Result Bool
+  passes : Self → types.AgentId → types.ToolId → types.InvocationId →
+    state.KernelState → background.BackgroundTheory → Result Bool
 
 /-- Trait declaration: [argus_kernel::traits::ConformanceOracle]
-    Source: 'crates/argus-kernel/src/traits.rs', lines 32:0-50:1
+    Source: 'crates/argus-kernel/src/traits.rs', lines 41:0-60:1
     Visibility: public -/
 structure traits.ConformanceOracle (Self : Type) where
-  conforms : Self → types.AgentId → types.ToolId → state.KernelState →
-    background.BackgroundTheory → Result Bool
+  conforms : Self → types.AgentId → types.ToolId → types.InvocationId →
+    state.KernelState → background.BackgroundTheory → Result Bool
   return_conforms : Self → types.AgentId → types.AgentId →
     state.KernelState → background.BackgroundTheory → Result Bool
 
 /-- [argus_kernel::transitions::FlowDecision]
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 20:0-24:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 19:0-22:1 -/
 @[discriminant isize]
 inductive transitions.FlowDecision where
 | Allowed : transitions.FlowDecision
-| ConsumedOverride : transitions.FlowDecision
 | Denied : transitions.FlowDecision
 
 /-- [argus_kernel::transitions::flow_decision]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 26:0-54:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 24:0-53:1 -/
 def transitions.flow_decision
   {T0 : Type} (traitsContentGateOracleInst : traits.ContentGateOracle T0)
   (bg : background.BackgroundTheory) (content_gate : T0)
-  (agent : types.AgentId) (tool : types.ToolId) (st : state.KernelState)
+  (agent : types.AgentId) (tool : types.ToolId)
+  (vouch_inv : types.InvocationId) (st : state.KernelState)
   (level : types.ConfLevel) (egress : types.EgressKind) :
   Result transitions.FlowDecision
   := do
@@ -1996,7 +2186,9 @@ def transitions.flow_decision
   match fm with
   | background.FlowMode.Allow => ok transitions.FlowDecision.Allowed
   | background.FlowMode.Inspect =>
-    let b ← traitsContentGateOracleInst.passes content_gate agent tool st bg
+    let b ←
+      traitsContentGateOracleInst.passes content_gate agent tool vouch_inv st
+        bg
     if b
     then ok transitions.FlowDecision.Allowed
     else ok transitions.FlowDecision.Denied
@@ -2007,11 +2199,62 @@ def transitions.flow_decision
       let b1 ← state.KernelState.override_consumed st agent tool level
       if b1
       then ok transitions.FlowDecision.Denied
-      else ok transitions.FlowDecision.ConsumedOverride
+      else ok transitions.FlowDecision.Allowed
     else ok transitions.FlowDecision.Denied
 
+/-- [argus_kernel::transitions::IntegDecision]
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 58:0-61:1 -/
+@[discriminant isize]
+inductive transitions.IntegDecision where
+| Allowed : transitions.IntegDecision
+| Denied : transitions.IntegDecision
+
+/-- [argus_kernel::types::{argus_kernel::types::IntegLevel}::rank]:
+    Source: 'crates/argus-kernel/src/types.rs', lines 162:4-169:5 -/
+def types.IntegLevel.rank (self : types.IntegLevel) : Result Std.U8 := do
+  match self with
+  | types.IntegLevel.Untrusted => ok 0#u8
+  | types.IntegLevel.Standard => ok 1#u8
+  | types.IntegLevel.Trusted => ok 2#u8
+  | types.IntegLevel.Attested => ok 3#u8
+
+/-- [argus_kernel::types::{argus_kernel::types::IntegLevel}::le]:
+    Source: 'crates/argus-kernel/src/types.rs', lines 172:4-174:5
+    Visibility: public -/
+def types.IntegLevel.le
+  (self : types.IntegLevel) (other : types.IntegLevel) : Result Bool := do
+  let i ← types.IntegLevel.rank self
+  let i1 ← types.IntegLevel.rank other
+  ok (i <= i1)
+
+/-- [argus_kernel::transitions::integ_decision]:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 66:0-80:1 -/
+def transitions.integ_decision
+  {T0 : Type} (traitsContentGateOracleInst : traits.ContentGateOracle T0)
+  (content_gate : T0) (agent : types.AgentId) (tool : types.ToolId)
+  (vouch_inv : types.InvocationId) (st : state.KernelState)
+  (bg : background.BackgroundTheory) (floor : types.IntegLevel)
+  (inspect_floor : types.IntegLevel) (level : types.IntegLevel) :
+  Result transitions.IntegDecision
+  := do
+  let b ← types.IntegLevel.le floor level
+  let allowed ←
+    if b
+    then ok true
+    else
+      do
+      let b1 ← types.IntegLevel.le inspect_floor level
+      if b1
+      then
+        traitsContentGateOracleInst.passes content_gate agent tool vouch_inv st
+          bg
+      else ok false
+  if allowed
+  then ok transitions.IntegDecision.Allowed
+  else ok transitions.IntegDecision.Denied
+
 /-- [argus_kernel::transitions::clear_agent_state]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 56:0-65:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 82:0-89:1 -/
 def transitions.clear_agent_state
   (st : state.KernelState) (agent : types.AgentId) :
   Result state.KernelState
@@ -2025,52 +2268,41 @@ def transitions.clear_agent_state
     collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
-      types.InvocationId.Insts.CoreCloneClone) st.in_flight agent
+      types.IntegLevel.Insts.CoreCloneClone) st.integ_levels agent
   let vm2 ←
     collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
-      types.ConfLevel.Insts.CoreCloneClone) st.gh_taint_invoked agent
+      types.InvocationId.Insts.CoreCloneClone) st.in_flight agent
   let vm3 ←
     collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
-      types.ConfLevel.Insts.CoreCloneClone) st.gh_taint_received agent
+      types.InstructionId.Insts.CoreCloneClone) st.agent_instruction agent
   let vm4 ←
     collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
-      types.InstructionId.Insts.CoreCloneClone) st.agent_instruction agent
+      types.OverrideKey.Insts.CoreCloneClone) st.override_used agent
   let vm5 ←
     collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       (collections.VecSet.Insts.CoreCloneClone
-      types.OverrideKey.Insts.CoreCloneClone) st.override_used agent
-  let vm6 ←
-    collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId
-      (collections.VecSet.Insts.CoreCloneClone
       types.OverrideKey.Insts.CoreCloneClone) st.flow_override agent
-  let vm7 ←
-    collections.VecMap.remove types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
-      st.agent_budget agent
   ok
     {
       st
         with
         taint_levels := vm,
-        in_flight := vm1,
-        gh_taint_invoked := vm2,
-        gh_taint_received := vm3,
-        agent_instruction := vm4,
-        override_used := vm5,
-        flow_override := vm6,
-        agent_budget := vm7
+        integ_levels := vm1,
+        in_flight := vm2,
+        agent_instruction := vm3,
+        override_used := vm4,
+        flow_override := vm5
     }
 
 /-- [argus_kernel::transitions::agent_parent_drop_endpoint]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 76:4-83:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 100:4-107:5 -/
 @[rust_loop_body]
 def transitions.agent_parent_drop_endpoint_loop.body
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2117,7 +2349,7 @@ def transitions.agent_parent_drop_endpoint_loop.body
   else ok (done kept)
 
 /-- [argus_kernel::transitions::agent_parent_drop_endpoint]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 76:4-83:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 100:4-107:5 -/
 @[rust_loop]
 def transitions.agent_parent_drop_endpoint_loop
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2131,7 +2363,7 @@ def transitions.agent_parent_drop_endpoint_loop
     (kept, i)
 
 /-- [argus_kernel::transitions::agent_parent_drop_endpoint]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 70:0-85:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 94:0-109:1 -/
 def transitions.agent_parent_drop_endpoint
   (map : collections.VecMap types.AgentId types.AgentId)
   (dropped : types.AgentId) :
@@ -2144,7 +2376,7 @@ def transitions.agent_parent_drop_endpoint
   transitions.agent_parent_drop_endpoint_loop map dropped kept 0#usize
 
 /-- [argus_kernel::transitions::agent_parent_drop_child]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 96:4-102:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 120:4-126:5 -/
 @[rust_loop_body]
 def transitions.agent_parent_drop_child_loop.body
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2185,7 +2417,7 @@ def transitions.agent_parent_drop_child_loop.body
   else ok (done kept)
 
 /-- [argus_kernel::transitions::agent_parent_drop_child]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 96:4-102:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 120:4-126:5 -/
 @[rust_loop]
 def transitions.agent_parent_drop_child_loop
   (map : collections.VecMap types.AgentId types.AgentId)
@@ -2199,7 +2431,7 @@ def transitions.agent_parent_drop_child_loop
     (kept, i)
 
 /-- [argus_kernel::transitions::agent_parent_drop_child]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 90:0-104:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 114:0-128:1 -/
 def transitions.agent_parent_drop_child
   (map : collections.VecMap types.AgentId types.AgentId)
   (dropped : types.AgentId) :
@@ -2211,23 +2443,17 @@ def transitions.agent_parent_drop_child
       types.AgentId.Insts.CoreCloneClone
   transitions.agent_parent_drop_child_loop map dropped kept 0#usize
 
-/-- [argus_kernel::transitions::GateAccum]
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 110:0-113:1 -/
-structure transitions.GateAccum where
-  denied : Bool
-  to_consume : collections.VecSet types.OverrideKey
-
 /-- [argus_kernel::transitions::gate_egress]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 128:4-140:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 148:4-156:5 -/
 @[rust_loop_body]
 def transitions.gate_egress_loop.body
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
-  (tool : types.ToolId) (st : state.KernelState) (level : types.ConfLevel)
-  (egress_set : collections.VecSet types.EgressKind)
-  (acc : transitions.GateAccum) (i : Std.Usize) :
-  Result (ControlFlow (transitions.GateAccum × Std.Usize)
-    transitions.GateAccum)
+  (tool : types.ToolId) (vouch_inv : types.InvocationId)
+  (st : state.KernelState) (level : types.ConfLevel)
+  (egress_set : collections.VecSet types.EgressKind) (denied : Bool)
+  (i : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
   := do
   let i1 ←
     collections.VecSet.len types.EgressKind.Insts.CoreCloneClone
@@ -2239,56 +2465,49 @@ def transitions.gate_egress_loop.body
         types.EgressKind.Insts.CoreCmpPartialEqEgressKind egress_set i
     let fd ←
       transitions.flow_decision traitsContentGateOracleInst bg content_gate
-        agent tool st level egress
-    let acc1 ←
+        agent tool vouch_inv st level egress
+    let denied1 ←
       match fd with
-      | transitions.FlowDecision.Allowed => ok acc
-      | transitions.FlowDecision.ConsumedOverride =>
-        do
-        let ti ← types.ToolId.Insts.CoreCloneClone.clone tool
-        let vs ←
-          collections.VecSet.insert types.OverrideKey.Insts.CoreCloneClone
-            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey acc.to_consume
-            { tool := ti, level }
-        ok { acc with to_consume := vs }
-      | transitions.FlowDecision.Denied => ok { acc with denied := true }
+      | transitions.FlowDecision.Allowed => ok denied
+      | transitions.FlowDecision.Denied => ok true
     let i2 ← i + 1#usize
-    ok (cont (acc1, i2))
-  else ok (done acc)
+    ok (cont (denied1, i2))
+  else ok (done denied)
 
 /-- [argus_kernel::transitions::gate_egress]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 128:4-140:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 148:4-156:5 -/
 @[rust_loop]
 def transitions.gate_egress_loop
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
-  (tool : types.ToolId) (st : state.KernelState) (level : types.ConfLevel)
-  (egress_set : collections.VecSet types.EgressKind)
-  (acc : transitions.GateAccum) (i : Std.Usize) :
-  Result transitions.GateAccum
+  (tool : types.ToolId) (vouch_inv : types.InvocationId)
+  (st : state.KernelState) (level : types.ConfLevel)
+  (egress_set : collections.VecSet types.EgressKind) (denied : Bool)
+  (i : Std.Usize) :
+  Result Bool
   := do
   loop
-    (fun (acc1, i1) => transitions.gate_egress_loop.body
-      traitsContentGateOracleInst bg content_gate agent tool st level
-      egress_set acc1 i1)
-    (acc, i)
+    (fun (denied1, i1) => transitions.gate_egress_loop.body
+      traitsContentGateOracleInst bg content_gate agent tool vouch_inv st level
+      egress_set denied1 i1)
+    (denied, i)
 
 /-- [argus_kernel::transitions::gate_egress]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 117:0-142:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 136:0-158:1 -/
 @[reducible]
 def transitions.gate_egress
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
-  (tool : types.ToolId) (st : state.KernelState) (level : types.ConfLevel)
-  (egress_set : collections.VecSet types.EgressKind)
-  (acc : transitions.GateAccum) :
-  Result transitions.GateAccum
+  (tool : types.ToolId) (vouch_inv : types.InvocationId)
+  (st : state.KernelState) (level : types.ConfLevel)
+  (egress_set : collections.VecSet types.EgressKind) (denied : Bool) :
+  Result Bool
   := do
   transitions.gate_egress_loop traitsContentGateOracleInst bg content_gate
-    agent tool st level egress_set acc 0#usize
+    agent tool vouch_inv st level egress_set denied 0#usize
 
 /-- [argus_kernel::transitions::register_tool]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 144:0-163:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 160:0-179:1
     Visibility: public -/
 def transitions.register_tool
   (st : state.KernelState) (bg : background.BackgroundTheory)
@@ -2318,8 +2537,134 @@ def transitions.register_tool
           event.KernelAction.RegisterTool tool))
     else ok (core.result.Result.Err error.KernelError.UntrustedIssuer)
 
+/-- [argus_kernel::transitions::unregister_tool]: loop body 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 198:8-206:9
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.unregister_tool_loop0_loop0.body
+  (vm : collections.VecMap types.InvocationId types.ToolId)
+  (tool : types.ToolId) (flights : collections.VecSet types.InvocationId)
+  (tool_in_flight : Bool) (j : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId flights
+  if j < i
+  then
+    let flight_inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId flights j
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm flight_inv
+    let tool_in_flight1 ←
+      match o with
+      | none => ok tool_in_flight
+      | some flight_tool =>
+        do
+        let b ← types.ToolId.Insts.CoreCmpPartialEqToolId.eq flight_tool tool
+        if b
+        then ok true
+        else ok tool_in_flight
+    let j1 ← j + 1#usize
+    ok (cont (tool_in_flight1, j1))
+  else ok (done tool_in_flight)
+
+/-- [argus_kernel::transitions::unregister_tool]: loop 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 198:8-206:9
+    Visibility: public -/
+@[rust_loop]
+def transitions.unregister_tool_loop0_loop0
+  (vm : collections.VecMap types.InvocationId types.ToolId)
+  (tool : types.ToolId) (tool_in_flight : Bool)
+  (flights : collections.VecSet types.InvocationId) (j : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (tool_in_flight1, j1) => transitions.unregister_tool_loop0_loop0.body
+      vm tool flights tool_in_flight1 j1)
+    (tool_in_flight, j)
+
+/-- [argus_kernel::transitions::unregister_tool]: loop body 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 195:4-208:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.unregister_tool_loop0.body
+  (vm : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm1 : collections.VecMap types.InvocationId types.ToolId)
+  (tool : types.ToolId) (tool_in_flight : Bool) (i : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i1 ←
+    collections.VecMap.len types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId
+      (collections.VecSet.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCloneClone) vm
+  if i < i1
+  then
+    let vs ←
+      collections.VecMap.val_at types.AgentId.Insts.CoreCloneClone
+        types.AgentId.Insts.CoreCmpPartialEqAgentId
+        (collections.VecSet.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCloneClone) vm i
+    let flights ←
+      collections.VecSet.Insts.CoreCloneClone.clone
+        types.InvocationId.Insts.CoreCloneClone vs
+    let tool_in_flight1 ←
+      transitions.unregister_tool_loop0_loop0 vm1 tool tool_in_flight flights
+        0#usize
+    let i2 ← i + 1#usize
+    ok (cont (tool_in_flight1, i2))
+  else ok (done tool_in_flight)
+
+/-- [argus_kernel::transitions::unregister_tool]: loop 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 195:4-208:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.unregister_tool_loop0
+  (vm : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm1 : collections.VecMap types.InvocationId types.ToolId)
+  (tool : types.ToolId) (tool_in_flight : Bool) (i : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (tool_in_flight1, i1) => transitions.unregister_tool_loop0.body vm vm1
+      tool tool_in_flight1 i1)
+    (tool_in_flight, i)
+
+/-- [argus_kernel::transitions::unregister_tool]:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 184:0-216:1
+    Visibility: public -/
+def transitions.unregister_tool
+  (st : state.KernelState) (_bg : background.BackgroundTheory)
+  (tool : types.ToolId) :
+  Result (core.result.Result (state.KernelState × event.KernelAction)
+    error.KernelError)
+  := do
+  let b ←
+    collections.VecSet.contains types.ToolId.Insts.CoreCloneClone
+      types.ToolId.Insts.CoreCmpPartialEqToolId st.tool_registered tool
+  if b
+  then
+    let tool_in_flight ←
+      transitions.unregister_tool_loop0 st.in_flight st.invocation_tool tool
+        false 0#usize
+    if tool_in_flight
+    then ok (core.result.Result.Err error.KernelError.ToolInFlight)
+    else
+      let vs ←
+        collections.VecSet.remove types.ToolId.Insts.CoreCloneClone
+          types.ToolId.Insts.CoreCmpPartialEqToolId st.tool_registered tool
+      ok (core.result.Result.Ok ({ st with tool_registered := vs },
+        event.KernelAction.UnregisterTool tool))
+  else ok (core.result.Result.Err error.KernelError.ToolNotRegistered)
+
 /-- [argus_kernel::transitions::load_instruction]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 165:0-185:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 218:0-238:1
     Visibility: public -/
 def transitions.load_instruction
   (st : state.KernelState) (bg : background.BackgroundTheory)
@@ -2356,7 +2701,7 @@ def transitions.load_instruction
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::delegate]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 187:0-210:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 240:0-264:1
     Visibility: public -/
 def transitions.delegate
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2403,12 +2748,16 @@ def transitions.delegate
           transitions.clear_agent_state
             { st with agent_active := vs, agent_parent := vm1, agent_cap := vm2
             } grantee
-        ok (core.result.Result.Ok (st1, event.KernelAction.Delegate grantor
-          grantee))
+        let vm3 ←
+          collections.VecMap.insert types.AgentId.Insts.CoreCloneClone
+            types.AgentId.Insts.CoreCmpPartialEqAgentId core.clone.CloneU8
+            st1.agent_budget ai1 0#u8
+        ok (core.result.Result.Ok ({ st1 with agent_budget := vm3 },
+          event.KernelAction.Delegate grantor grantee))
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::grant_capability]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 212:0-235:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 266:0-289:1
     Visibility: public -/
 def transitions.grant_capability
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2461,7 +2810,7 @@ def transitions.grant_capability
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::revoke]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 237:0-262:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 291:0-316:1
     Visibility: public -/
 def transitions.revoke
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2518,7 +2867,7 @@ def transitions.revoke
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::cascade_revoke]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 264:0-289:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 318:0-343:1
     Visibility: public -/
 def transitions.cascade_revoke
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -2574,10 +2923,53 @@ def transitions.cascade_revoke
       else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::invoke_start]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 326:4-332:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 386:4-391:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.invoke_start_loop0.body
+  (attested_egress : collections.VecSet types.EgressKind)
+  (vs : collections.VecSet types.EgressKind) (narrowing_violated : Bool)
+  (nai : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.EgressKind.Insts.CoreCloneClone
+      types.EgressKind.Insts.CoreCmpPartialEqEgressKind attested_egress
+  if nai < i
+  then
+    let ek ←
+      collections.VecSet.at types.EgressKind.Insts.CoreCloneClone
+        types.EgressKind.Insts.CoreCmpPartialEqEgressKind attested_egress nai
+    let b ←
+      collections.VecSet.contains types.EgressKind.Insts.CoreCloneClone
+        types.EgressKind.Insts.CoreCmpPartialEqEgressKind vs ek
+    let narrowing_violated1 ← if b
+                                then ok narrowing_violated
+                                else ok true
+    let nai1 ← nai + 1#usize
+    ok (cont (narrowing_violated1, nai1))
+  else ok (done narrowing_violated)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 386:4-391:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop0
+  (attested_egress : collections.VecSet types.EgressKind)
+  (vs : collections.VecSet types.EgressKind) (narrowing_violated : Bool)
+  (nai : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (narrowing_violated1, nai1) => transitions.invoke_start_loop0.body
+      attested_egress vs narrowing_violated1 nai1)
+    (narrowing_violated, nai)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 402:4-408:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop1.body
   (vm : collections.VecMap types.AgentId (collections.VecSet
   capability.CapKind)) (agent : types.AgentId)
   (vs : collections.VecSet capability.CapKind) (missing_cap : Bool)
@@ -2604,11 +2996,11 @@ def transitions.invoke_start_loop0.body
     ok (cont (missing_cap1, ci1))
   else ok (done missing_cap)
 
-/-- [argus_kernel::transitions::invoke_start]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 326:4-332:5
+/-- [argus_kernel::transitions::invoke_start]: loop 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 402:4-408:5
     Visibility: public -/
 @[rust_loop]
-def transitions.invoke_start_loop0
+def transitions.invoke_start_loop1
   (vm : collections.VecMap types.AgentId (collections.VecSet
   capability.CapKind)) (agent : types.AgentId)
   (vs : collections.VecSet capability.CapKind) (missing_cap : Bool)
@@ -2616,107 +3008,12 @@ def transitions.invoke_start_loop0
   Result Bool
   := do
   loop
-    (fun (missing_cap1, ci1) => transitions.invoke_start_loop0.body vm agent vs
+    (fun (missing_cap1, ci1) => transitions.invoke_start_loop1.body vm agent vs
       missing_cap1 ci1)
     (missing_cap, ci)
 
-/-- [argus_kernel::transitions::invoke_start]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 345:4-349:5
-    Visibility: public -/
-@[rust_loop_body]
-def transitions.invoke_start_loop1.body
-  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
-  (vs : collections.VecSet types.AgentId)
-  (vm : collections.VecMap types.AgentId types.AgentId)
-  (vm1 : collections.VecMap types.AgentId (collections.VecSet
-  capability.CapKind))
-  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm3 : collections.VecMap types.AgentId (collections.VecSet
-  types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm7 : collections.VecMap types.AgentId (collections.VecSet
-  types.InstructionId))
-  (vm8 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
-  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
-  (tool : types.ToolId) (vs2 : collections.VecSet types.EgressKind)
-  (spec_taint : collections.VecSet types.ConfLevel)
-  (acc : transitions.GateAccum) (li : Std.Usize) :
-  Result (ControlFlow (transitions.GateAccum × Std.Usize)
-    transitions.GateAccum)
-  := do
-  let i ←
-    collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
-      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint
-  if li < i
-  then
-    let level ←
-      collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
-        types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint li
-    let acc1 ←
-      transitions.gate_egress traitsContentGateOracleInst bg content_gate agent
-        tool
-        {
-          agent_active := vs,
-          agent_parent := vm,
-          agent_cap := vm1,
-          taint_levels := vm2,
-          in_flight := vm3,
-          invocation_tool := vm4,
-          tool_registered := vs1,
-          gh_taint_invoked := vm5,
-          gh_taint_received := vm6,
-          agent_instruction := vm7,
-          override_used := vm8,
-          flow_override := vm9,
-          agent_budget := vm10
-        } level vs2 acc
-    let li1 ← li + 1#usize
-    ok (cont (acc1, li1))
-  else ok (done acc)
-
-/-- [argus_kernel::transitions::invoke_start]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 345:4-349:5
-    Visibility: public -/
-@[rust_loop]
-def transitions.invoke_start_loop1
-  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
-  (vs : collections.VecSet types.AgentId)
-  (vm : collections.VecMap types.AgentId types.AgentId)
-  (vm1 : collections.VecMap types.AgentId (collections.VecSet
-  capability.CapKind))
-  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm3 : collections.VecMap types.AgentId (collections.VecSet
-  types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm7 : collections.VecMap types.AgentId (collections.VecSet
-  types.InstructionId))
-  (vm8 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey))
-  (vm9 : collections.VecMap types.AgentId (collections.VecSet
-  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
-  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
-  (tool : types.ToolId) (vs2 : collections.VecSet types.EgressKind)
-  (acc : transitions.GateAccum)
-  (spec_taint : collections.VecSet types.ConfLevel) (li : Std.Usize) :
-  Result transitions.GateAccum
-  := do
-  loop
-    (fun (acc1, li1) => transitions.invoke_start_loop1.body
-      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vs1 vm5 vm6 vm7 vm8 vm9
-      vm10 bg content_gate agent tool vs2 spec_taint acc1 li1)
-    (acc, li)
-
 /-- [argus_kernel::transitions::invoke_start]: loop body 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 356:4-375:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 422:4-426:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.invoke_start_loop2.body
@@ -2727,11 +3024,114 @@ def transitions.invoke_start_loop2.body
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId)
+  (attested_egress : collections.VecSet types.EgressKind)
+  (spec_taint : collections.VecSet types.ConfLevel) (denied : Bool)
+  (li : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
+      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint
+  if li < i
+  then
+    let level ←
+      collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
+        types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint li
+    let denied1 ←
+      transitions.gate_egress traitsContentGateOracleInst bg content_gate agent
+        tool inv
+        {
+          agent_active := vs,
+          agent_parent := vm,
+          agent_cap := vm1,
+          taint_levels := vm2,
+          integ_levels := vm3,
+          in_flight := vm4,
+          invocation_tool := vm5,
+          invocation_used := vs1,
+          invocation_egress := vm6,
+          tool_registered := vs2,
+          agent_instruction := vm7,
+          override_used := vm8,
+          flow_override := vm9,
+          agent_budget := vm10
+        } level attested_egress denied
+    let li1 ← li + 1#usize
+    ok (cont (denied1, li1))
+  else ok (done denied)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 2:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 422:4-426:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop2
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId)
+  (attested_egress : collections.VecSet types.EgressKind) (denied : Bool)
+  (spec_taint : collections.VecSet types.ConfLevel) (li : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (denied1, li1) => transitions.invoke_start_loop2.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent tool inv attested_egress spec_taint
+      denied1 li1)
+    (denied, li)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 3:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 436:4-453:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop3.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -2740,10 +3140,9 @@ def transitions.invoke_start_loop2.body
   types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (conf_floor : types.ConfLevel)
-  (agent_flights : collections.VecSet types.InvocationId)
-  (acc : transitions.GateAccum) (fi : Std.Usize) :
-  Result (ControlFlow (transitions.GateAccum × Std.Usize)
-    transitions.GateAccum)
+  (agent_flights : collections.VecSet types.InvocationId) (denied : Bool)
+  (fi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
   := do
   let i ←
     collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
@@ -2756,47 +3155,45 @@ def transitions.invoke_start_loop2.body
     let o ←
       collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
         types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-        types.ToolId.Insts.CoreCloneClone vm4 flight_inv
-    let acc1 ←
+        types.ToolId.Insts.CoreCloneClone vm5 flight_inv
+    let denied1 ←
       match o with
-      | none => ok acc
+      | none => ok denied
       | some flight_tool_id =>
         do
-        let o1 ← background.BackgroundTheory.tool_metadata bg flight_tool_id
         let flight_egress ←
-          match o1 with
-          | none =>
-            collections.VecSet.new types.EgressKind.Insts.CoreCloneClone
-              types.EgressKind.Insts.CoreCmpPartialEqEgressKind
-          | some m =>
-            collections.VecSet.Insts.CoreCloneClone.clone
-              types.EgressKind.Insts.CoreCloneClone m.egress
+          collections.VecMapKVecSet.get_set_or_empty
+            types.InvocationId.Insts.CoreCloneClone
+            types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+            types.EgressKind.Insts.CoreCloneClone
+            types.EgressKind.Insts.CoreCmpPartialEqEgressKind vm6 flight_inv
         transitions.gate_egress traitsContentGateOracleInst bg content_gate
-          agent flight_tool_id
+          agent flight_tool_id flight_inv
           {
             agent_active := vs,
             agent_parent := vm,
             agent_cap := vm1,
             taint_levels := vm2,
-            in_flight := vm3,
-            invocation_tool := vm4,
-            tool_registered := vs1,
-            gh_taint_invoked := vm5,
-            gh_taint_received := vm6,
+            integ_levels := vm3,
+            in_flight := vm4,
+            invocation_tool := vm5,
+            invocation_used := vs1,
+            invocation_egress := vm6,
+            tool_registered := vs2,
             agent_instruction := vm7,
             override_used := vm8,
             flow_override := vm9,
             agent_budget := vm10
-          } conf_floor flight_egress acc
+          } conf_floor flight_egress denied
     let fi1 ← fi + 1#usize
-    ok (cont (acc1, fi1))
-  else ok (done acc)
+    ok (cont (denied1, fi1))
+  else ok (done denied)
 
-/-- [argus_kernel::transitions::invoke_start]: loop 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 356:4-375:5
+/-- [argus_kernel::transitions::invoke_start]: loop 3:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 436:4-453:5
     Visibility: public -/
 @[rust_loop]
-def transitions.invoke_start_loop2
+def transitions.invoke_start_loop3
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
   (vs : collections.VecSet types.AgentId)
   (vm : collections.VecMap types.AgentId types.AgentId)
@@ -2804,11 +3201,13 @@ def transitions.invoke_start_loop2
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -2816,25 +3215,1152 @@ def transitions.invoke_start_loop2
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
-  (conf_floor : types.ConfLevel) (acc : transitions.GateAccum)
+  (conf_floor : types.ConfLevel) (denied : Bool)
   (agent_flights : collections.VecSet types.InvocationId) (fi : Std.Usize) :
-  Result transitions.GateAccum
+  Result Bool
   := do
   loop
-    (fun (acc1, fi1) => transitions.invoke_start_loop2.body
-      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vs1 vm5 vm6 vm7 vm8 vm9
-      vm10 bg content_gate agent conf_floor agent_flights acc1 fi1)
-    (acc, fi)
+    (fun (denied1, fi1) => transitions.invoke_start_loop3.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent conf_floor agent_flights denied1 fi1)
+    (denied, fi)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 4:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 476:4-492:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop4.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId) (il : types.IntegLevel)
+  (il1 : types.IntegLevel) (spec_integ : collections.VecSet types.IntegLevel)
+  (integ_denied : Bool) (igi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel spec_integ
+  if igi < i
+  then
+    let level ←
+      collections.VecSet.at types.IntegLevel.Insts.CoreCloneClone
+        types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel spec_integ igi
+    let id ←
+      transitions.integ_decision traitsContentGateOracleInst content_gate agent
+        tool inv
+        {
+          agent_active := vs,
+          agent_parent := vm,
+          agent_cap := vm1,
+          taint_levels := vm2,
+          integ_levels := vm3,
+          in_flight := vm4,
+          invocation_tool := vm5,
+          invocation_used := vs1,
+          invocation_egress := vm6,
+          tool_registered := vs2,
+          agent_instruction := vm7,
+          override_used := vm8,
+          flow_override := vm9,
+          agent_budget := vm10
+        } bg il il1 level
+    let integ_denied1 ←
+      match id with
+      | transitions.IntegDecision.Allowed => ok integ_denied
+      | transitions.IntegDecision.Denied => ok true
+    let igi1 ← igi + 1#usize
+    ok (cont (integ_denied1, igi1))
+  else ok (done integ_denied)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 4:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 476:4-492:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop4
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId) (il : types.IntegLevel)
+  (il1 : types.IntegLevel) (integ_denied : Bool)
+  (spec_integ : collections.VecSet types.IntegLevel) (igi : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (integ_denied1, igi1) => transitions.invoke_start_loop4.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent tool inv il il1 spec_integ integ_denied1
+      igi1)
+    (integ_denied, igi)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 5:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 498:4-518:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop5.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (il : types.IntegLevel)
+  (agent_flights : collections.VecSet types.InvocationId) (integ_denied : Bool)
+  (fbi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights
+  if fbi < i
+  then
+    let flight_inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights fbi
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 flight_inv
+    let integ_denied1 ←
+      match o with
+      | none => ok integ_denied
+      | some flight_tool_id =>
+        do
+        let o1 ← background.BackgroundTheory.tool_metadata bg flight_tool_id
+        match o1 with
+        | none => ok integ_denied
+        | some flight_meta =>
+          let id ←
+            transitions.integ_decision traitsContentGateOracleInst content_gate
+              agent flight_tool_id flight_inv
+              {
+                agent_active := vs,
+                agent_parent := vm,
+                agent_cap := vm1,
+                taint_levels := vm2,
+                integ_levels := vm3,
+                in_flight := vm4,
+                invocation_tool := vm5,
+                invocation_used := vs1,
+                invocation_egress := vm6,
+                tool_registered := vs2,
+                agent_instruction := vm7,
+                override_used := vm8,
+                flow_override := vm9,
+                agent_budget := vm10
+              } bg flight_meta.integ_floor flight_meta.integ_inspect_floor il
+          match id with
+          | transitions.IntegDecision.Allowed => ok integ_denied
+          | transitions.IntegDecision.Denied => ok true
+    let fbi1 ← fbi + 1#usize
+    ok (cont (integ_denied1, fbi1))
+  else ok (done integ_denied)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 5:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 498:4-518:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop5
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (il : types.IntegLevel)
+  (agent_flights : collections.VecSet types.InvocationId) (integ_denied : Bool)
+  (fbi : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (integ_denied1, fbi1) => transitions.invoke_start_loop5.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent il agent_flights integ_denied1 fbi1)
+    (integ_denied, fbi)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 6:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 547:4-553:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop6.body
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (tool : types.ToolId)
+  (spec_taint : collections.VecSet types.ConfLevel)
+  (to_consume : collections.VecSet types.OverrideKey) (ti : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.OverrideKey) × Std.Usize)
+    (collections.VecSet types.OverrideKey))
+  := do
+  let i ←
+    collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
+      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint
+  if ti < i
+  then
+    let level ←
+      collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
+        types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint ti
+    let b ←
+      state.KernelState.has_flow_override
+        {
+          agent_active := vs,
+          agent_parent := vm,
+          agent_cap := vm1,
+          taint_levels := vm2,
+          integ_levels := vm3,
+          in_flight := vm4,
+          invocation_tool := vm5,
+          invocation_used := vs1,
+          invocation_egress := vm6,
+          tool_registered := vs2,
+          agent_instruction := vm7,
+          override_used := vm8,
+          flow_override := vm9,
+          agent_budget := vm10
+        } agent tool level
+    let to_consume1 ←
+      if b
+      then
+        do
+        let ti1 ← types.ToolId.Insts.CoreCloneClone.clone tool
+        collections.VecSet.insert types.OverrideKey.Insts.CoreCloneClone
+          types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey to_consume
+          { tool := ti1, level }
+      else ok to_consume
+    let ti1 ← ti + 1#usize
+    ok (cont (to_consume1, ti1))
+  else ok (done to_consume)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 6:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 547:4-553:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop6
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (tool : types.ToolId)
+  (spec_taint : collections.VecSet types.ConfLevel)
+  (to_consume : collections.VecSet types.OverrideKey) (ti : Std.Usize) :
+  Result (collections.VecSet types.OverrideKey)
+  := do
+  loop
+    (fun (to_consume1, ti1) => transitions.invoke_start_loop6.body vs vm vm1
+      vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 agent tool spec_taint
+      to_consume1 ti1)
+    (to_consume, ti)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 7:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 562:4-570:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop7.body
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (conf_floor : types.ConfLevel)
+  (agent_flights : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ri : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.OverrideKey) × Std.Usize)
+    (collections.VecSet types.OverrideKey))
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights
+  if ri < i
+  then
+    let flight_inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights ri
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 flight_inv
+    let to_consume1 ←
+      match o with
+      | none => ok to_consume
+      | some flight_tool_id =>
+        do
+        let b ←
+          state.KernelState.has_flow_override
+            {
+              agent_active := vs,
+              agent_parent := vm,
+              agent_cap := vm1,
+              taint_levels := vm2,
+              integ_levels := vm3,
+              in_flight := vm4,
+              invocation_tool := vm5,
+              invocation_used := vs1,
+              invocation_egress := vm6,
+              tool_registered := vs2,
+              agent_instruction := vm7,
+              override_used := vm8,
+              flow_override := vm9,
+              agent_budget := vm10
+            } agent flight_tool_id conf_floor
+        if b
+        then
+          collections.VecSet.insert types.OverrideKey.Insts.CoreCloneClone
+            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey to_consume
+            { tool := flight_tool_id, level := conf_floor }
+        else ok to_consume
+    let ri1 ← ri + 1#usize
+    ok (cont (to_consume1, ri1))
+  else ok (done to_consume)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 7:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 562:4-570:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop7
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (conf_floor : types.ConfLevel)
+  (agent_flights : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ri : Std.Usize) :
+  Result (collections.VecSet types.OverrideKey)
+  := do
+  loop
+    (fun (to_consume1, ri1) => transitions.invoke_start_loop7.body vs vm vm1
+      vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 agent conf_floor
+      agent_flights to_consume1 ri1)
+    (to_consume, ri)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 8:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 402:4-408:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop8.body
+  (vm : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind)) (agent : types.AgentId)
+  (vs : collections.VecSet capability.CapKind) (missing_cap : Bool)
+  (ci : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len capability.CapKind.Insts.CoreCloneClone
+      capability.CapKind.Insts.CoreCmpPartialEqCapKind vs
+  if ci < i
+  then
+    let required_cap ←
+      collections.VecSet.at capability.CapKind.Insts.CoreCloneClone
+        capability.CapKind.Insts.CoreCmpPartialEqCapKind vs ci
+    let b ←
+      collections.VecMapKVecSet.set_contains types.AgentId.Insts.CoreCloneClone
+        types.AgentId.Insts.CoreCmpPartialEqAgentId
+        capability.CapKind.Insts.CoreCloneClone
+        capability.CapKind.Insts.CoreCmpPartialEqCapKind vm agent required_cap
+    let missing_cap1 ← if b
+                         then ok missing_cap
+                         else ok true
+    let ci1 ← ci + 1#usize
+    ok (cont (missing_cap1, ci1))
+  else ok (done missing_cap)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 8:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 402:4-408:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop8
+  (vm : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind)) (agent : types.AgentId)
+  (vs : collections.VecSet capability.CapKind) (missing_cap : Bool)
+  (ci : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (missing_cap1, ci1) => transitions.invoke_start_loop8.body vm agent vs
+      missing_cap1 ci1)
+    (missing_cap, ci)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 9:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 422:4-426:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop9.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId)
+  (attested_egress : collections.VecSet types.EgressKind)
+  (spec_taint : collections.VecSet types.ConfLevel) (denied : Bool)
+  (li : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
+      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint
+  if li < i
+  then
+    let level ←
+      collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
+        types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint li
+    let denied1 ←
+      transitions.gate_egress traitsContentGateOracleInst bg content_gate agent
+        tool inv
+        {
+          agent_active := vs,
+          agent_parent := vm,
+          agent_cap := vm1,
+          taint_levels := vm2,
+          integ_levels := vm3,
+          in_flight := vm4,
+          invocation_tool := vm5,
+          invocation_used := vs1,
+          invocation_egress := vm6,
+          tool_registered := vs2,
+          agent_instruction := vm7,
+          override_used := vm8,
+          flow_override := vm9,
+          agent_budget := vm10
+        } level attested_egress denied
+    let li1 ← li + 1#usize
+    ok (cont (denied1, li1))
+  else ok (done denied)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 9:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 422:4-426:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop9
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId)
+  (attested_egress : collections.VecSet types.EgressKind) (denied : Bool)
+  (spec_taint : collections.VecSet types.ConfLevel) (li : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (denied1, li1) => transitions.invoke_start_loop9.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent tool inv attested_egress spec_taint
+      denied1 li1)
+    (denied, li)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 10:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 436:4-453:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop10.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (conf_floor : types.ConfLevel)
+  (agent_flights : collections.VecSet types.InvocationId) (denied : Bool)
+  (fi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights
+  if fi < i
+  then
+    let flight_inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights fi
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 flight_inv
+    let denied1 ←
+      match o with
+      | none => ok denied
+      | some flight_tool_id =>
+        do
+        let flight_egress ←
+          collections.VecMapKVecSet.get_set_or_empty
+            types.InvocationId.Insts.CoreCloneClone
+            types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+            types.EgressKind.Insts.CoreCloneClone
+            types.EgressKind.Insts.CoreCmpPartialEqEgressKind vm6 flight_inv
+        transitions.gate_egress traitsContentGateOracleInst bg content_gate
+          agent flight_tool_id flight_inv
+          {
+            agent_active := vs,
+            agent_parent := vm,
+            agent_cap := vm1,
+            taint_levels := vm2,
+            integ_levels := vm3,
+            in_flight := vm4,
+            invocation_tool := vm5,
+            invocation_used := vs1,
+            invocation_egress := vm6,
+            tool_registered := vs2,
+            agent_instruction := vm7,
+            override_used := vm8,
+            flow_override := vm9,
+            agent_budget := vm10
+          } conf_floor flight_egress denied
+    let fi1 ← fi + 1#usize
+    ok (cont (denied1, fi1))
+  else ok (done denied)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 10:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 436:4-453:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop10
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (conf_floor : types.ConfLevel) (denied : Bool)
+  (agent_flights : collections.VecSet types.InvocationId) (fi : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (denied1, fi1) => transitions.invoke_start_loop10.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent conf_floor agent_flights denied1 fi1)
+    (denied, fi)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 11:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 476:4-492:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop11.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId) (il : types.IntegLevel)
+  (il1 : types.IntegLevel) (spec_integ : collections.VecSet types.IntegLevel)
+  (integ_denied : Bool) (igi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel spec_integ
+  if igi < i
+  then
+    let level ←
+      collections.VecSet.at types.IntegLevel.Insts.CoreCloneClone
+        types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel spec_integ igi
+    let id ←
+      transitions.integ_decision traitsContentGateOracleInst content_gate agent
+        tool inv
+        {
+          agent_active := vs,
+          agent_parent := vm,
+          agent_cap := vm1,
+          taint_levels := vm2,
+          integ_levels := vm3,
+          in_flight := vm4,
+          invocation_tool := vm5,
+          invocation_used := vs1,
+          invocation_egress := vm6,
+          tool_registered := vs2,
+          agent_instruction := vm7,
+          override_used := vm8,
+          flow_override := vm9,
+          agent_budget := vm10
+        } bg il il1 level
+    let integ_denied1 ←
+      match id with
+      | transitions.IntegDecision.Allowed => ok integ_denied
+      | transitions.IntegDecision.Denied => ok true
+    let igi1 ← igi + 1#usize
+    ok (cont (integ_denied1, igi1))
+  else ok (done integ_denied)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 11:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 476:4-492:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop11
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (tool : types.ToolId) (inv : types.InvocationId) (il : types.IntegLevel)
+  (il1 : types.IntegLevel) (integ_denied : Bool)
+  (spec_integ : collections.VecSet types.IntegLevel) (igi : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (integ_denied1, igi1) => transitions.invoke_start_loop11.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent tool inv il il1 spec_integ integ_denied1
+      igi1)
+    (integ_denied, igi)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 12:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 498:4-518:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop12.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (il : types.IntegLevel)
+  (agent_flights : collections.VecSet types.InvocationId) (integ_denied : Bool)
+  (fbi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights
+  if fbi < i
+  then
+    let flight_inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights fbi
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 flight_inv
+    let integ_denied1 ←
+      match o with
+      | none => ok integ_denied
+      | some flight_tool_id =>
+        do
+        let o1 ← background.BackgroundTheory.tool_metadata bg flight_tool_id
+        match o1 with
+        | none => ok integ_denied
+        | some flight_meta =>
+          let id ←
+            transitions.integ_decision traitsContentGateOracleInst content_gate
+              agent flight_tool_id flight_inv
+              {
+                agent_active := vs,
+                agent_parent := vm,
+                agent_cap := vm1,
+                taint_levels := vm2,
+                integ_levels := vm3,
+                in_flight := vm4,
+                invocation_tool := vm5,
+                invocation_used := vs1,
+                invocation_egress := vm6,
+                tool_registered := vs2,
+                agent_instruction := vm7,
+                override_used := vm8,
+                flow_override := vm9,
+                agent_budget := vm10
+              } bg flight_meta.integ_floor flight_meta.integ_inspect_floor il
+          match id with
+          | transitions.IntegDecision.Allowed => ok integ_denied
+          | transitions.IntegDecision.Denied => ok true
+    let fbi1 ← fbi + 1#usize
+    ok (cont (integ_denied1, fbi1))
+  else ok (done integ_denied)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 12:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 498:4-518:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop12
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (il : types.IntegLevel)
+  (agent_flights : collections.VecSet types.InvocationId) (integ_denied : Bool)
+  (fbi : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (integ_denied1, fbi1) => transitions.invoke_start_loop12.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent il agent_flights integ_denied1 fbi1)
+    (integ_denied, fbi)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 13:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 547:4-553:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop13.body
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (tool : types.ToolId)
+  (spec_taint : collections.VecSet types.ConfLevel)
+  (to_consume : collections.VecSet types.OverrideKey) (ti : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.OverrideKey) × Std.Usize)
+    (collections.VecSet types.OverrideKey))
+  := do
+  let i ←
+    collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
+      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint
+  if ti < i
+  then
+    let level ←
+      collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
+        types.ConfLevel.Insts.CoreCmpPartialEqConfLevel spec_taint ti
+    let b ←
+      state.KernelState.has_flow_override
+        {
+          agent_active := vs,
+          agent_parent := vm,
+          agent_cap := vm1,
+          taint_levels := vm2,
+          integ_levels := vm3,
+          in_flight := vm4,
+          invocation_tool := vm5,
+          invocation_used := vs1,
+          invocation_egress := vm6,
+          tool_registered := vs2,
+          agent_instruction := vm7,
+          override_used := vm8,
+          flow_override := vm9,
+          agent_budget := vm10
+        } agent tool level
+    let to_consume1 ←
+      if b
+      then
+        do
+        let ti1 ← types.ToolId.Insts.CoreCloneClone.clone tool
+        collections.VecSet.insert types.OverrideKey.Insts.CoreCloneClone
+          types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey to_consume
+          { tool := ti1, level }
+      else ok to_consume
+    let ti1 ← ti + 1#usize
+    ok (cont (to_consume1, ti1))
+  else ok (done to_consume)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 13:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 547:4-553:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop13
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (tool : types.ToolId)
+  (spec_taint : collections.VecSet types.ConfLevel)
+  (to_consume : collections.VecSet types.OverrideKey) (ti : Std.Usize) :
+  Result (collections.VecSet types.OverrideKey)
+  := do
+  loop
+    (fun (to_consume1, ti1) => transitions.invoke_start_loop13.body vs vm vm1
+      vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 agent tool spec_taint
+      to_consume1 ti1)
+    (to_consume, ti)
+
+/-- [argus_kernel::transitions::invoke_start]: loop body 14:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 562:4-570:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.invoke_start_loop14.body
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (conf_floor : types.ConfLevel)
+  (agent_flights : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ri : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.OverrideKey) × Std.Usize)
+    (collections.VecSet types.OverrideKey))
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights
+  if ri < i
+  then
+    let flight_inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId agent_flights ri
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 flight_inv
+    let to_consume1 ←
+      match o with
+      | none => ok to_consume
+      | some flight_tool_id =>
+        do
+        let b ←
+          state.KernelState.has_flow_override
+            {
+              agent_active := vs,
+              agent_parent := vm,
+              agent_cap := vm1,
+              taint_levels := vm2,
+              integ_levels := vm3,
+              in_flight := vm4,
+              invocation_tool := vm5,
+              invocation_used := vs1,
+              invocation_egress := vm6,
+              tool_registered := vs2,
+              agent_instruction := vm7,
+              override_used := vm8,
+              flow_override := vm9,
+              agent_budget := vm10
+            } agent flight_tool_id conf_floor
+        if b
+        then
+          collections.VecSet.insert types.OverrideKey.Insts.CoreCloneClone
+            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey to_consume
+            { tool := flight_tool_id, level := conf_floor }
+        else ok to_consume
+    let ri1 ← ri + 1#usize
+    ok (cont (to_consume1, ri1))
+  else ok (done to_consume)
+
+/-- [argus_kernel::transitions::invoke_start]: loop 14:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 562:4-570:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.invoke_start_loop14
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (conf_floor : types.ConfLevel)
+  (agent_flights : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ri : Std.Usize) :
+  Result (collections.VecSet types.OverrideKey)
+  := do
+  loop
+    (fun (to_consume1, ri1) => transitions.invoke_start_loop14.body vs vm vm1
+      vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 agent conf_floor
+      agent_flights to_consume1 ri1)
+    (to_consume, ri)
 
 /-- [argus_kernel::transitions::invoke_start]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 291:0-396:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 345:0-582:1
     Visibility: public -/
 def transitions.invoke_start
   {A : Type} {C : Type} (traitsAuthorizerOracleInst : traits.AuthorizerOracle
   A) (traitsContentGateOracleInst : traits.ContentGateOracle C)
   (st : state.KernelState) (bg : background.BackgroundTheory) (authorizer : A)
   (content_gate : C) (agent : types.AgentId) (tool : types.ToolId)
-  (inv : types.InvocationId) :
+  (inv : types.InvocationId)
+  (attested_egress : collections.VecSet types.EgressKind) :
   Result (core.result.Result (state.KernelState × event.KernelAction)
     error.KernelError)
   := do
@@ -2871,106 +4397,441 @@ def transitions.invoke_start
           if b4
           then ok (core.result.Result.Err error.KernelError.InvocationInFlight)
           else
-            let o ← background.BackgroundTheory.tool_metadata bg tool
-            match o with
-            | none =>
-              ok (core.result.Result.Err error.KernelError.ToolNotInTheory)
-            | some m =>
-              let missing_cap ←
-                transitions.invoke_start_loop0 st.agent_cap agent
-                  m.capabilities false 0#usize
-              if missing_cap
-              then
-                ok (core.result.Result.Err error.KernelError.CapabilityMissing)
-              else
-                let vs ←
-                  collections.VecSet.new types.OverrideKey.Insts.CoreCloneClone
-                    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-                let spec_taint ←
-                  state.KernelState.speculative_taint st agent bg
-                let acc ←
-                  transitions.invoke_start_loop1 traitsContentGateOracleInst
-                    st.agent_active st.agent_parent st.agent_cap
-                    st.taint_levels st.in_flight st.invocation_tool
-                    st.tool_registered st.gh_taint_invoked st.gh_taint_received
-                    st.agent_instruction st.override_used st.flow_override
-                    st.agent_budget bg content_gate agent tool m.egress
-                    { denied := false, to_consume := vs } spec_taint 0#usize
-                let agent_flights ←
-                  collections.VecMapKVecSet.get_set_or_empty
-                    types.AgentId.Insts.CoreCloneClone
-                    types.AgentId.Insts.CoreCmpPartialEqAgentId
-                    types.InvocationId.Insts.CoreCloneClone
-                    types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-                    st.in_flight agent
-                let acc1 ←
-                  transitions.invoke_start_loop2 traitsContentGateOracleInst
-                    st.agent_active st.agent_parent st.agent_cap
-                    st.taint_levels st.in_flight st.invocation_tool
-                    st.tool_registered st.gh_taint_invoked st.gh_taint_received
-                    st.agent_instruction st.override_used st.flow_override
-                    st.agent_budget bg content_gate agent m.conf_floor acc
-                    agent_flights 0#usize
-                let acc2 ←
-                  transitions.gate_egress traitsContentGateOracleInst bg
-                    content_gate agent tool st m.conf_floor m.egress acc1
-                if acc2.denied
+            let b5 ←
+              collections.VecSet.contains
+                types.InvocationId.Insts.CoreCloneClone
+                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                st.invocation_used inv
+            if b5
+            then
+              ok (core.result.Result.Err error.KernelError.InvocationReplayed)
+            else
+              let o ← background.BackgroundTheory.tool_metadata bg tool
+              match o with
+              | none =>
+                ok (core.result.Result.Err error.KernelError.ToolNotInTheory)
+              | some m =>
+                let narrowing_violated ←
+                  transitions.invoke_start_loop0 attested_egress m.egress false
+                    0#usize
+                if narrowing_violated
                 then
-                  ok (core.result.Result.Err error.KernelError.FlowGateBlocked)
+                  ok (core.result.Result.Err
+                    error.KernelError.AttestationInvalid)
                 else
-                  let b5 ←
-                    traitsAuthorizerOracleInst.allows authorizer agent tool st
-                      bg
-                  if b5
+                  let b6 ←
+                    collections.VecSet.is_empty
+                      types.EgressKind.Insts.CoreCloneClone
+                      types.EgressKind.Insts.CoreCmpPartialEqEgressKind
+                      m.egress
+                  if b6
                   then
-                    let b6 ←
-                      collections.VecSet.is_empty
-                        types.OverrideKey.Insts.CoreCloneClone
-                        types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-                        acc2.to_consume
-                    let vm ←
-                      if b6
-                      then ok st.override_used
-                      else
-                        do
-                        let ai1 ←
-                          types.AgentId.Insts.CoreCloneClone.clone agent
-                        collections.VecMapKVecSet.extend_into
+                    let missing_cap ←
+                      transitions.invoke_start_loop1 st.agent_cap agent
+                        m.capabilities false 0#usize
+                    if missing_cap
+                    then
+                      ok (core.result.Result.Err
+                        error.KernelError.CapabilityMissing)
+                    else
+                      let spec_taint ←
+                        state.KernelState.speculative_taint st agent bg
+                      let denied ←
+                        transitions.invoke_start_loop2
+                          traitsContentGateOracleInst st.agent_active
+                          st.agent_parent st.agent_cap st.taint_levels
+                          st.integ_levels st.in_flight st.invocation_tool
+                          st.invocation_used st.invocation_egress
+                          st.tool_registered st.agent_instruction
+                          st.override_used st.flow_override st.agent_budget bg
+                          content_gate agent tool inv attested_egress false
+                          spec_taint 0#usize
+                      let agent_flights ←
+                        collections.VecMapKVecSet.get_set_or_empty
                           types.AgentId.Insts.CoreCloneClone
                           types.AgentId.Insts.CoreCmpPartialEqAgentId
-                          types.OverrideKey.Insts.CoreCloneClone
-                          types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-                          st.override_used ai1 acc2.to_consume
-                    let ii ←
-                      types.InvocationId.Insts.CoreCloneClone.clone inv
-                    let ti ← types.ToolId.Insts.CoreCloneClone.clone tool
-                    let vm1 ←
-                      collections.VecMap.insert
-                        types.InvocationId.Insts.CoreCloneClone
-                        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-                        types.ToolId.Insts.CoreCloneClone st.invocation_tool ii
-                        ti
-                    let ai1 ← types.AgentId.Insts.CoreCloneClone.clone agent
-                    let vm2 ←
-                      collections.VecMapKVecSet.insert_into
-                        types.AgentId.Insts.CoreCloneClone
-                        types.AgentId.Insts.CoreCmpPartialEqAgentId
-                        types.InvocationId.Insts.CoreCloneClone
-                        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-                        st.in_flight ai1 ii
-                    ok (core.result.Result.Ok
-                      ({
-                         st
-                           with
-                           in_flight := vm2,
-                           invocation_tool := vm1,
-                           override_used := vm
-                       }, event.KernelAction.InvokeStart agent tool inv))
+                          types.InvocationId.Insts.CoreCloneClone
+                          types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                          st.in_flight agent
+                      let denied1 ←
+                        transitions.invoke_start_loop3
+                          traitsContentGateOracleInst st.agent_active
+                          st.agent_parent st.agent_cap st.taint_levels
+                          st.integ_levels st.in_flight st.invocation_tool
+                          st.invocation_used st.invocation_egress
+                          st.tool_registered st.agent_instruction
+                          st.override_used st.flow_override st.agent_budget bg
+                          content_gate agent m.conf_floor denied agent_flights
+                          0#usize
+                      let denied2 ←
+                        transitions.gate_egress traitsContentGateOracleInst bg
+                          content_gate agent tool inv st m.conf_floor
+                          attested_egress denied1
+                      if denied2
+                      then
+                        ok (core.result.Result.Err
+                          error.KernelError.FlowGateBlocked)
+                      else
+                        let b7 ←
+                          traitsAuthorizerOracleInst.allows authorizer agent
+                            tool inv st bg
+                        if b7
+                        then
+                          let spec_integ ←
+                            state.KernelState.speculative_integ st agent bg
+                          let integ_denied ←
+                            transitions.invoke_start_loop4
+                              traitsContentGateOracleInst st.agent_active
+                              st.agent_parent st.agent_cap st.taint_levels
+                              st.integ_levels st.in_flight st.invocation_tool
+                              st.invocation_used st.invocation_egress
+                              st.tool_registered st.agent_instruction
+                              st.override_used st.flow_override st.agent_budget
+                              bg content_gate agent tool inv m.integ_floor
+                              m.integ_inspect_floor false spec_integ 0#usize
+                          let integ_denied1 ←
+                            transitions.invoke_start_loop5
+                              traitsContentGateOracleInst st.agent_active
+                              st.agent_parent st.agent_cap st.taint_levels
+                              st.integ_levels st.in_flight st.invocation_tool
+                              st.invocation_used st.invocation_egress
+                              st.tool_registered st.agent_instruction
+                              st.override_used st.flow_override st.agent_budget
+                              bg content_gate agent m.output_integ
+                              agent_flights integ_denied 0#usize
+                          let id ←
+                            transitions.integ_decision
+                              traitsContentGateOracleInst content_gate agent
+                              tool inv st bg m.integ_floor
+                              m.integ_inspect_floor m.output_integ
+                          let integ_denied2 ←
+                            match id with
+                            | transitions.IntegDecision.Allowed =>
+                              ok integ_denied1
+                            | transitions.IntegDecision.Denied => ok true
+                          if integ_denied2
+                          then
+                            ok (core.result.Result.Err
+                              error.KernelError.IntegrityFloorDenied)
+                          else
+                            let to_consume ←
+                              collections.VecSet.new
+                                types.OverrideKey.Insts.CoreCloneClone
+                                types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                            let to_consume1 ←
+                              transitions.invoke_start_loop6 st.agent_active
+                                st.agent_parent st.agent_cap st.taint_levels
+                                st.integ_levels st.in_flight st.invocation_tool
+                                st.invocation_used st.invocation_egress
+                                st.tool_registered st.agent_instruction
+                                st.override_used st.flow_override
+                                st.agent_budget agent tool spec_taint
+                                to_consume 0#usize
+                            let b8 ←
+                              state.KernelState.has_flow_override st agent tool
+                                m.conf_floor
+                            let to_consume2 ←
+                              if b8
+                              then
+                                do
+                                let ti ←
+                                  types.ToolId.Insts.CoreCloneClone.clone tool
+                                collections.VecSet.insert
+                                  types.OverrideKey.Insts.CoreCloneClone
+                                  types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                                  to_consume1
+                                  { tool := ti, level := m.conf_floor }
+                              else ok to_consume1
+                            let to_consume3 ←
+                              transitions.invoke_start_loop7 st.agent_active
+                                st.agent_parent st.agent_cap st.taint_levels
+                                st.integ_levels st.in_flight st.invocation_tool
+                                st.invocation_used st.invocation_egress
+                                st.tool_registered st.agent_instruction
+                                st.override_used st.flow_override
+                                st.agent_budget agent m.conf_floor
+                                agent_flights to_consume2 0#usize
+                            let b9 ←
+                              collections.VecSet.is_empty
+                                types.OverrideKey.Insts.CoreCloneClone
+                                types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                                to_consume3
+                            let vm ←
+                              if b9
+                              then ok st.override_used
+                              else
+                                do
+                                let ai1 ←
+                                  types.AgentId.Insts.CoreCloneClone.clone
+                                    agent
+                                collections.VecMapKVecSet.extend_into
+                                  types.AgentId.Insts.CoreCloneClone
+                                  types.AgentId.Insts.CoreCmpPartialEqAgentId
+                                  types.OverrideKey.Insts.CoreCloneClone
+                                  types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                                  st.override_used ai1 to_consume3
+                            let ii ←
+                              types.InvocationId.Insts.CoreCloneClone.clone inv
+                            let ti ←
+                              types.ToolId.Insts.CoreCloneClone.clone tool
+                            let vm1 ←
+                              collections.VecMap.insert
+                                types.InvocationId.Insts.CoreCloneClone
+                                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                types.ToolId.Insts.CoreCloneClone
+                                st.invocation_tool ii ti
+                            let ai1 ←
+                              types.AgentId.Insts.CoreCloneClone.clone agent
+                            let vm2 ←
+                              collections.VecMapKVecSet.insert_into
+                                types.AgentId.Insts.CoreCloneClone
+                                types.AgentId.Insts.CoreCmpPartialEqAgentId
+                                types.InvocationId.Insts.CoreCloneClone
+                                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                st.in_flight ai1 ii
+                            let vm3 ←
+                              collections.VecMap.insert
+                                types.InvocationId.Insts.CoreCloneClone
+                                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                (collections.VecSet.Insts.CoreCloneClone
+                                types.EgressKind.Insts.CoreCloneClone)
+                                st.invocation_egress ii attested_egress
+                            let vs ←
+                              collections.VecSet.insert
+                                types.InvocationId.Insts.CoreCloneClone
+                                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                st.invocation_used ii
+                            ok (core.result.Result.Ok
+                              ({
+                                 st
+                                   with
+                                   in_flight := vm2,
+                                   invocation_tool := vm1,
+                                   invocation_used := vs,
+                                   invocation_egress := vm3,
+                                   override_used := vm
+                               }, event.KernelAction.InvokeStart agent tool
+                              inv))
+                        else
+                          ok (core.result.Result.Err
+                            error.KernelError.AuthorizerDenied)
                   else
-                    ok (core.result.Result.Err
-                      error.KernelError.AuthorizerDenied)
+                    let b7 ←
+                      collections.VecSet.is_empty
+                        types.EgressKind.Insts.CoreCloneClone
+                        types.EgressKind.Insts.CoreCmpPartialEqEgressKind
+                        attested_egress
+                    if b7
+                    then
+                      ok (core.result.Result.Err
+                        error.KernelError.AttestationInvalid)
+                    else
+                      let missing_cap ←
+                        transitions.invoke_start_loop8 st.agent_cap agent
+                          m.capabilities false 0#usize
+                      if missing_cap
+                      then
+                        ok (core.result.Result.Err
+                          error.KernelError.CapabilityMissing)
+                      else
+                        let spec_taint ←
+                          state.KernelState.speculative_taint st agent bg
+                        let denied ←
+                          transitions.invoke_start_loop9
+                            traitsContentGateOracleInst st.agent_active
+                            st.agent_parent st.agent_cap st.taint_levels
+                            st.integ_levels st.in_flight st.invocation_tool
+                            st.invocation_used st.invocation_egress
+                            st.tool_registered st.agent_instruction
+                            st.override_used st.flow_override st.agent_budget
+                            bg content_gate agent tool inv attested_egress
+                            false spec_taint 0#usize
+                        let agent_flights ←
+                          collections.VecMapKVecSet.get_set_or_empty
+                            types.AgentId.Insts.CoreCloneClone
+                            types.AgentId.Insts.CoreCmpPartialEqAgentId
+                            types.InvocationId.Insts.CoreCloneClone
+                            types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                            st.in_flight agent
+                        let denied1 ←
+                          transitions.invoke_start_loop10
+                            traitsContentGateOracleInst st.agent_active
+                            st.agent_parent st.agent_cap st.taint_levels
+                            st.integ_levels st.in_flight st.invocation_tool
+                            st.invocation_used st.invocation_egress
+                            st.tool_registered st.agent_instruction
+                            st.override_used st.flow_override st.agent_budget
+                            bg content_gate agent m.conf_floor denied
+                            agent_flights 0#usize
+                        let denied2 ←
+                          transitions.gate_egress traitsContentGateOracleInst
+                            bg content_gate agent tool inv st m.conf_floor
+                            attested_egress denied1
+                        if denied2
+                        then
+                          ok (core.result.Result.Err
+                            error.KernelError.FlowGateBlocked)
+                        else
+                          let b8 ←
+                            traitsAuthorizerOracleInst.allows authorizer agent
+                              tool inv st bg
+                          if b8
+                          then
+                            let spec_integ ←
+                              state.KernelState.speculative_integ st agent bg
+                            let integ_denied ←
+                              transitions.invoke_start_loop11
+                                traitsContentGateOracleInst st.agent_active
+                                st.agent_parent st.agent_cap st.taint_levels
+                                st.integ_levels st.in_flight st.invocation_tool
+                                st.invocation_used st.invocation_egress
+                                st.tool_registered st.agent_instruction
+                                st.override_used st.flow_override
+                                st.agent_budget bg content_gate agent tool inv
+                                m.integ_floor m.integ_inspect_floor false
+                                spec_integ 0#usize
+                            let integ_denied1 ←
+                              transitions.invoke_start_loop12
+                                traitsContentGateOracleInst st.agent_active
+                                st.agent_parent st.agent_cap st.taint_levels
+                                st.integ_levels st.in_flight st.invocation_tool
+                                st.invocation_used st.invocation_egress
+                                st.tool_registered st.agent_instruction
+                                st.override_used st.flow_override
+                                st.agent_budget bg content_gate agent
+                                m.output_integ agent_flights integ_denied
+                                0#usize
+                            let id ←
+                              transitions.integ_decision
+                                traitsContentGateOracleInst content_gate agent
+                                tool inv st bg m.integ_floor
+                                m.integ_inspect_floor m.output_integ
+                            let integ_denied2 ←
+                              match id with
+                              | transitions.IntegDecision.Allowed =>
+                                ok integ_denied1
+                              | transitions.IntegDecision.Denied => ok true
+                            if integ_denied2
+                            then
+                              ok (core.result.Result.Err
+                                error.KernelError.IntegrityFloorDenied)
+                            else
+                              let to_consume ←
+                                collections.VecSet.new
+                                  types.OverrideKey.Insts.CoreCloneClone
+                                  types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                              let to_consume1 ←
+                                transitions.invoke_start_loop13 st.agent_active
+                                  st.agent_parent st.agent_cap st.taint_levels
+                                  st.integ_levels st.in_flight
+                                  st.invocation_tool st.invocation_used
+                                  st.invocation_egress st.tool_registered
+                                  st.agent_instruction st.override_used
+                                  st.flow_override st.agent_budget agent tool
+                                  spec_taint to_consume 0#usize
+                              let b9 ←
+                                state.KernelState.has_flow_override st agent
+                                  tool m.conf_floor
+                              let to_consume2 ←
+                                if b9
+                                then
+                                  do
+                                  let ti ←
+                                    types.ToolId.Insts.CoreCloneClone.clone
+                                      tool
+                                  collections.VecSet.insert
+                                    types.OverrideKey.Insts.CoreCloneClone
+                                    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                                    to_consume1
+                                    { tool := ti, level := m.conf_floor }
+                                else ok to_consume1
+                              let to_consume3 ←
+                                transitions.invoke_start_loop14 st.agent_active
+                                  st.agent_parent st.agent_cap st.taint_levels
+                                  st.integ_levels st.in_flight
+                                  st.invocation_tool st.invocation_used
+                                  st.invocation_egress st.tool_registered
+                                  st.agent_instruction st.override_used
+                                  st.flow_override st.agent_budget agent
+                                  m.conf_floor agent_flights to_consume2
+                                  0#usize
+                              let b10 ←
+                                collections.VecSet.is_empty
+                                  types.OverrideKey.Insts.CoreCloneClone
+                                  types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                                  to_consume3
+                              let vm ←
+                                if b10
+                                then ok st.override_used
+                                else
+                                  do
+                                  let ai1 ←
+                                    types.AgentId.Insts.CoreCloneClone.clone
+                                      agent
+                                  collections.VecMapKVecSet.extend_into
+                                    types.AgentId.Insts.CoreCloneClone
+                                    types.AgentId.Insts.CoreCmpPartialEqAgentId
+                                    types.OverrideKey.Insts.CoreCloneClone
+                                    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                                    st.override_used ai1 to_consume3
+                              let ii ←
+                                types.InvocationId.Insts.CoreCloneClone.clone
+                                  inv
+                              let ti ←
+                                types.ToolId.Insts.CoreCloneClone.clone tool
+                              let vm1 ←
+                                collections.VecMap.insert
+                                  types.InvocationId.Insts.CoreCloneClone
+                                  types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                  types.ToolId.Insts.CoreCloneClone
+                                  st.invocation_tool ii ti
+                              let ai1 ←
+                                types.AgentId.Insts.CoreCloneClone.clone agent
+                              let vm2 ←
+                                collections.VecMapKVecSet.insert_into
+                                  types.AgentId.Insts.CoreCloneClone
+                                  types.AgentId.Insts.CoreCmpPartialEqAgentId
+                                  types.InvocationId.Insts.CoreCloneClone
+                                  types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                  st.in_flight ai1 ii
+                              let vm3 ←
+                                collections.VecMap.insert
+                                  types.InvocationId.Insts.CoreCloneClone
+                                  types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                  (collections.VecSet.Insts.CoreCloneClone
+                                  types.EgressKind.Insts.CoreCloneClone)
+                                  st.invocation_egress ii attested_egress
+                              let vs ←
+                                collections.VecSet.insert
+                                  types.InvocationId.Insts.CoreCloneClone
+                                  types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                                  st.invocation_used ii
+                              ok (core.result.Result.Ok
+                                ({
+                                   st
+                                     with
+                                     in_flight := vm2,
+                                     invocation_tool := vm1,
+                                     invocation_used := vs,
+                                     invocation_egress := vm3,
+                                     override_used := vm
+                                 }, event.KernelAction.InvokeStart agent tool
+                                inv))
+                          else
+                            ok (core.result.Result.Err
+                              error.KernelError.AuthorizerDenied)
       else ok (core.result.Result.Err error.KernelError.ToolNotRegistered)
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
+
+/-- [argus_kernel::types::integ_weight]:
+    Source: 'crates/argus-kernel/src/types.rs', lines 202:0-209:1
+    Visibility: public -/
+def types.integ_weight (level : types.IntegLevel) : Result Std.U8 := do
+  match level with
+  | types.IntegLevel.Untrusted => ok 4#u8
+  | types.IntegLevel.Standard => ok 2#u8
+  | types.IntegLevel.Trusted => ok 1#u8
+  | types.IntegLevel.Attested => ok 0#u8
 
 /-- [argus_kernel::types::declass_weight]:
     Source: 'crates/argus-kernel/src/types.rs', lines 142:0-149:1
@@ -2983,7 +4844,7 @@ def types.declass_weight (level : types.ConfLevel) : Result Std.U8 := do
   | types.ConfLevel.Restricted => ok 4#u8
 
 /-- [argus_kernel::transitions::invoke_complete]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 398:0-439:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 584:0-638:1
     Visibility: public -/
 def transitions.invoke_complete
   {F : Type} (traitsConformanceOracleInst : traits.ConformanceOracle F)
@@ -3019,51 +4880,84 @@ def transitions.invoke_complete
       match o with
       | none =>
         ok (core.result.Result.Ok ({ st with in_flight := vm },
-          event.KernelAction.InvokeComplete agent inv))
+          event.KernelAction.InvokeComplete agent inv false))
       | some tool_id =>
         let o1 ← background.BackgroundTheory.tool_metadata bg tool_id
         let meta_info ←
           match o1 with
           | none => ok none
-          | some tmeta => ok (some (tmeta.conf_floor, tmeta.output_bounded))
+          | some tmeta =>
+            ok (some (tmeta.conf_floor, tmeta.output_bounded,
+              tmeta.output_integ))
         match meta_info with
         | none =>
           ok (core.result.Result.Ok ({ st with in_flight := vm },
-            event.KernelAction.InvokeComplete agent inv))
-        | some p =>
-          let (conf_floor, output_bounded) := p
-          let weight ← types.declass_weight conf_floor
-          let already_tainted ←
+            event.KernelAction.InvokeComplete agent inv false))
+        | some t =>
+          let (conf_floor, output_bounded, output_integ) := t
+          let b2 ←
             collections.VecMapKVecSet.set_contains
               types.AgentId.Insts.CoreCloneClone
               types.AgentId.Insts.CoreCmpPartialEqAgentId
               types.ConfLevel.Insts.CoreCloneClone
               types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.taint_levels
               agent conf_floor
-          let zero_taint ←
+          let b3 ←
+            collections.VecMapKVecSet.set_contains
+              types.AgentId.Insts.CoreCloneClone
+              types.AgentId.Insts.CoreCmpPartialEqAgentId
+              types.IntegLevel.Insts.CoreCloneClone
+              types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel st.integ_levels
+              agent output_integ
+          let (conf_helps, i) ←
+            if ¬ b2
+            then do
+                 let i1 ← types.declass_weight conf_floor
+                 ok (true, i1)
+            else ok (false, 0#u8)
+          let (crossing_ok, i1) ←
+            if ¬ b3
+            then do
+                 let i2 ← types.integ_weight output_integ
+                 ok (true, i2)
+            else ok (false, 0#u8)
+          let crossing_weight ← i + i1
+          let crossing_ok1 ←
             if output_bounded
             then
               do
-              let b2 ←
+              let b4 ←
                 traitsConformanceOracleInst.conforms conformance agent tool_id
-                  { st with in_flight := vm } bg
-              if b2
+                  inv { st with in_flight := vm } bg
+              if b4
               then
-                let b3 ←
-                  state.KernelState.affordable { st with in_flight := vm }
-                    agent weight
-                if b3
-                then ok (¬ already_tainted)
+                let b5 ←
+                  collections.VecMapKVecSet.set_contains
+                    types.AgentId.Insts.CoreCloneClone
+                    types.AgentId.Insts.CoreCmpPartialEqAgentId
+                    capability.CapKind.Insts.CoreCloneClone
+                    capability.CapKind.Insts.CoreCmpPartialEqCapKind
+                    st.agent_cap agent capability.CapKind.Declassify
+                if b5
+                then
+                  let b6 ←
+                    state.KernelState.affordable { st with in_flight := vm }
+                      agent crossing_weight
+                  if b6
+                  then if conf_helps
+                       then ok true
+                       else ok crossing_ok
+                  else ok false
                 else ok false
               else ok false
             else ok false
-          if zero_taint
+          if crossing_ok1
           then
             let st1 ←
               state.KernelState.debit_budget { st with in_flight := vm } agent
-                weight
+                crossing_weight
             ok (core.result.Result.Ok (st1, event.KernelAction.InvokeComplete
-              agent inv))
+              agent inv true))
           else
             let ai ← types.AgentId.Insts.CoreCloneClone.clone agent
             let vm1 ←
@@ -3077,27 +4971,157 @@ def transitions.invoke_complete
               collections.VecMapKVecSet.insert_into
                 types.AgentId.Insts.CoreCloneClone
                 types.AgentId.Insts.CoreCmpPartialEqAgentId
-                types.ConfLevel.Insts.CoreCloneClone
-                types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-                st.gh_taint_invoked ai conf_floor
+                types.IntegLevel.Insts.CoreCloneClone
+                types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+                st.integ_levels ai output_integ
             ok (core.result.Result.Ok
               ({
                  st
                    with
-                   taint_levels := vm1,
-                   in_flight := vm,
-                   gh_taint_invoked := vm2
-               }, event.KernelAction.InvokeComplete agent inv))
+                   taint_levels := vm1, integ_levels := vm2, in_flight := vm
+               }, event.KernelAction.InvokeComplete agent inv false))
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
   else ok (core.result.Result.Err error.KernelError.NotInFlight)
 
+/-- [argus_kernel::transitions::return_endorsed]: loop body 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 680:4-688:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.return_endorsed_loop0.body
+  (bg : background.BackgroundTheory)
+  (child_integ : collections.VecSet types.IntegLevel) (vouched : Bool)
+  (lever_denied : Bool) (li : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ
+  if li < i
+  then
+    let level ←
+      collections.VecSet.at types.IntegLevel.Insts.CoreCloneClone
+        types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ li
+    let il ← background.BackgroundTheory.impl.lever_integ_floor bg
+    let b ← types.IntegLevel.le il level
+    let allowed ←
+      if b
+      then ok true
+      else
+        do
+        let il1 ←
+          background.BackgroundTheory.impl.lever_integ_inspect_floor bg
+        let b1 ← types.IntegLevel.le il1 level
+        if b1
+        then ok vouched
+        else ok false
+    let lever_denied1 ← if allowed
+                          then ok lever_denied
+                          else ok true
+    let li1 ← li + 1#usize
+    ok (cont (lever_denied1, li1))
+  else ok (done lever_denied)
+
+/-- [argus_kernel::transitions::return_endorsed]: loop 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 680:4-688:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.return_endorsed_loop0
+  (bg : background.BackgroundTheory)
+  (child_integ : collections.VecSet types.IntegLevel) (vouched : Bool)
+  (lever_denied : Bool) (li : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (lever_denied1, li1) => transitions.return_endorsed_loop0.body bg
+      child_integ vouched lever_denied1 li1)
+    (lever_denied, li)
+
+/-- [argus_kernel::transitions::return_endorsed]: loop body 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 699:4-705:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.return_endorsed_loop1.body
+  (clvl : types.ConfLevel) (child_taint : collections.VecSet types.ConfLevel)
+  (conf_denied : Bool) (ci : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
+      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint
+  if ci < i
+  then
+    let level ←
+      collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
+        types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint ci
+    let b ← types.ConfLevel.le level clvl
+    let conf_denied1 ← if b
+                         then ok conf_denied
+                         else ok true
+    let ci1 ← ci + 1#usize
+    ok (cont (conf_denied1, ci1))
+  else ok (done conf_denied)
+
+/-- [argus_kernel::transitions::return_endorsed]: loop 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 699:4-705:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.return_endorsed_loop1
+  (clvl : types.ConfLevel) (child_taint : collections.VecSet types.ConfLevel)
+  (conf_denied : Bool) (ci : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (conf_denied1, ci1) => transitions.return_endorsed_loop1.body clvl
+      child_taint conf_denied1 ci1)
+    (conf_denied, ci)
+
+/-- [argus_kernel::transitions::return_endorsed]: loop body 2:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 708:4-714:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.return_endorsed_loop2.body
+  (ilvl : types.IntegLevel) (child_integ : collections.VecSet types.IntegLevel)
+  (integ_denied : Bool) (ii : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ
+  if ii < i
+  then
+    let level ←
+      collections.VecSet.at types.IntegLevel.Insts.CoreCloneClone
+        types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ ii
+    let b ← types.IntegLevel.le ilvl level
+    let integ_denied1 ← if b
+                          then ok integ_denied
+                          else ok true
+    let ii1 ← ii + 1#usize
+    ok (cont (integ_denied1, ii1))
+  else ok (done integ_denied)
+
+/-- [argus_kernel::transitions::return_endorsed]: loop 2:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 708:4-714:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.return_endorsed_loop2
+  (ilvl : types.IntegLevel) (child_integ : collections.VecSet types.IntegLevel)
+  (integ_denied : Bool) (ii : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (integ_denied1, ii1) => transitions.return_endorsed_loop2.body ilvl
+      child_integ integ_denied1 ii1)
+    (integ_denied, ii)
+
 /-- [argus_kernel::transitions::return_endorsed]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 441:0-476:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 640:0-729:1
     Visibility: public -/
 def transitions.return_endorsed
   {F : Type} (traitsConformanceOracleInst : traits.ConformanceOracle F)
   (st : state.KernelState) (bg : background.BackgroundTheory) (conformance : F)
-  (child : types.AgentId) (parent : types.AgentId) :
+  (child : types.AgentId) (parent : types.AgentId) (clvl : types.ConfLevel)
+  (ilvl : types.IntegLevel) :
   Result (core.result.Result (state.KernelState × event.KernelAction)
     error.KernelError)
   := do
@@ -3146,21 +5170,65 @@ def transitions.return_endorsed
                 parent st bg
             if b5
             then
-              let b6 ← state.KernelState.affordable st parent 2#u8
-              if b6
+              let child_integ ←
+                collections.VecMapKVecSet.get_set_or_empty
+                  types.AgentId.Insts.CoreCloneClone
+                  types.AgentId.Insts.CoreCmpPartialEqAgentId
+                  types.IntegLevel.Insts.CoreCloneClone
+                  types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+                  st.integ_levels child
+              let lever_denied ←
+                transitions.return_endorsed_loop0 bg child_integ b5 false
+                  0#usize
+              if lever_denied
               then
-                let st1 ← state.KernelState.debit_budget st parent 2#u8
-                ok (core.result.Result.Ok (st1,
-                  event.KernelAction.ReturnEndorsed child parent))
+                ok (core.result.Result.Err
+                  error.KernelError.LeverIntegrityDenied)
               else
-                ok (core.result.Result.Err error.KernelError.BudgetExhausted)
+                let child_taint ←
+                  collections.VecMapKVecSet.get_set_or_empty
+                    types.AgentId.Insts.CoreCloneClone
+                    types.AgentId.Insts.CoreCmpPartialEqAgentId
+                    types.ConfLevel.Insts.CoreCloneClone
+                    types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
+                    st.taint_levels child
+                let conf_denied ←
+                  transitions.return_endorsed_loop1 clvl child_taint false
+                    0#usize
+                let integ_denied ←
+                  transitions.return_endorsed_loop2 ilvl child_integ false
+                    0#usize
+                if conf_denied
+                then
+                  ok (core.result.Result.Err
+                    error.KernelError.DeclarationNotCovering)
+                else
+                  if integ_denied
+                  then
+                    ok (core.result.Result.Err
+                      error.KernelError.DeclarationNotCovering)
+                  else
+                    let i ← types.declass_weight clvl
+                    let i1 ← types.integ_weight ilvl
+                    let weight ← i + i1
+                    let b6 ← state.KernelState.affordable st parent weight
+                    if b6
+                    then
+                      let st1 ←
+                        state.KernelState.debit_budget st parent weight
+                      ok (core.result.Result.Ok (st1,
+                        event.KernelAction.ReturnEndorsed child parent clvl
+                        ilvl))
+                    else
+                      ok (core.result.Result.Err
+                        error.KernelError.BudgetExhausted)
             else ok (core.result.Result.Err error.KernelError.NotConforming)
           else ok (core.result.Result.Err error.KernelError.CapabilityMissing)
       else ok (core.result.Result.Err error.KernelError.AgentInactive)
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 508:8-518:9
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 761:8-769:9
     Visibility: public -/
 @[rust_loop_body]
 def transitions.return_unendorsed_loop0_loop0.body
@@ -3171,11 +5239,13 @@ def transitions.return_unendorsed_loop0_loop0.body
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -3185,9 +5255,8 @@ def transitions.return_unendorsed_loop0_loop0.body
   (bg : background.BackgroundTheory) (content_gate : C)
   (parent : types.AgentId)
   (parent_flights : collections.VecSet types.InvocationId)
-  (level : types.ConfLevel) (acc : transitions.GateAccum) (fi : Std.Usize) :
-  Result (ControlFlow (transitions.GateAccum × Std.Usize)
-    transitions.GateAccum)
+  (level : types.ConfLevel) (denied : Bool) (fi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
   := do
   let i ←
     collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
@@ -3200,44 +5269,42 @@ def transitions.return_unendorsed_loop0_loop0.body
     let o ←
       collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
         types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-        types.ToolId.Insts.CoreCloneClone vm4 inv
-    let acc1 ←
+        types.ToolId.Insts.CoreCloneClone vm5 inv
+    let denied1 ←
       match o with
-      | none => ok acc
+      | none => ok denied
       | some tool_id =>
         do
-        let o1 ← background.BackgroundTheory.tool_metadata bg tool_id
         let egress ←
-          match o1 with
-          | none =>
-            collections.VecSet.new types.EgressKind.Insts.CoreCloneClone
-              types.EgressKind.Insts.CoreCmpPartialEqEgressKind
-          | some m =>
-            collections.VecSet.Insts.CoreCloneClone.clone
-              types.EgressKind.Insts.CoreCloneClone m.egress
+          collections.VecMapKVecSet.get_set_or_empty
+            types.InvocationId.Insts.CoreCloneClone
+            types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+            types.EgressKind.Insts.CoreCloneClone
+            types.EgressKind.Insts.CoreCmpPartialEqEgressKind vm6 inv
         transitions.gate_egress traitsContentGateOracleInst bg content_gate
-          parent tool_id
+          parent tool_id inv
           {
             agent_active := vs,
             agent_parent := vm,
             agent_cap := vm1,
             taint_levels := vm2,
-            in_flight := vm3,
-            invocation_tool := vm4,
-            tool_registered := vs1,
-            gh_taint_invoked := vm5,
-            gh_taint_received := vm6,
+            integ_levels := vm3,
+            in_flight := vm4,
+            invocation_tool := vm5,
+            invocation_used := vs1,
+            invocation_egress := vm6,
+            tool_registered := vs2,
             agent_instruction := vm7,
             override_used := vm8,
             flow_override := vm9,
             agent_budget := vm10
-          } level egress acc
+          } level egress denied
     let fi1 ← fi + 1#usize
-    ok (cont (acc1, fi1))
-  else ok (done acc)
+    ok (cont (denied1, fi1))
+  else ok (done denied)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 508:8-518:9
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 761:8-769:9
     Visibility: public -/
 @[rust_loop]
 def transitions.return_unendorsed_loop0_loop0
@@ -3248,11 +5315,13 @@ def transitions.return_unendorsed_loop0_loop0
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -3260,19 +5329,19 @@ def transitions.return_unendorsed_loop0_loop0
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C)
-  (parent : types.AgentId) (acc : transitions.GateAccum)
+  (parent : types.AgentId) (denied : Bool)
   (parent_flights : collections.VecSet types.InvocationId)
   (level : types.ConfLevel) (fi : Std.Usize) :
-  Result transitions.GateAccum
+  Result Bool
   := do
   loop
-    (fun (acc1, fi1) => transitions.return_unendorsed_loop0_loop0.body
-      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vs1 vm5 vm6 vm7 vm8 vm9
-      vm10 bg content_gate parent parent_flights level acc1 fi1)
-    (acc, fi)
+    (fun (denied1, fi1) => transitions.return_unendorsed_loop0_loop0.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate parent parent_flights level denied1 fi1)
+    (denied, fi)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 505:4-520:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 758:4-771:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.return_unendorsed_loop0.body
@@ -3283,11 +5352,13 @@ def transitions.return_unendorsed_loop0.body
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -3296,10 +5367,9 @@ def transitions.return_unendorsed_loop0.body
   types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C)
   (parent : types.AgentId) (child_taint : collections.VecSet types.ConfLevel)
-  (parent_flights : collections.VecSet types.InvocationId)
-  (acc : transitions.GateAccum) (li : Std.Usize) :
-  Result (ControlFlow (transitions.GateAccum × Std.Usize)
-    transitions.GateAccum)
+  (parent_flights : collections.VecSet types.InvocationId) (denied : Bool)
+  (li : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
   := do
   let i ←
     collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
@@ -3309,16 +5379,16 @@ def transitions.return_unendorsed_loop0.body
     let level ←
       collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
         types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint li
-    let acc1 ←
+    let denied1 ←
       transitions.return_unendorsed_loop0_loop0 traitsContentGateOracleInst vs
-        vm vm1 vm2 vm3 vm4 vs1 vm5 vm6 vm7 vm8 vm9 vm10 bg content_gate parent
-        acc parent_flights level 0#usize
+        vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 bg content_gate
+        parent denied parent_flights level 0#usize
     let li1 ← li + 1#usize
-    ok (cont (acc1, li1))
-  else ok (done acc)
+    ok (cont (denied1, li1))
+  else ok (done denied)
 
 /-- [argus_kernel::transitions::return_unendorsed]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 505:4-520:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 758:4-771:5
     Visibility: public -/
 @[rust_loop]
 def transitions.return_unendorsed_loop0
@@ -3329,11 +5399,13 @@ def transitions.return_unendorsed_loop0
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -3342,18 +5414,413 @@ def transitions.return_unendorsed_loop0
   types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C)
   (parent : types.AgentId) (child_taint : collections.VecSet types.ConfLevel)
-  (acc : transitions.GateAccum)
-  (parent_flights : collections.VecSet types.InvocationId) (li : Std.Usize) :
-  Result transitions.GateAccum
+  (denied : Bool) (parent_flights : collections.VecSet types.InvocationId)
+  (li : Std.Usize) :
+  Result Bool
   := do
   loop
-    (fun (acc1, li1) => transitions.return_unendorsed_loop0.body
-      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vs1 vm5 vm6 vm7 vm8 vm9
-      vm10 bg content_gate parent child_taint parent_flights acc1 li1)
-    (acc, li)
+    (fun (denied1, li1) => transitions.return_unendorsed_loop0.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate parent child_taint parent_flights denied1 li1)
+    (denied, li)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop body 3:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 787:8-807:9
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.return_unendorsed_loop1_loop0.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C)
+  (parent : types.AgentId)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (level : types.IntegLevel) (integ_denied : Bool) (fi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId parent_flights
+  if fi < i
+  then
+    let flight_inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId parent_flights fi
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 flight_inv
+    let integ_denied1 ←
+      match o with
+      | none => ok integ_denied
+      | some flight_tool_id =>
+        do
+        let o1 ← background.BackgroundTheory.tool_metadata bg flight_tool_id
+        match o1 with
+        | none => ok integ_denied
+        | some flight_meta =>
+          let id ←
+            transitions.integ_decision traitsContentGateOracleInst content_gate
+              parent flight_tool_id flight_inv
+              {
+                agent_active := vs,
+                agent_parent := vm,
+                agent_cap := vm1,
+                taint_levels := vm2,
+                integ_levels := vm3,
+                in_flight := vm4,
+                invocation_tool := vm5,
+                invocation_used := vs1,
+                invocation_egress := vm6,
+                tool_registered := vs2,
+                agent_instruction := vm7,
+                override_used := vm8,
+                flow_override := vm9,
+                agent_budget := vm10
+              } bg flight_meta.integ_floor flight_meta.integ_inspect_floor
+              level
+          match id with
+          | transitions.IntegDecision.Allowed => ok integ_denied
+          | transitions.IntegDecision.Denied => ok true
+    let fi1 ← fi + 1#usize
+    ok (cont (integ_denied1, fi1))
+  else ok (done integ_denied)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop 3:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 787:8-807:9
+    Visibility: public -/
+@[rust_loop]
+def transitions.return_unendorsed_loop1_loop0
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C)
+  (parent : types.AgentId)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (integ_denied : Bool) (level : types.IntegLevel) (fi : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (integ_denied1, fi1) => transitions.return_unendorsed_loop1_loop0.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate parent parent_flights level integ_denied1 fi1)
+    (integ_denied, fi)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop body 2:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 784:4-809:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.return_unendorsed_loop1.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C)
+  (parent : types.AgentId)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (child_integ : collections.VecSet types.IntegLevel) (integ_denied : Bool)
+  (igi : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i ←
+    collections.VecSet.len types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ
+  if igi < i
+  then
+    let level ←
+      collections.VecSet.at types.IntegLevel.Insts.CoreCloneClone
+        types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ igi
+    let integ_denied1 ←
+      transitions.return_unendorsed_loop1_loop0 traitsContentGateOracleInst vs
+        vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 bg content_gate
+        parent parent_flights integ_denied level 0#usize
+    let igi1 ← igi + 1#usize
+    ok (cont (integ_denied1, igi1))
+  else ok (done integ_denied)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop 2:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 784:4-809:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.return_unendorsed_loop1
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C)
+  (parent : types.AgentId)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (child_integ : collections.VecSet types.IntegLevel) (integ_denied : Bool)
+  (igi : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (integ_denied1, igi1) => transitions.return_unendorsed_loop1.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate parent parent_flights child_integ integ_denied1
+      igi1)
+    (integ_denied, igi)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop body 5:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 828:8-836:9
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.return_unendorsed_loop2_loop0.body
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (parent : types.AgentId)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (level : types.ConfLevel) (to_consume : collections.VecSet types.OverrideKey)
+  (fi : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.OverrideKey) × Std.Usize)
+    (collections.VecSet types.OverrideKey))
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId parent_flights
+  if fi < i
+  then
+    let inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId parent_flights fi
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 inv
+    let to_consume1 ←
+      match o with
+      | none => ok to_consume
+      | some tool_id =>
+        do
+        let b ←
+          state.KernelState.has_flow_override
+            {
+              agent_active := vs,
+              agent_parent := vm,
+              agent_cap := vm1,
+              taint_levels := vm2,
+              integ_levels := vm3,
+              in_flight := vm4,
+              invocation_tool := vm5,
+              invocation_used := vs1,
+              invocation_egress := vm6,
+              tool_registered := vs2,
+              agent_instruction := vm7,
+              override_used := vm8,
+              flow_override := vm9,
+              agent_budget := vm10
+            } parent tool_id level
+        if b
+        then
+          collections.VecSet.insert types.OverrideKey.Insts.CoreCloneClone
+            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey to_consume
+            { tool := tool_id, level }
+        else ok to_consume
+    let fi1 ← fi + 1#usize
+    ok (cont (to_consume1, fi1))
+  else ok (done to_consume)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop 5:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 828:8-836:9
+    Visibility: public -/
+@[rust_loop]
+def transitions.return_unendorsed_loop2_loop0
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (parent : types.AgentId)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (level : types.ConfLevel)
+  (fi : Std.Usize) :
+  Result (collections.VecSet types.OverrideKey)
+  := do
+  loop
+    (fun (to_consume1, fi1) => transitions.return_unendorsed_loop2_loop0.body
+      vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 parent
+      parent_flights level to_consume1 fi1)
+    (to_consume, fi)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop body 4:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 825:4-838:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.return_unendorsed_loop2.body
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (parent : types.AgentId) (child_taint : collections.VecSet types.ConfLevel)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ci : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.OverrideKey) × Std.Usize)
+    (collections.VecSet types.OverrideKey))
+  := do
+  let i ←
+    collections.VecSet.len types.ConfLevel.Insts.CoreCloneClone
+      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint
+  if ci < i
+  then
+    let level ←
+      collections.VecSet.at types.ConfLevel.Insts.CoreCloneClone
+        types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint ci
+    let to_consume1 ←
+      transitions.return_unendorsed_loop2_loop0 vs vm vm1 vm2 vm3 vm4 vm5 vs1
+        vm6 vs2 vm7 vm8 vm9 vm10 parent parent_flights to_consume level 0#usize
+    let ci1 ← ci + 1#usize
+    ok (cont (to_consume1, ci1))
+  else ok (done to_consume)
+
+/-- [argus_kernel::transitions::return_unendorsed]: loop 4:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 825:4-838:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.return_unendorsed_loop2
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (parent : types.AgentId) (child_taint : collections.VecSet types.ConfLevel)
+  (parent_flights : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ci : Std.Usize) :
+  Result (collections.VecSet types.OverrideKey)
+  := do
+  loop
+    (fun (to_consume1, ci1) => transitions.return_unendorsed_loop2.body vs vm
+      vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 parent child_taint
+      parent_flights to_consume1 ci1)
+    (to_consume, ci)
 
 /-- [argus_kernel::transitions::return_unendorsed]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 478:0-535:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 731:0-844:1
     Visibility: public -/
 def transitions.return_unendorsed
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
@@ -3400,9 +5867,6 @@ def transitions.return_unendorsed
               types.ConfLevel.Insts.CoreCloneClone
               types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.taint_levels
               child
-          let vs ←
-            collections.VecSet.new types.OverrideKey.Insts.CoreCloneClone
-              types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
           let parent_flights ←
             collections.VecMapKVecSet.get_set_or_empty
               types.AgentId.Insts.CoreCloneClone
@@ -3410,76 +5874,114 @@ def transitions.return_unendorsed
               types.InvocationId.Insts.CoreCloneClone
               types.InvocationId.Insts.CoreCmpPartialEqInvocationId
               st.in_flight parent
-          let acc ←
+          let denied ←
             transitions.return_unendorsed_loop0 traitsContentGateOracleInst
               st.agent_active st.agent_parent st.agent_cap st.taint_levels
-              st.in_flight st.invocation_tool st.tool_registered
-              st.gh_taint_invoked st.gh_taint_received st.agent_instruction
-              st.override_used st.flow_override st.agent_budget bg content_gate
-              parent child_taint { denied := false, to_consume := vs }
+              st.integ_levels st.in_flight st.invocation_tool
+              st.invocation_used st.invocation_egress st.tool_registered
+              st.agent_instruction st.override_used st.flow_override
+              st.agent_budget bg content_gate parent child_taint false
               parent_flights 0#usize
-          if acc.denied
+          if denied
           then ok (core.result.Result.Err error.KernelError.FlowGateBlocked)
           else
-            let b4 ←
-              collections.VecSet.is_empty types.ConfLevel.Insts.CoreCloneClone
-                types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint
-            let (vm, vm1) ←
-              if b4
-              then ok (st.taint_levels, st.gh_taint_received)
-              else
-                do
-                let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
-                let vm2 ←
+            let child_integ ←
+              collections.VecMapKVecSet.get_set_or_empty
+                types.AgentId.Insts.CoreCloneClone
+                types.AgentId.Insts.CoreCmpPartialEqAgentId
+                types.IntegLevel.Insts.CoreCloneClone
+                types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+                st.integ_levels child
+            let integ_denied ←
+              transitions.return_unendorsed_loop1 traitsContentGateOracleInst
+                st.agent_active st.agent_parent st.agent_cap st.taint_levels
+                st.integ_levels st.in_flight st.invocation_tool
+                st.invocation_used st.invocation_egress st.tool_registered
+                st.agent_instruction st.override_used st.flow_override
+                st.agent_budget bg content_gate parent parent_flights
+                child_integ false 0#usize
+            if integ_denied
+            then
+              ok (core.result.Result.Err
+                error.KernelError.IntegrityFloorDenied)
+            else
+              let b4 ←
+                collections.VecSet.is_empty
+                  types.ConfLevel.Insts.CoreCloneClone
+                  types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint
+              let vm ←
+                if b4
+                then ok st.taint_levels
+                else
+                  do
+                  let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
                   collections.VecMapKVecSet.extend_into
                     types.AgentId.Insts.CoreCloneClone
                     types.AgentId.Insts.CoreCmpPartialEqAgentId
                     types.ConfLevel.Insts.CoreCloneClone
                     types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
                     st.taint_levels ai child_taint
-                let vm3 ←
+              let b5 ←
+                collections.VecSet.is_empty
+                  types.IntegLevel.Insts.CoreCloneClone
+                  types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ
+              let vm1 ←
+                if b5
+                then ok st.integ_levels
+                else
+                  do
+                  let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
                   collections.VecMapKVecSet.extend_into
                     types.AgentId.Insts.CoreCloneClone
                     types.AgentId.Insts.CoreCmpPartialEqAgentId
-                    types.ConfLevel.Insts.CoreCloneClone
-                    types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-                    st.gh_taint_received ai child_taint
-                ok (vm2, vm3)
-            let b5 ←
-              collections.VecSet.is_empty
-                types.OverrideKey.Insts.CoreCloneClone
-                types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-                acc.to_consume
-            if b5
-            then
-              ok (core.result.Result.Ok
-                ({ st with taint_levels := vm, gh_taint_received := vm1 },
-                event.KernelAction.ReturnUnendorsed child parent))
-            else
-              let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
-              let vm2 ←
-                collections.VecMapKVecSet.extend_into
-                  types.AgentId.Insts.CoreCloneClone
-                  types.AgentId.Insts.CoreCmpPartialEqAgentId
+                    types.IntegLevel.Insts.CoreCloneClone
+                    types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+                    st.integ_levels ai child_integ
+              let to_consume ←
+                collections.VecSet.new types.OverrideKey.Insts.CoreCloneClone
+                  types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+              let to_consume1 ←
+                transitions.return_unendorsed_loop2 st.agent_active
+                  st.agent_parent st.agent_cap vm vm1 st.in_flight
+                  st.invocation_tool st.invocation_used st.invocation_egress
+                  st.tool_registered st.agent_instruction st.override_used
+                  st.flow_override st.agent_budget parent child_taint
+                  parent_flights to_consume 0#usize
+              let b6 ←
+                collections.VecSet.is_empty
                   types.OverrideKey.Insts.CoreCloneClone
                   types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-                  st.override_used ai acc.to_consume
-              ok (core.result.Result.Ok
-                ({
-                   st
-                     with
-                     taint_levels := vm,
-                     gh_taint_received := vm1,
-                     override_used := vm2
-                 }, event.KernelAction.ReturnUnendorsed child parent))
+                  to_consume1
+              if b6
+              then
+                ok (core.result.Result.Ok
+                  ({ st with taint_levels := vm, integ_levels := vm1 },
+                  event.KernelAction.ReturnUnendorsed child parent))
+              else
+                let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
+                let vm2 ←
+                  collections.VecMapKVecSet.extend_into
+                    types.AgentId.Insts.CoreCloneClone
+                    types.AgentId.Insts.CoreCmpPartialEqAgentId
+                    types.OverrideKey.Insts.CoreCloneClone
+                    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                    st.override_used ai to_consume1
+                ok (core.result.Result.Ok
+                  ({
+                     st
+                       with
+                       taint_levels := vm,
+                       integ_levels := vm1,
+                       override_used := vm2
+                   }, event.KernelAction.ReturnUnendorsed child parent))
       else ok (core.result.Result.Err error.KernelError.AgentInactive)
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::sentinel_elevate_taint]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 555:4-570:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 863:4-876:5
     Visibility: public -/
 @[rust_loop_body]
-def transitions.sentinel_elevate_taint_loop.body
+def transitions.sentinel_elevate_taint_loop0.body
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
   (vs : collections.VecSet types.AgentId)
   (vm : collections.VecMap types.AgentId types.AgentId)
@@ -3487,11 +5989,13 @@ def transitions.sentinel_elevate_taint_loop.body
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -3500,10 +6004,9 @@ def transitions.sentinel_elevate_taint_loop.body
   types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
   (level : types.ConfLevel)
-  (in_flight_invs : collections.VecSet types.InvocationId)
-  (acc : transitions.GateAccum) (missing_binding : Bool) (fi : Std.Usize) :
-  Result (ControlFlow (transitions.GateAccum × Bool × Std.Usize)
-    (transitions.GateAccum × Bool))
+  (in_flight_invs : collections.VecSet types.InvocationId) (denied : Bool)
+  (missing_binding : Bool) (fi : Std.Usize) :
+  Result (ControlFlow (Bool × Bool × Std.Usize) (Bool × Bool))
   := do
   let i ←
     collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
@@ -3516,49 +6019,47 @@ def transitions.sentinel_elevate_taint_loop.body
     let o ←
       collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
         types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-        types.ToolId.Insts.CoreCloneClone vm4 inv
-    let (acc1, missing_binding1) ←
+        types.ToolId.Insts.CoreCloneClone vm5 inv
+    let (denied1, missing_binding1) ←
       match o with
-      | none => ok (acc, true)
+      | none => ok (denied, true)
       | some tool =>
         do
-        let o1 ← background.BackgroundTheory.tool_metadata bg tool
         let egress ←
-          match o1 with
-          | none =>
-            collections.VecSet.new types.EgressKind.Insts.CoreCloneClone
-              types.EgressKind.Insts.CoreCmpPartialEqEgressKind
-          | some m =>
-            collections.VecSet.Insts.CoreCloneClone.clone
-              types.EgressKind.Insts.CoreCloneClone m.egress
-        let acc2 ←
+          collections.VecMapKVecSet.get_set_or_empty
+            types.InvocationId.Insts.CoreCloneClone
+            types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+            types.EgressKind.Insts.CoreCloneClone
+            types.EgressKind.Insts.CoreCmpPartialEqEgressKind vm6 inv
+        let denied2 ←
           transitions.gate_egress traitsContentGateOracleInst bg content_gate
-            agent tool
+            agent tool inv
             {
               agent_active := vs,
               agent_parent := vm,
               agent_cap := vm1,
               taint_levels := vm2,
-              in_flight := vm3,
-              invocation_tool := vm4,
-              tool_registered := vs1,
-              gh_taint_invoked := vm5,
-              gh_taint_received := vm6,
+              integ_levels := vm3,
+              in_flight := vm4,
+              invocation_tool := vm5,
+              invocation_used := vs1,
+              invocation_egress := vm6,
+              tool_registered := vs2,
               agent_instruction := vm7,
               override_used := vm8,
               flow_override := vm9,
               agent_budget := vm10
-            } level egress acc
-        ok (acc2, missing_binding)
+            } level egress denied
+        ok (denied2, missing_binding)
     let fi1 ← fi + 1#usize
-    ok (cont (acc1, missing_binding1, fi1))
-  else ok (done (acc, missing_binding))
+    ok (cont (denied1, missing_binding1, fi1))
+  else ok (done (denied, missing_binding))
 
 /-- [argus_kernel::transitions::sentinel_elevate_taint]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 555:4-570:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 863:4-876:5
     Visibility: public -/
 @[rust_loop]
-def transitions.sentinel_elevate_taint_loop
+def transitions.sentinel_elevate_taint_loop0
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
   (vs : collections.VecSet types.AgentId)
   (vm : collections.VecMap types.AgentId types.AgentId)
@@ -3566,11 +6067,13 @@ def transitions.sentinel_elevate_taint_loop
   capability.CapKind))
   (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
   (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
   types.InvocationId))
-  (vm4 : collections.VecMap types.InvocationId types.ToolId)
-  (vs1 : collections.VecSet types.ToolId)
-  (vm5 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
-  (vm6 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
   (vm7 : collections.VecMap types.AgentId (collections.VecSet
   types.InstructionId))
   (vm8 : collections.VecMap types.AgentId (collections.VecSet
@@ -3578,20 +6081,129 @@ def transitions.sentinel_elevate_taint_loop
   (vm9 : collections.VecMap types.AgentId (collections.VecSet
   types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
   (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
-  (level : types.ConfLevel) (acc : transitions.GateAccum)
-  (missing_binding : Bool)
+  (level : types.ConfLevel) (denied : Bool) (missing_binding : Bool)
   (in_flight_invs : collections.VecSet types.InvocationId) (fi : Std.Usize) :
-  Result (transitions.GateAccum × Bool)
+  Result (Bool × Bool)
   := do
   loop
-    (fun (acc1, missing_binding1, fi1) =>
-      transitions.sentinel_elevate_taint_loop.body traitsContentGateOracleInst
-      vs vm vm1 vm2 vm3 vm4 vs1 vm5 vm6 vm7 vm8 vm9 vm10 bg content_gate agent
-      level in_flight_invs acc1 missing_binding1 fi1)
-    (acc, missing_binding, fi)
+    (fun (denied1, missing_binding1, fi1) =>
+      transitions.sentinel_elevate_taint_loop0.body traitsContentGateOracleInst
+      vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 bg content_gate
+      agent level in_flight_invs denied1 missing_binding1 fi1)
+    (denied, missing_binding, fi)
+
+/-- [argus_kernel::transitions::sentinel_elevate_taint]: loop body 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 888:4-896:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.sentinel_elevate_taint_loop1.body
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (level : types.ConfLevel)
+  (in_flight_invs : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ci : Std.Usize) :
+  Result (ControlFlow ((collections.VecSet types.OverrideKey) × Std.Usize)
+    (collections.VecSet types.OverrideKey))
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId in_flight_invs
+  if ci < i
+  then
+    let inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId in_flight_invs ci
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 inv
+    let to_consume1 ←
+      match o with
+      | none => ok to_consume
+      | some tool =>
+        do
+        let b ←
+          state.KernelState.has_flow_override
+            {
+              agent_active := vs,
+              agent_parent := vm,
+              agent_cap := vm1,
+              taint_levels := vm2,
+              integ_levels := vm3,
+              in_flight := vm4,
+              invocation_tool := vm5,
+              invocation_used := vs1,
+              invocation_egress := vm6,
+              tool_registered := vs2,
+              agent_instruction := vm7,
+              override_used := vm8,
+              flow_override := vm9,
+              agent_budget := vm10
+            } agent tool level
+        if b
+        then
+          collections.VecSet.insert types.OverrideKey.Insts.CoreCloneClone
+            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey to_consume
+            { tool, level }
+        else ok to_consume
+    let ci1 ← ci + 1#usize
+    ok (cont (to_consume1, ci1))
+  else ok (done to_consume)
+
+/-- [argus_kernel::transitions::sentinel_elevate_taint]: loop 1:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 888:4-896:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.sentinel_elevate_taint_loop1
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (agent : types.AgentId) (level : types.ConfLevel)
+  (in_flight_invs : collections.VecSet types.InvocationId)
+  (to_consume : collections.VecSet types.OverrideKey) (ci : Std.Usize) :
+  Result (collections.VecSet types.OverrideKey)
+  := do
+  loop
+    (fun (to_consume1, ci1) => transitions.sentinel_elevate_taint_loop1.body vs
+      vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8 vm9 vm10 agent level
+      in_flight_invs to_consume1 ci1)
+    (to_consume, ci)
 
 /-- [argus_kernel::transitions::sentinel_elevate_taint]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 537:0-586:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 846:0-904:1
     Visibility: public -/
 def transitions.sentinel_elevate_taint
   {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
@@ -3605,9 +6217,6 @@ def transitions.sentinel_elevate_taint
       types.AgentId.Insts.CoreCmpPartialEqAgentId st.agent_active agent
   if b
   then
-    let vs ←
-      collections.VecSet.new types.OverrideKey.Insts.CoreCloneClone
-        types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
     let in_flight_invs ←
       collections.VecMapKVecSet.get_set_or_empty
         types.AgentId.Insts.CoreCloneClone
@@ -3615,22 +6224,32 @@ def transitions.sentinel_elevate_taint
         types.InvocationId.Insts.CoreCloneClone
         types.InvocationId.Insts.CoreCmpPartialEqInvocationId st.in_flight
         agent
-    let (acc, missing_binding) ←
-      transitions.sentinel_elevate_taint_loop traitsContentGateOracleInst
+    let (denied, missing_binding) ←
+      transitions.sentinel_elevate_taint_loop0 traitsContentGateOracleInst
         st.agent_active st.agent_parent st.agent_cap st.taint_levels
-        st.in_flight st.invocation_tool st.tool_registered st.gh_taint_invoked
-        st.gh_taint_received st.agent_instruction st.override_used
-        st.flow_override st.agent_budget bg content_gate agent level
-        { denied := false, to_consume := vs } false in_flight_invs 0#usize
+        st.integ_levels st.in_flight st.invocation_tool st.invocation_used
+        st.invocation_egress st.tool_registered st.agent_instruction
+        st.override_used st.flow_override st.agent_budget bg content_gate agent
+        level false false in_flight_invs 0#usize
     if missing_binding
     then ok (core.result.Result.Err error.KernelError.MissingToolBinding)
     else
-      if acc.denied
+      if denied
       then ok (core.result.Result.Err error.KernelError.FlowGateBlocked)
       else
+        let to_consume ←
+          collections.VecSet.new types.OverrideKey.Insts.CoreCloneClone
+            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+        let to_consume1 ←
+          transitions.sentinel_elevate_taint_loop1 st.agent_active
+            st.agent_parent st.agent_cap st.taint_levels st.integ_levels
+            st.in_flight st.invocation_tool st.invocation_used
+            st.invocation_egress st.tool_registered st.agent_instruction
+            st.override_used st.flow_override st.agent_budget agent level
+            in_flight_invs to_consume 0#usize
         let b1 ←
           collections.VecSet.is_empty types.OverrideKey.Insts.CoreCloneClone
-            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey acc.to_consume
+            types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey to_consume1
         let vm ←
           if b1
           then ok st.override_used
@@ -3642,7 +6261,7 @@ def transitions.sentinel_elevate_taint
               types.AgentId.Insts.CoreCmpPartialEqAgentId
               types.OverrideKey.Insts.CoreCloneClone
               types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-              st.override_used ai acc.to_consume
+              st.override_used ai to_consume1
         let ai ← types.AgentId.Insts.CoreCloneClone.clone agent
         let vm1 ←
           collections.VecMapKVecSet.insert_into
@@ -3651,25 +6270,179 @@ def transitions.sentinel_elevate_taint
             types.ConfLevel.Insts.CoreCloneClone
             types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.taint_levels ai
             level
-        let vm2 ←
+        ok (core.result.Result.Ok
+          ({ st with taint_levels := vm1, override_used := vm },
+          event.KernelAction.SentinelElevateTaint agent level))
+  else ok (core.result.Result.Err error.KernelError.AgentInactive)
+
+/-- [argus_kernel::transitions::sentinel_degrade_integrity]: loop body 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 928:4-953:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.sentinel_degrade_integrity_loop.body
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (level : types.IntegLevel)
+  (in_flight_invs : collections.VecSet types.InvocationId)
+  (integ_denied : Bool) (missing_binding : Bool) (fi : Std.Usize) :
+  Result (ControlFlow (Bool × Bool × Std.Usize) (Bool × Bool))
+  := do
+  let i ←
+    collections.VecSet.len types.InvocationId.Insts.CoreCloneClone
+      types.InvocationId.Insts.CoreCmpPartialEqInvocationId in_flight_invs
+  if fi < i
+  then
+    let inv ←
+      collections.VecSet.at types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId in_flight_invs fi
+    let o ←
+      collections.VecMap.get_cloned types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+        types.ToolId.Insts.CoreCloneClone vm5 inv
+    let (integ_denied1, missing_binding1) ←
+      match o with
+      | none => ok (integ_denied, true)
+      | some tool =>
+        do
+        let o1 ← background.BackgroundTheory.tool_metadata bg tool
+        let b ←
+          match o1 with
+          | none => ok integ_denied
+          | some tool_meta =>
+            do
+            let id ←
+              transitions.integ_decision traitsContentGateOracleInst
+                content_gate agent tool inv
+                {
+                  agent_active := vs,
+                  agent_parent := vm,
+                  agent_cap := vm1,
+                  taint_levels := vm2,
+                  integ_levels := vm3,
+                  in_flight := vm4,
+                  invocation_tool := vm5,
+                  invocation_used := vs1,
+                  invocation_egress := vm6,
+                  tool_registered := vs2,
+                  agent_instruction := vm7,
+                  override_used := vm8,
+                  flow_override := vm9,
+                  agent_budget := vm10
+                } bg tool_meta.integ_floor tool_meta.integ_inspect_floor level
+            match id with
+            | transitions.IntegDecision.Allowed => ok integ_denied
+            | transitions.IntegDecision.Denied => ok true
+        ok (b, missing_binding)
+    let fi1 ← fi + 1#usize
+    ok (cont (integ_denied1, missing_binding1, fi1))
+  else ok (done (integ_denied, missing_binding))
+
+/-- [argus_kernel::transitions::sentinel_degrade_integrity]: loop 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 928:4-953:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.sentinel_degrade_integrity_loop
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (vs : collections.VecSet types.AgentId)
+  (vm : collections.VecMap types.AgentId types.AgentId)
+  (vm1 : collections.VecMap types.AgentId (collections.VecSet
+  capability.CapKind))
+  (vm2 : collections.VecMap types.AgentId (collections.VecSet types.ConfLevel))
+  (vm3 : collections.VecMap types.AgentId (collections.VecSet
+  types.IntegLevel))
+  (vm4 : collections.VecMap types.AgentId (collections.VecSet
+  types.InvocationId))
+  (vm5 : collections.VecMap types.InvocationId types.ToolId)
+  (vs1 : collections.VecSet types.InvocationId)
+  (vm6 : collections.VecMap types.InvocationId (collections.VecSet
+  types.EgressKind)) (vs2 : collections.VecSet types.ToolId)
+  (vm7 : collections.VecMap types.AgentId (collections.VecSet
+  types.InstructionId))
+  (vm8 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey))
+  (vm9 : collections.VecMap types.AgentId (collections.VecSet
+  types.OverrideKey)) (vm10 : collections.VecMap types.AgentId Std.U8)
+  (bg : background.BackgroundTheory) (content_gate : C) (agent : types.AgentId)
+  (level : types.IntegLevel) (integ_denied : Bool) (missing_binding : Bool)
+  (in_flight_invs : collections.VecSet types.InvocationId) (fi : Std.Usize) :
+  Result (Bool × Bool)
+  := do
+  loop
+    (fun (integ_denied1, missing_binding1, fi1) =>
+      transitions.sentinel_degrade_integrity_loop.body
+      traitsContentGateOracleInst vs vm vm1 vm2 vm3 vm4 vm5 vs1 vm6 vs2 vm7 vm8
+      vm9 vm10 bg content_gate agent level in_flight_invs integ_denied1
+      missing_binding1 fi1)
+    (integ_denied, missing_binding, fi)
+
+/-- [argus_kernel::transitions::sentinel_degrade_integrity]:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 911:0-964:1
+    Visibility: public -/
+def transitions.sentinel_degrade_integrity
+  {C : Type} (traitsContentGateOracleInst : traits.ContentGateOracle C)
+  (st : state.KernelState) (bg : background.BackgroundTheory)
+  (content_gate : C) (agent : types.AgentId) (level : types.IntegLevel) :
+  Result (core.result.Result (state.KernelState × event.KernelAction)
+    error.KernelError)
+  := do
+  let b ←
+    collections.VecSet.contains types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId st.agent_active agent
+  if b
+  then
+    let in_flight_invs ←
+      collections.VecMapKVecSet.get_set_or_empty
+        types.AgentId.Insts.CoreCloneClone
+        types.AgentId.Insts.CoreCmpPartialEqAgentId
+        types.InvocationId.Insts.CoreCloneClone
+        types.InvocationId.Insts.CoreCmpPartialEqInvocationId st.in_flight
+        agent
+    let (integ_denied, missing_binding) ←
+      transitions.sentinel_degrade_integrity_loop traitsContentGateOracleInst
+        st.agent_active st.agent_parent st.agent_cap st.taint_levels
+        st.integ_levels st.in_flight st.invocation_tool st.invocation_used
+        st.invocation_egress st.tool_registered st.agent_instruction
+        st.override_used st.flow_override st.agent_budget bg content_gate agent
+        level false false in_flight_invs 0#usize
+    if missing_binding
+    then ok (core.result.Result.Err error.KernelError.MissingToolBinding)
+    else
+      if integ_denied
+      then ok (core.result.Result.Err error.KernelError.IntegrityFloorDenied)
+      else
+        let ai ← types.AgentId.Insts.CoreCloneClone.clone agent
+        let vm ←
           collections.VecMapKVecSet.insert_into
             types.AgentId.Insts.CoreCloneClone
             types.AgentId.Insts.CoreCmpPartialEqAgentId
-            types.ConfLevel.Insts.CoreCloneClone
-            types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.gh_taint_invoked
+            types.IntegLevel.Insts.CoreCloneClone
+            types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel st.integ_levels
             ai level
-        ok (core.result.Result.Ok
-          ({
-             st
-               with
-               taint_levels := vm1,
-               gh_taint_invoked := vm2,
-               override_used := vm
-           }, event.KernelAction.SentinelElevateTaint agent level))
+        ok (core.result.Result.Ok ({ st with integ_levels := vm },
+          event.KernelAction.SentinelDegradeIntegrity agent level))
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::sentinel_credit_budget]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 591:0-606:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 969:0-984:1
     Visibility: public -/
 def transitions.sentinel_credit_budget
   (st : state.KernelState) (_bg : background.BackgroundTheory)
@@ -3696,11 +6469,53 @@ def transitions.sentinel_credit_budget
     else ok (core.result.Result.Err error.KernelError.CapabilityMissing)
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
+/-- [argus_kernel::transitions::grant_override]: loop body 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1015:4-1021:5
+    Visibility: public -/
+@[rust_loop_body]
+def transitions.grant_override_loop.body
+  (bg : background.BackgroundTheory)
+  (granter_integ : collections.VecSet types.IntegLevel) (lever_denied : Bool)
+  (i : Std.Usize) :
+  Result (ControlFlow (Bool × Std.Usize) Bool)
+  := do
+  let i1 ←
+    collections.VecSet.len types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel granter_integ
+  if i < i1
+  then
+    let level ←
+      collections.VecSet.at types.IntegLevel.Insts.CoreCloneClone
+        types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel granter_integ i
+    let il ← background.BackgroundTheory.impl.lever_integ_floor bg
+    let b ← types.IntegLevel.le il level
+    let lever_denied1 ← if b
+                          then ok lever_denied
+                          else ok true
+    let i2 ← i + 1#usize
+    ok (cont (lever_denied1, i2))
+  else ok (done lever_denied)
+
+/-- [argus_kernel::transitions::grant_override]: loop 0:
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1015:4-1021:5
+    Visibility: public -/
+@[rust_loop]
+def transitions.grant_override_loop
+  (bg : background.BackgroundTheory)
+  (granter_integ : collections.VecSet types.IntegLevel) (lever_denied : Bool)
+  (i : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (lever_denied1, i1) => transitions.grant_override_loop.body bg
+      granter_integ lever_denied1 i1)
+    (lever_denied, i)
+
 /-- [argus_kernel::transitions::grant_override]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 613:0-648:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 991:0-1045:1
     Visibility: public -/
 def transitions.grant_override
-  (st : state.KernelState) (_bg : background.BackgroundTheory)
+  (st : state.KernelState) (bg : background.BackgroundTheory)
   (granter : types.AgentId) (target : types.AgentId) (tool : types.ToolId)
   (level : types.ConfLevel) :
   Result (core.result.Result (state.KernelState × event.KernelAction)
@@ -3725,42 +6540,56 @@ def transitions.grant_override
           capability.CapKind.GrantOverride
       if b2
       then
-        let b3 ← state.KernelState.affordable st granter 1#u8
-        if b3
-        then
-          let b4 ←
-            collections.VecMapKVecSet.set_nonempty
-              types.AgentId.Insts.CoreCloneClone
-              types.AgentId.Insts.CoreCmpPartialEqAgentId
-              types.InvocationId.Insts.CoreCloneClone
-              types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-              st.in_flight target
-          if b4
-          then ok (core.result.Result.Err error.KernelError.TargetHasInFlight)
-          else
-            let ai ← types.AgentId.Insts.CoreCloneClone.clone target
-            let ti ← types.ToolId.Insts.CoreCloneClone.clone tool
-            let vm ←
-              collections.VecMapKVecSet.insert_into
+        let granter_integ ←
+          collections.VecMapKVecSet.get_set_or_empty
+            types.AgentId.Insts.CoreCloneClone
+            types.AgentId.Insts.CoreCmpPartialEqAgentId
+            types.IntegLevel.Insts.CoreCloneClone
+            types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel st.integ_levels
+            granter
+        let lever_denied ←
+          transitions.grant_override_loop bg granter_integ false 0#usize
+        if lever_denied
+        then ok (core.result.Result.Err error.KernelError.LeverIntegrityDenied)
+        else
+          let weight ← types.declass_weight level
+          let b3 ← state.KernelState.affordable st granter weight
+          if b3
+          then
+            let b4 ←
+              collections.VecMapKVecSet.set_nonempty
                 types.AgentId.Insts.CoreCloneClone
                 types.AgentId.Insts.CoreCmpPartialEqAgentId
-                types.OverrideKey.Insts.CoreCloneClone
-                types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-                st.flow_override ai { tool := ti, level }
-            let vm1 ←
-              collections.VecMapKVecSet.remove_from
-                types.AgentId.Insts.CoreCloneClone
-                types.AgentId.Insts.CoreCmpPartialEqAgentId
-                types.OverrideKey.Insts.CoreCloneClone
-                types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-                st.override_used target { tool := ti, level }
-            let st1 ←
-              state.KernelState.debit_budget
-                { st with override_used := vm1, flow_override := vm } granter
-                1#u8
-            ok (core.result.Result.Ok (st1, event.KernelAction.GrantOverride
-              granter target tool level))
-        else ok (core.result.Result.Err error.KernelError.BudgetExhausted)
+                types.InvocationId.Insts.CoreCloneClone
+                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                st.in_flight target
+            if b4
+            then
+              ok (core.result.Result.Err error.KernelError.TargetHasInFlight)
+            else
+              let ai ← types.AgentId.Insts.CoreCloneClone.clone target
+              let ti ← types.ToolId.Insts.CoreCloneClone.clone tool
+              let vm ←
+                collections.VecMapKVecSet.insert_into
+                  types.AgentId.Insts.CoreCloneClone
+                  types.AgentId.Insts.CoreCmpPartialEqAgentId
+                  types.OverrideKey.Insts.CoreCloneClone
+                  types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                  st.flow_override ai { tool := ti, level }
+              let vm1 ←
+                collections.VecMapKVecSet.remove_from
+                  types.AgentId.Insts.CoreCloneClone
+                  types.AgentId.Insts.CoreCmpPartialEqAgentId
+                  types.OverrideKey.Insts.CoreCloneClone
+                  types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+                  st.override_used target { tool := ti, level }
+              let st1 ←
+                state.KernelState.debit_budget
+                  { st with override_used := vm1, flow_override := vm } granter
+                  weight
+              ok (core.result.Result.Ok (st1, event.KernelAction.GrantOverride
+                granter target tool level))
+          else ok (core.result.Result.Err error.KernelError.BudgetExhausted)
       else ok (core.result.Result.Err error.KernelError.CapabilityMissing)
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
