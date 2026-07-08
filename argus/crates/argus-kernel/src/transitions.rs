@@ -11,15 +11,13 @@ use crate::types::{
 };
 
 /// Outcome of a flow-gate check at a consuming site (`invoke_start` / `return_unendorsed` /
-/// `sentinel_elevate_taint`). Distinguishes a flow permitted outright (ALLOW, or INSPECT with a
-/// passing content gate) from one rescued *only* by a single-use override -- the latter must be
-/// spent (MF-3). Mirrors the Veil "only when necessary" rule: an override is consumed iff the
-/// `(level, egress)` pair is DENY-mode and a not-yet-used grant exists. All three
-/// flow-introducing actions consume uniformly, which is what makes single-use a proved property
-/// (`override_consumed_when_sole_justification`).
+/// `sentinel_elevate_taint`). ALLOW (or INSPECT with a passing content gate) admits the flow
+/// outright; DENY admits only when rescued by an armed, not-yet-consumed override grant. Eager
+/// consumption (design "Override consumption semantics" -- Actions.lean:187-196) is tracked by
+/// dedicated per-transition loops, not here: the spec's consumption clauses have no egress
+/// conjunct, so this decision only gates admission and never marks an override as spent.
 enum FlowDecision {
     Allowed,
-    ConsumedOverride,
     Denied,
 }
 
@@ -46,7 +44,7 @@ fn flow_decision(
             if st.has_flow_override(agent, tool, level)
                 && !st.override_consumed(agent, tool, level)
             {
-                FlowDecision::ConsumedOverride
+                FlowDecision::Allowed
             } else {
                 FlowDecision::Denied
             }
@@ -102,17 +100,12 @@ fn agent_parent_drop_child(
     kept
 }
 
-/// Accumulator threaded through the flow-gate loops. `denied` is monotone (set on any DENY);
-/// `to_consume` collects the single-use overrides spent on the accepted flows. No early `return`
-/// inside the loops -- callers inspect `denied` after the fold. This (plus index loops) is the
-/// shape Aeneas extracts transparently; the previous early-return-in-loop form forced an axiom.
-struct GateAccum {
-    denied: bool,
-    to_consume: VecSet<OverrideKey>,
-}
-
-/// Fold `flow_decision` over a tool's egress kinds at `level`, updating the accumulator. Shared
-/// innermost gate; the per-transition in-flight / taint loops call it and thread `acc`.
+/// Fold `flow_decision` over a tool's egress kinds at `level`, updating `denied` (monotone --
+/// set on any DENY, never cleared). No early `return` inside the loop -- callers inspect
+/// `denied` after the fold. This (plus index loops) is the shape Aeneas extracts transparently;
+/// the previous early-return-in-loop form forced an axiom. Consumption is NOT tracked here --
+/// see the `FlowDecision` doc comment; callers run dedicated consumption loops after all gates
+/// pass.
 fn gate_egress<C: ContentGateOracle>(
     bg: &BackgroundTheory,
     content_gate: &C,
@@ -122,23 +115,19 @@ fn gate_egress<C: ContentGateOracle>(
     st: &KernelState,
     level: ConfLevel,
     egress_set: &VecSet<EgressKind>,
-    mut acc: GateAccum,
-) -> GateAccum {
+    mut denied: bool,
+) -> bool {
     let mut i = 0;
     while i < egress_set.len() {
         let egress = *egress_set.at(i);
-        match flow_decision(bg, content_gate, agent, tool, vouch_inv, st, level, egress) {
-            FlowDecision::Allowed => {}
-            FlowDecision::ConsumedOverride => {
-                acc.to_consume.insert(OverrideKey { tool: tool.clone(), level });
-            }
-            FlowDecision::Denied => {
-                acc.denied = true;
-            }
+        if let FlowDecision::Denied =
+            flow_decision(bg, content_gate, agent, tool, vouch_inv, st, level, egress)
+        {
+            denied = true;
         }
         i += 1;
     }
-    acc
+    denied
 }
 
 pub fn register_tool(
@@ -335,10 +324,10 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         return Err(KernelError::CapabilityMissing);
     }
 
-    // Override grants that are the *sole* justification for a flow this transition; spent on
-    // success (single-use, MF-3). Folded with no early return (the extractable shape); `denied`
-    // is checked once after all three checks.
-    let mut acc = GateAccum { denied: false, to_consume: VecSet::new() };
+    // Flow-gate admission, folded with no early return (the extractable shape); `denied` is
+    // checked once after all three checks. Override consumption is tracked separately below --
+    // it is eager (design "Override consumption semantics"), not tied to gate admission.
+    let mut denied = false;
 
     // CHECK 2a: the new tool's egress against every speculative-taint level the agent carries.
     // The vouch is the NEW invocation's content-gate verdict.
@@ -346,7 +335,7 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
     let mut li = 0;
     while li < spec_taint.len() {
         let level = *spec_taint.at(li);
-        acc = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, level, &tool_meta.egress, acc);
+        denied = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, level, &tool_meta.egress, denied);
         li += 1;
     }
 
@@ -364,7 +353,7 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
                 Some(m) => m.egress.clone(),
                 None => VecSet::new(),
             };
-            acc = gate_egress(
+            denied = gate_egress(
                 bg,
                 content_gate,
                 &agent,
@@ -373,7 +362,7 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
                 &st,
                 conf_floor,
                 &flight_egress,
-                acc,
+                denied,
             );
         }
         fi += 1;
@@ -381,9 +370,9 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
 
     // CHECK 2c: the new tool's own egress at its own floor. The vouch is again the NEW
     // invocation's content-gate verdict.
-    acc = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, conf_floor, &tool_meta.egress, acc);
+    denied = gate_egress(bg, content_gate, &agent, &tool, &inv, &st, conf_floor, &tool_meta.egress, denied);
 
-    if acc.denied {
+    if denied {
         return Err(KernelError::FlowGateBlocked);
     }
 
@@ -392,8 +381,40 @@ pub fn invoke_start<A: AuthorizerOracle, C: ContentGateOracle>(
         return Err(KernelError::AuthorizerDenied);
     }
 
-    if !acc.to_consume.is_empty() {
-        st.override_used.extend_into(agent.clone(), &acc.to_consume);
+    // Eager override consumption (Actions.lean:187-196): an armed override is marked used
+    // whenever the gate examined a pair it was armed for, regardless of which arm admitted the
+    // flow -- no egress conjunct, no negated gate arms.
+    let mut to_consume: VecSet<OverrideKey> = VecSet::new();
+
+    // Clause 2a: the new tool armed against a speculative-taint level the agent carries.
+    let mut ti = 0;
+    while ti < spec_taint.len() {
+        let level = *spec_taint.at(ti);
+        if st.has_flow_override(&agent, &tool, level) {
+            to_consume.insert(OverrideKey { tool: tool.clone(), level });
+        }
+        ti += 1;
+    }
+
+    // Clause 2c: the new tool's own floor armed against its own egress -- unconditional.
+    if st.has_flow_override(&agent, &tool, conf_floor) {
+        to_consume.insert(OverrideKey { tool: tool.clone(), level: conf_floor });
+    }
+
+    // Clause 2b: each pre-existing in-flight tool armed against the new tool's floor.
+    let mut ri = 0;
+    while ri < agent_flights.len() {
+        let flight_inv = agent_flights.at(ri);
+        if let Some(flight_tool_id) = st.invocation_tool.get_cloned(flight_inv) {
+            if st.has_flow_override(&agent, &flight_tool_id, conf_floor) {
+                to_consume.insert(OverrideKey { tool: flight_tool_id, level: conf_floor });
+            }
+        }
+        ri += 1;
+    }
+
+    if !to_consume.is_empty() {
+        st.override_used.extend_into(agent.clone(), &to_consume);
     }
 
     st.invocation_tool.insert(inv.clone(), tool.clone());
@@ -503,9 +524,9 @@ pub fn return_unendorsed<C: ContentGateOracle>(
 
     let child_taint = st.taint_levels.get_set_or_empty(&child);
 
-    // Override grants spent on success (single-use, MF-3), charged to the recipient `parent`.
-    // Folded over child-taint levels x parent's in-flight tools with no early return.
-    let mut acc = GateAccum { denied: false, to_consume: VecSet::new() };
+    // Flow-gate admission, folded over child-taint levels x parent's in-flight tools with no
+    // early return.
+    let mut denied = false;
     let parent_flights = st.in_flight.get_set_or_empty(&parent);
     let mut li = 0;
     while li < child_taint.len() {
@@ -519,13 +540,13 @@ pub fn return_unendorsed<C: ContentGateOracle>(
                     None => VecSet::new(),
                 };
                 // Vouch is the parent's in-flight invocation being gated.
-                acc = gate_egress(bg, content_gate, &parent, &tool_id, inv, &st, level, &egress, acc);
+                denied = gate_egress(bg, content_gate, &parent, &tool_id, inv, &st, level, &egress, denied);
             }
             fi += 1;
         }
         li += 1;
     }
-    if acc.denied {
+    if denied {
         return Err(KernelError::FlowGateBlocked);
     }
 
@@ -533,8 +554,26 @@ pub fn return_unendorsed<C: ContentGateOracle>(
         st.taint_levels.extend_into(parent.clone(), &child_taint);
     }
 
-    if !acc.to_consume.is_empty() {
-        st.override_used.extend_into(parent.clone(), &acc.to_consume);
+    // Eager override consumption (Actions.lean:362-366): armed against the parent's in-flight
+    // tool at a level the child holds -- no egress conjunct.
+    let mut to_consume: VecSet<OverrideKey> = VecSet::new();
+    let mut ci = 0;
+    while ci < child_taint.len() {
+        let level = *child_taint.at(ci);
+        let mut fi = 0;
+        while fi < parent_flights.len() {
+            let inv = parent_flights.at(fi);
+            if let Some(tool_id) = st.invocation_tool.get_cloned(inv) {
+                if st.has_flow_override(&parent, &tool_id, level) {
+                    to_consume.insert(OverrideKey { tool: tool_id, level });
+                }
+            }
+            fi += 1;
+        }
+        ci += 1;
+    }
+    if !to_consume.is_empty() {
+        st.override_used.extend_into(parent.clone(), &to_consume);
     }
 
     Ok((st, KernelAction::ReturnUnendorsed { child, parent }))
@@ -551,10 +590,9 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
         return Err(KernelError::AgentInactive);
     }
 
-    // Override grants spent on success (single-use, MF-3) -- uniform with invoke_start /
-    // return_unendorsed. Flow gate folded over the agent's in-flight tools x egress at the raised
-    // `level`, with no early return; `missing_binding` / `denied` are checked once after the fold.
-    let mut acc = GateAccum { denied: false, to_consume: VecSet::new() };
+    // Flow gate folded over the agent's in-flight tools x egress at the raised `level`, with no
+    // early return; `missing_binding` / `denied` are checked once after the fold.
+    let mut denied = false;
     let mut missing_binding = false;
     let in_flight_invs = st.in_flight.get_set_or_empty(&agent);
     let mut fi = 0;
@@ -567,7 +605,7 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
                     None => VecSet::new(),
                 };
                 // Vouch is the agent's in-flight invocation being gated.
-                acc = gate_egress(bg, content_gate, &agent, &tool, inv, &st, level, &egress, acc);
+                denied = gate_egress(bg, content_gate, &agent, &tool, inv, &st, level, &egress, denied);
             }
             None => {
                 missing_binding = true;
@@ -578,12 +616,25 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
     if missing_binding {
         return Err(KernelError::MissingToolBinding);
     }
-    if acc.denied {
+    if denied {
         return Err(KernelError::FlowGateBlocked);
     }
 
-    if !acc.to_consume.is_empty() {
-        st.override_used.extend_into(agent.clone(), &acc.to_consume);
+    // Eager override consumption (Actions.lean:380-384): armed against an in-flight tool at
+    // `level` -- no egress conjunct.
+    let mut to_consume: VecSet<OverrideKey> = VecSet::new();
+    let mut ci = 0;
+    while ci < in_flight_invs.len() {
+        let inv = in_flight_invs.at(ci);
+        if let Some(tool) = st.invocation_tool.get_cloned(inv) {
+            if st.has_flow_override(&agent, &tool, level) {
+                to_consume.insert(OverrideKey { tool, level });
+            }
+        }
+        ci += 1;
+    }
+    if !to_consume.is_empty() {
+        st.override_used.extend_into(agent.clone(), &to_consume);
     }
 
     st.taint_levels.insert_into(agent.clone(), level);
@@ -1882,12 +1933,15 @@ mod tests {
     }
 
     #[test]
-    fn invoke_start_override_not_consumed_when_flow_allows() {
+    fn invoke_start_eager_consumption_when_flow_allows() {
+        // Design §7 scenario 15 (first half): an override armed for (tool, L) is consumed by
+        // invoke_start even when the flow is admissible via ALLOW anyway (eager consumption,
+        // Actions.lean:187-196) -- consumption does not depend on which arm admitted the flow.
         let mut st = state_with_agent("a1", &[CapKind::NetworkEgress]);
         st
             .taint_levels
             .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
-        // Override seeded into state, but ALLOW should prevent it from being consumed.
+        // Override seeded into state; ALLOW alone would already admit the flow without it.
         st.flow_override.insert_into(
             AgentId::new("a1"),
             OverrideKey { tool: ToolId::new("send_email"), level: ConfLevel::Sensitive },
@@ -1907,7 +1961,8 @@ mod tests {
                 output_integ: IntegLevel::Attested,
             },
         );
-        // Both relevant pairs ALLOW (ceiling at Sensitive) -> the override is never the operative justification.
+        // Both relevant pairs ALLOW (ceiling at Sensitive) -> the override is never the sole
+        // justification, but eager consumption burns it anyway.
         builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Sensitive), None);
         let bg = builder.build();
 
@@ -1922,12 +1977,94 @@ mod tests {
         )
         .expect("invoke_start should pass via ALLOW");
         assert!(
+            st.override_consumed(
+                &AgentId::new("a1"),
+                &ToolId::new("send_email"),
+                ConfLevel::Sensitive
+            ),
+            "eager consumption burns the override even when ALLOW already permits the flow"
+        );
+
+        // Re-arm restores (design finding 12): free the in-flight slot then re-arm via
+        // grant_override; override_consumed reports false again.
+        let (st, _) = invoke_complete(
+            st,
+            &bg,
+            &ConformsAll,
+            AgentId::new("a1"),
+            InvocationId::new("inv-1"),
+        )
+        .expect("invoke_complete should succeed");
+        let (st, _) = grant_override(
+            st,
+            &bg,
+            AgentId::root(),
+            AgentId::new("a1"),
+            ToolId::new("send_email"),
+            ConfLevel::Sensitive,
+        )
+        .expect("re-arm should succeed with no in-flight");
+        assert!(
             !st.override_consumed(
                 &AgentId::new("a1"),
                 &ToolId::new("send_email"),
                 ConfLevel::Sensitive
             ),
-            "override must NOT be consumed when ALLOW already permits the flow"
+            "re-arm restores override_consumed to false"
+        );
+    }
+
+    #[test]
+    fn invoke_start_consumes_override_with_empty_egress_no_conjunct() {
+        // Design finding 12 / Actions.lean:187-196 clause 2a: consumption has no egress
+        // conjunct. A tool with an EMPTY attested egress set still consumes an armed override
+        // when the agent holds the taint level the override was armed for -- the gate is
+        // vacuous (nothing to deny), but the override is examined and burned regardless.
+        let mut st = state_with_agent("a1", &[]);
+        st.tool_registered.insert(ToolId::new("no_egress_tool"));
+        st
+            .taint_levels
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+        st.flow_override.insert_into(
+            AgentId::new("a1"),
+            OverrideKey { tool: ToolId::new("no_egress_tool"), level: ConfLevel::Sensitive },
+        );
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            ToolId::new("no_egress_tool"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        let bg = builder.build();
+
+        let (st, _) = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &FailAll,
+            AgentId::new("a1"),
+            ToolId::new("no_egress_tool"),
+            InvocationId::new("inv-1"),
+        )
+        .expect("gates are vacuous with empty egress: invoke_start succeeds");
+
+        assert!(
+            st.override_consumed(
+                &AgentId::new("a1"),
+                &ToolId::new("no_egress_tool"),
+                ConfLevel::Sensitive
+            ),
+            "clause 2a has no egress conjunct: consumed even with an empty egress set"
         );
     }
 
