@@ -929,7 +929,7 @@ pub fn sentinel_degrade_integrity<C: ContentGateOracle>(
         let inv = in_flight_invs.at(fi);
         match st.invocation_tool.get_cloned(inv) {
             Some(tool) => {
-                if let Some(meta) = bg.tool_metadata(&tool) {
+                if let Some(tool_meta) = bg.tool_metadata(&tool) {
                     if let IntegDecision::Denied = integ_decision(
                         content_gate,
                         &agent,
@@ -937,8 +937,8 @@ pub fn sentinel_degrade_integrity<C: ContentGateOracle>(
                         inv,
                         &st,
                         bg,
-                        meta.integ_floor,
-                        meta.integ_inspect_floor,
+                        tool_meta.integ_floor,
+                        tool_meta.integ_inspect_floor,
                         level,
                     ) {
                         integ_denied = true;
