@@ -7,7 +7,7 @@ use crate::state::KernelState;
 use crate::traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle};
 use crate::types::{
     AgentId, ConfLevel, EgressKind, InstructionId, IntegLevel, InvocationId, OverrideKey, ToolId,
-    declass_weight,
+    declass_weight, integ_weight,
 };
 
 /// Outcome of a flow-gate check at a consuming site (`invoke_start` / `return_unendorsed` /
@@ -561,29 +561,43 @@ pub fn invoke_complete<F: ConformanceOracle>(
     st.in_flight.remove_from(&agent, &inv);
 
     // Owned binding so the read of `invocation_tool` ends before the taint updates mutate `st`.
+    let mut endorsed = false;
     if let Some(tool_id) = st.invocation_tool.get_cloned(&inv) {
         let meta_info = match bg.tool_metadata(&tool_id) {
-            Some(tmeta) => Some((tmeta.conf_floor, tmeta.output_bounded)),
+            Some(tmeta) => Some((tmeta.conf_floor, tmeta.output_bounded, tmeta.output_integ)),
             None => None,
         };
-        if let Some((conf_floor, output_bounded)) = meta_info {
-            let weight = declass_weight(conf_floor);
-            let already_tainted = st.taint_levels.set_contains(&agent, &conf_floor);
-            // Zero-taint (endorsed) path: bounded + conforms + affordable AND the agent does not
-            // already hold this floor (re-tainting buys nothing, so don't waste budget on it).
-            let zero_taint = output_bounded
+        if let Some((conf_floor, output_bounded, output_integ)) = meta_info {
+            // The unified two-dimension crossing (design §5.4): a crossing helps a dimension
+            // when the agent does not already hold that dimension's level, and is priced only
+            // for the dimensions it helps.
+            let conf_helps = !st.taint_levels.set_contains(&agent, &conf_floor);
+            let integ_helps = !st.integ_levels.set_contains(&agent, &output_integ);
+            let crossing_weight = (if conf_helps { declass_weight(conf_floor) } else { 0 })
+                + (if integ_helps { integ_weight(output_integ) } else { 0 });
+            let crossing_ok = output_bounded
                 && conformance.conforms(&agent, &tool_id, &inv, &st, bg)
-                && st.affordable(&agent, weight)
-                && !already_tainted;
-            if zero_taint {
-                st.debit_budget(&agent, weight);
+                && st.agent_cap.set_contains(&agent, &CapKind::Declassify)
+                && st.affordable(&agent, crossing_weight)
+                && (conf_helps || integ_helps);
+            if crossing_ok {
+                st.debit_budget(&agent, crossing_weight);
+                endorsed = true;
             } else {
                 st.taint_levels.insert_into(agent.clone(), conf_floor);
+                st.integ_levels.insert_into(agent.clone(), output_integ);
             }
         }
     }
 
-    Ok((st, KernelAction::InvokeComplete { agent, inv }))
+    Ok((
+        st,
+        KernelAction::InvokeComplete {
+            agent,
+            inv,
+            endorsed,
+        },
+    ))
 }
 
 pub fn return_endorsed<F: ConformanceOracle>(
@@ -1071,7 +1085,10 @@ mod tests {
         let (mut st, _) =
             delegate(st, &bg_delegate, AgentId::root(), grantee.clone()).unwrap();
 
-        st.agent_cap.insert(grantee.clone(), VecSet::from([CapKind::CreditBudget]));
+        st.agent_cap.insert(
+            grantee.clone(),
+            VecSet::from([CapKind::CreditBudget, CapKind::Declassify]),
+        );
 
         let tool = ToolId::new("bounded");
         let inv = InvocationId::new("binv");
@@ -1360,7 +1377,22 @@ mod tests {
                 .unwrap()
                 .contains(&ConfLevel::Sensitive)
         );
-        assert_eq!(action, KernelAction::InvokeComplete { agent, inv });
+        assert!(
+            new_state
+                .integ_levels
+                .get(&agent)
+                .unwrap()
+                .contains(&IntegLevel::Attested),
+            "unendorsed completion degrades both dimensions"
+        );
+        assert_eq!(
+            action,
+            KernelAction::InvokeComplete {
+                agent,
+                inv,
+                endorsed: false,
+            }
+        );
     }
 
     #[test]
@@ -1371,6 +1403,9 @@ mod tests {
         let inv = InvocationId::new("inv-1");
 
         st.agent_active.insert(agent.clone());
+        st
+            .agent_cap
+            .insert(agent.clone(), VecSet::from([CapKind::Declassify]));
         st
             .in_flight
             .insert_into(agent.clone(), inv.clone());
@@ -1459,9 +1494,10 @@ mod tests {
 
     // --- declassification: conformance + budget ---
 
-    /// State with one in-flight invocation of a bounded tool at `conf_floor`, for agent `a1`.
+    /// State with one in-flight invocation of a bounded tool at `conf_floor`, for agent `a1`,
+    /// who holds `cap_declassify` (required at the completion crossing since design §5.4).
     fn state_with_bounded_in_flight(conf_floor: ConfLevel) -> (KernelState, BackgroundTheory) {
-        let mut st = state_with_agent("a1", &[]);
+        let mut st = state_with_agent("a1", &[CapKind::Declassify]);
         let tool = ToolId::new("bounded");
         let inv = InvocationId::new("binv");
         st.invocation_tool.insert(inv.clone(), tool.clone());
@@ -1552,15 +1588,26 @@ mod tests {
 
     #[test]
     fn invoke_complete_already_tainted_does_not_debit() {
-        // Bounded + conforming Sensitive-floor tool, but the agent already holds Sensitive taint.
-        // The endorsed path is skipped (re-tainting buys nothing) => no debit, taint preserved.
+        // Bounded + conforming Sensitive-floor tool, but the agent already holds Sensitive taint:
+        // conf_helps is false, so the conf component of the crossing weight is zero. The
+        // integrity component is also zero (tool_output_integ is Attested), so the crossing is
+        // free either way => no debit, and the pre-existing taint is left untouched.
         let (mut st, bg) = state_with_bounded_in_flight(ConfLevel::Sensitive);
         st
             .taint_levels
             .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
-        let (st, _) =
+        let (st, action) =
             invoke_complete(st, &bg, &ConformsAll, AgentId::new("a1"), InvocationId::new("binv"))
                 .unwrap();
+        assert_eq!(
+            action,
+            KernelAction::InvokeComplete {
+                agent: AgentId::new("a1"),
+                inv: InvocationId::new("binv"),
+                endorsed: true,
+            },
+            "integ_helps (Attested emission not held) keeps the crossing endorsed at weight 0"
+        );
         assert_eq!(
             st.budget(&AgentId::new("a1")),
             BUDGET_CAPACITY,
@@ -1573,6 +1620,200 @@ mod tests {
                 .unwrap()
                 .contains(&ConfLevel::Sensitive),
             "the pre-existing taint is still present"
+        );
+    }
+
+    /// State with one in-flight invocation of a bounded tool at `conf_floor`/`output_integ`,
+    /// for agent `a1` holding `caps` (dual-dimension crossing tests, design §5.4).
+    fn state_with_bounded_in_flight_dims(
+        conf_floor: ConfLevel,
+        output_integ: IntegLevel,
+        caps: &[CapKind],
+    ) -> (KernelState, BackgroundTheory) {
+        let mut st = state_with_agent("a1", caps);
+        let tool = ToolId::new("bounded");
+        let inv = InvocationId::new("binv");
+        st.invocation_tool.insert(inv.clone(), tool.clone());
+        st.in_flight.insert_into(AgentId::new("a1"), inv);
+
+        let mut b = BackgroundTheoryBuilder::new();
+        b.trust_issuer(IssuerId::new("trusted"));
+        b.register_tool(
+            tool,
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor,
+                output_bounded: true,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ,
+            },
+        );
+        (st, b.build())
+    }
+
+    #[test]
+    fn invoke_complete_missing_declassify_cap_routes_unendorsed() {
+        // Bounded + conforming + affordable, but the agent lacks cap_declassify: crossing_ok is
+        // false regardless (design §5.4, finding 11) and the crossing routes unendorsed,
+        // degrading both dimensions with no debit.
+        let (st, bg) =
+            state_with_bounded_in_flight_dims(ConfLevel::Sensitive, IntegLevel::Untrusted, &[]);
+        let (st, action) =
+            invoke_complete(st, &bg, &ConformsAll, AgentId::new("a1"), InvocationId::new("binv"))
+                .unwrap();
+        assert!(
+            st
+                .taint_levels
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&ConfLevel::Sensitive),
+            "missing cap_declassify fails safe to full taint degradation"
+        );
+        assert!(
+            st
+                .integ_levels
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&IntegLevel::Untrusted),
+            "missing cap_declassify fails safe to full integrity degradation"
+        );
+        assert_eq!(
+            st.budget(&AgentId::new("a1")),
+            BUDGET_CAPACITY,
+            "the unendorsed path never debits"
+        );
+        assert_eq!(
+            action,
+            KernelAction::InvokeComplete {
+                agent: AgentId::new("a1"),
+                inv: InvocationId::new("binv"),
+                endorsed: false,
+            }
+        );
+    }
+
+    #[test]
+    fn invoke_complete_dimension_adjusted_debit_integ_only() {
+        // The agent already holds the conf floor (conf_helps false) but not the tool's Untrusted
+        // emission (integ_helps true): the crossing pays only the integrity component.
+        let (mut st, bg) = state_with_bounded_in_flight_dims(
+            ConfLevel::Sensitive,
+            IntegLevel::Untrusted,
+            &[CapKind::Declassify],
+        );
+        st
+            .taint_levels
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+        let (st, action) =
+            invoke_complete(st, &bg, &ConformsAll, AgentId::new("a1"), InvocationId::new("binv"))
+                .unwrap();
+        assert_eq!(
+            st.budget(&AgentId::new("a1")),
+            BUDGET_CAPACITY - integ_weight(IntegLevel::Untrusted),
+            "only the integrity component of the crossing weight is debited"
+        );
+        assert!(
+            st
+                .taint_levels
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&ConfLevel::Sensitive),
+            "conf taint is untouched by the endorsed path"
+        );
+        assert!(
+            st.integ_levels.get(&AgentId::new("a1")).is_none(),
+            "integ levels are untouched by the endorsed path"
+        );
+        assert_eq!(
+            action,
+            KernelAction::InvokeComplete {
+                agent: AgentId::new("a1"),
+                inv: InvocationId::new("binv"),
+                endorsed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn invoke_complete_neither_helps_routes_unendorsed_idempotent() {
+        // The agent already holds both the conf floor and the tool's emission: neither dimension
+        // helps, so crossing_ok is false (the last conjunct) regardless of cap/conformance/budget,
+        // and the crossing routes unendorsed with a zero debit and idempotent inserts.
+        let (mut st, bg) = state_with_bounded_in_flight_dims(
+            ConfLevel::Sensitive,
+            IntegLevel::Untrusted,
+            &[CapKind::Declassify],
+        );
+        st
+            .taint_levels
+            .insert(AgentId::new("a1"), VecSet::from([ConfLevel::Sensitive]));
+        st
+            .integ_levels
+            .insert(AgentId::new("a1"), VecSet::from([IntegLevel::Untrusted]));
+        let (st, action) =
+            invoke_complete(st, &bg, &ConformsAll, AgentId::new("a1"), InvocationId::new("binv"))
+                .unwrap();
+        assert_eq!(
+            st.budget(&AgentId::new("a1")),
+            BUDGET_CAPACITY,
+            "neither dimension helping means zero debit"
+        );
+        assert!(
+            st
+                .taint_levels
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&ConfLevel::Sensitive),
+            "idempotent conf insert"
+        );
+        assert!(
+            st
+                .integ_levels
+                .get(&AgentId::new("a1"))
+                .unwrap()
+                .contains(&IntegLevel::Untrusted),
+            "idempotent integ insert"
+        );
+        assert_eq!(
+            action,
+            KernelAction::InvokeComplete {
+                agent: AgentId::new("a1"),
+                inv: InvocationId::new("binv"),
+                endorsed: false,
+            }
+        );
+    }
+
+    #[test]
+    fn invoke_complete_endorsed_both_dimensions_debits_sum() {
+        // Fresh agent, both dimensions help: the crossing debits declass_weight(floor) +
+        // integ_weight(emission) and propagates neither set.
+        let (st, bg) = state_with_bounded_in_flight_dims(
+            ConfLevel::Sensitive,
+            IntegLevel::Untrusted,
+            &[CapKind::Declassify],
+        );
+        let (st, action) =
+            invoke_complete(st, &bg, &ConformsAll, AgentId::new("a1"), InvocationId::new("binv"))
+                .unwrap();
+        assert_eq!(
+            st.budget(&AgentId::new("a1")),
+            BUDGET_CAPACITY
+                - (declass_weight(ConfLevel::Sensitive) + integ_weight(IntegLevel::Untrusted)),
+            "the endorsed debit sums both dimension weights"
+        );
+        assert!(st.taint_levels.get(&AgentId::new("a1")).is_none());
+        assert!(st.integ_levels.get(&AgentId::new("a1")).is_none());
+        assert_eq!(
+            action,
+            KernelAction::InvokeComplete {
+                agent: AgentId::new("a1"),
+                inv: InvocationId::new("binv"),
+                endorsed: true,
+            }
         );
     }
 

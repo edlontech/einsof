@@ -194,6 +194,10 @@ fn endorsed_tool_no_taint() {
         .unwrap();
     k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::CreditBudget)
         .unwrap();
+    // The completion crossing now requires cap_declassify at the invoke_complete site too
+    // (design §5.4, finding 11: required at both crossing sites, not just returns).
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::Declassify)
+        .unwrap();
     // Delegated children spawn at budget 0 (design finding 5); credit before the endorsed
     // path can be afforded.
     k.sentinel_credit_budget(AgentId::new("a1"), BUDGET_CAPACITY)
@@ -616,6 +620,9 @@ fn budget_exhausted_falls_to_full_taint() {
     k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
     k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::FilesystemRead).unwrap();
     k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::CreditBudget).unwrap();
+    // The completion crossing requires cap_declassify (design §5.4); grant it so this test's
+    // budget-exhaustion behavior, not cap absence, is what drives the full-taint fallback.
+    k.grant_capability(AgentId::root(), AgentId::new("a1"), CapKind::Declassify).unwrap();
     // Delegated children spawn at budget 0 (design finding 5); credit to capacity to exercise
     // the exhaustion behavior this test is about.
     k.sentinel_credit_budget(AgentId::new("a1"), BUDGET_CAPACITY).unwrap();

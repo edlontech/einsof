@@ -31,6 +31,7 @@ pub enum KernelAction {
     InvokeComplete {
         agent: AgentId,
         inv: InvocationId,
+        endorsed: bool,
     },
     ReturnEndorsed {
         child: AgentId,
@@ -107,6 +108,7 @@ mod tests {
             KernelAction::InvokeComplete {
                 agent: AgentId::new("a"),
                 inv: InvocationId::new("i"),
+                endorsed: false,
             },
             KernelAction::ReturnEndorsed {
                 child: AgentId::new("a"),
