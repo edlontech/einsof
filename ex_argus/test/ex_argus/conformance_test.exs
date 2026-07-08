@@ -116,4 +116,109 @@ defmodule ExArgus.ConformanceTest do
       end
     end
   end
+
+  # CHECK 2b's content-gate vouch re-examines an IN-FLIGHT invocation's stored egress against
+  # a NEW invocation's tool floor -- the vouch must be keyed by the in-flight invocation id,
+  # never by the tool id (the V2 shape). read_file's floor (sensitive) against send_email's
+  # stored network_external egress sits in the inspect band (allow public, inspect sensitive),
+  # so admission depends entirely on the flight invocation's content-gate verdict.
+  defp check2b_bg do
+    %Background{
+      tools: %{
+        "read_file" => %{
+          capabilities: [:filesystem_read],
+          egress: [],
+          conf_floor: :sensitive,
+          output_bounded: false,
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
+        },
+        "send_email" => %{
+          capabilities: [:network_egress],
+          egress: [:network_external],
+          conf_floor: :public,
+          output_bounded: false,
+          issuer: "trusted",
+          integ_floor: :untrusted,
+          integ_inspect_floor: :untrusted,
+          output_integ: :attested
+        }
+      },
+      allow_ceiling: %{network_external: :public},
+      inspect_ceiling: %{network_external: :sensitive},
+      trusted_issuers: ["trusted"],
+      instruction_issuer: %{}
+    }
+  end
+
+  defp check2b_setup do
+    bg = check2b_bg()
+    s = Offline.initial_state()
+    {:ok, s, _} = Offline.register_tool(s, bg, "read_file")
+    {:ok, s, _} = Offline.register_tool(s, bg, "send_email")
+    {:ok, s, _} = Offline.delegate(s, bg, "root", "a1")
+    {:ok, s, _} = Offline.grant_capability(s, bg, "root", "a1", :filesystem_read)
+    {:ok, s, _} = Offline.grant_capability(s, bg, "root", "a1", :network_egress)
+
+    {:ok, s, _} =
+      Offline.invoke_start(s, bg, "a1", "send_email", "email-inv", true, %{"email-inv" => true}, [
+        :network_external
+      ])
+
+    {s, bg}
+  end
+
+  test "content_gate_targets for the pending invoke_start includes both the new and the in-flight invocation id" do
+    {s, _bg} = check2b_setup()
+
+    assert {"a1", invs} =
+             Offline.content_gate_targets(s, {:invoke_start, "a1", "read_file", "new-inv"})
+
+    assert Enum.sort(invs) == Enum.sort(["new-inv", "email-inv"])
+  end
+
+  test "CHECK 2b vouch admits the flow when keyed by the in-flight invocation id" do
+    {s, bg} = check2b_setup()
+
+    assert {:ok, _, {:invoke_start, "a1", "read_file", "new-inv"}} =
+             Offline.invoke_start(
+               s,
+               bg,
+               "a1",
+               "read_file",
+               "new-inv",
+               true,
+               %{
+                 "email-inv" => true
+               },
+               []
+             )
+  end
+
+  test "CHECK 2b vouch keyed by the tool id (the V2 shape) fails to rescue the flow" do
+    {s, bg} = check2b_setup()
+
+    assert {:error, :flow_gate_blocked} =
+             Offline.invoke_start(
+               s,
+               bg,
+               "a1",
+               "read_file",
+               "new-inv",
+               true,
+               %{
+                 "send_email" => true
+               },
+               []
+             )
+  end
+
+  test "an empty content-gate map fails closed on a CHECK 2b vouch requirement" do
+    {s, bg} = check2b_setup()
+
+    assert {:error, :flow_gate_blocked} =
+             Offline.invoke_start(s, bg, "a1", "read_file", "new-inv", true, %{}, [])
+  end
 end
