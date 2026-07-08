@@ -76,8 +76,8 @@ theorem sentinel_credit_budget_preservesR
   obtain ⟨vm, hAgentActive, hAgentCap, rfl, hBud, hBudNd⟩ :=
     sentinel_credit_budget_ok_inv st bg agent amount hcap st' ev hok
   refine ⟨{ a with agent_budget :=
-      fun A L => (A = agent ∧ ∀ b, a.agent_budget agent b → L = Tzimtzum.budget_saturating_credit b amount.val)
-        ∨ (A ≠ agent ∧ a.agent_budget A L) },
+      fun A => if A = agent then Tzimtzum.budget_saturating_credit (a.agent_budget agent) amount.val
+        else a.agent_budget A },
     ?_, ?_, ?_⟩
   · -- guard
     simp only [Tzimtzum.sentinel_credit_budget]
@@ -85,37 +85,27 @@ theorem sentinel_credit_budget_preservesR
     rw [hR.cap_refresh]
     exact (hR.cap agent capability.CapKind.CreditBudget).mpr
       ((vmsMem_iff_vmsMemLast st.agent_cap hR.ndCap agent capability.CapKind.CreditBudget).mp hAgentCap)
-  · -- next
+  · -- next: the classical `ite` at `AgentId`'s abstract type needs a decidable-irrelevant
+    -- case split instead of syntactic `rfl` (same shape as `Delegate`'s budget conjunct).
     simp [Tzimtzum.sentinel_credit_budget]
+    funext G; by_cases hG : G = agent <;> simp [hG]
   · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg, hR.parent, hR.cap,
-      hR.instr, hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, hR.override, ?_, hR.toolCap,
-      hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
-      hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr,
-      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndFlowOverride,
-      ?_, hR.wfInflight⟩
-    · -- budget (agent credit, saturating; numeric collapse)
-      intro G L hactiveG
-      show ((G = agent ∧ ∀ b, a.agent_budget agent b → L = Tzimtzum.budget_saturating_credit b amount.val)
-          ∨ (G ≠ agent ∧ a.agent_budget G L)) ↔ (budgetReadC vm G).val = L
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg,
+      hR.parent, hR.cap, hR.instr, hR.taint, hR.integ, hR.inflight, hR.override, ?_, hR.invUsed,
+      hR.invEgress, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor,
+      hR.toolIntegInspectFloor, hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
+      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor,
+      hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr, hR.ndTaint, hR.ndInteg,
+      hR.ndInflight, hR.ndOverride, hR.ndFlowOverride, ?_, hR.wfInflight⟩
+    · -- budget (agent credit, saturating; numeric collapse, no active-guard)
+      intro G
+      show (if G = agent then Tzimtzum.budget_saturating_credit (a.agent_budget agent) amount.val
+          else a.agent_budget G) = (budgetReadC vm G).val
       rw [hBud G]
       by_cases hG : G = agent
-      · subst hG
-        simp only [true_and, ne_eq, not_true_eq_false, false_and, or_false, if_true,
-          saturatingAddMin_val, Tzimtzum.budget_saturating_credit]
-        constructor
-        · intro h
-          exact (h (budgetReadC st.agent_budget G).val ((hR.budget G _ hactiveG).mpr rfl)).symm
-        · intro hread b hab
-          have : (budgetReadC st.agent_budget G).val = b := (hR.budget G b hactiveG).mp hab
-          rw [this] at hread; omega
-      · rw [if_neg hG]
-        constructor
-        · rintro (⟨hp, _⟩ | ⟨_, hab⟩)
-          · exact absurd hp hG
-          · rw [← hR.budget G L hactiveG]; exact hab
-        · intro hread
-          exact Or.inr ⟨hG, (hR.budget G L hactiveG).mpr hread⟩
+      · rw [if_pos hG, if_pos hG, saturatingAddMin_val, hR.budget agent,
+          Tzimtzum.budget_saturating_credit]
+      · rw [if_neg hG, if_neg hG, hR.budget G]
     · -- ndBudget
       exact hBudNd hR.ndBudget
 

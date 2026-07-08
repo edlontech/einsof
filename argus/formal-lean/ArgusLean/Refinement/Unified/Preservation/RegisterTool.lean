@@ -97,12 +97,12 @@ theorem register_tool_preservesR
     simp [Tzimtzum.register_tool]
   · -- R st' bg a' — every field but tool_reg transports definitionally (record update)
     refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, ?_, hR.parent,
-      hR.cap, hR.instr,
-      hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, hR.override, hR.budget, hR.toolCap,
-      hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
-      hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr,
-      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndFlowOverride,
-      hR.ndBudget, hR.wfInflight⟩
+      hR.cap, hR.instr, hR.taint, hR.integ, hR.inflight, hR.override, hR.budget, hR.invUsed,
+      hR.invEgress, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor,
+      hR.toolIntegInspectFloor, hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
+      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor,
+      hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr, hR.ndTaint, hR.ndInteg,
+      hR.ndInflight, hR.ndOverride, hR.ndFlowOverride, hR.ndBudget, hR.wfInflight⟩
     -- tool_reg
     intro t
     show (a.tool_registered t ∨ t = tool) ↔ vsMem _ t

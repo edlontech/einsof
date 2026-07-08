@@ -2,12 +2,16 @@ import ArgusLean.Refinement.Unified.Bridges
 
 /-! # Layer 1 — `revoke` preserves the unified `R`
 
-`revoke prnt target` drops `target` from all ten per-agent fields uniformly (`VecSet.remove` /
-`agent_parent_drop_child` / `VecMap.remove` / `clear_agent_state`) — every write is a **key-filter**,
+`revoke prnt target` drops `target` from `agent_active`, `agent_parent`, `agent_cap`, and the six
+`clear_agent_state` fields (`taint_levels`, `integ_levels`, `in_flight`, `agent_instruction`,
+`override_used`, `flow_override` — the ghost maps are gone in V3) — every write is a **key-filter**,
 so nodup is preserved by `vmNodupKeys_filter` and no insert-nodup is needed. The view conversions go
 through the filter characterisations (`vmsMem_filter_removeKept` / `capMem_filter_removeKept` /
-`vmLastEntry_filter_removeKept`) bridged to `R`'s last-match views via the carried `vmNodupKeys`. The
-budget clause is active-guarded on both sides, so it aligns directly. -/
+`vmLastEntry_filter_removeKept`) bridged to `R`'s last-match views via the carried `vmNodupKeys`.
+`agent_budget` (Campaign B) is left entirely **framed** — `revoke` never writes it, so a revoked
+agent's budget cell is inert (the abstract `agent_budget` function agrees at every key including
+`target`, no active-guard needed). `invocation_used`/`invocation_egress` are likewise framed (global
+history, untouched by any agent-scoped action). -/
 
 namespace ArgusLean.Refinement
 
@@ -16,8 +20,9 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 2000000
 
-/-- Comprehensive inversion: `revoke_ok_inv` plus the two framed fields it omits
-    (`tool_registered`, `invocation_tool`), needed to carry `R`'s background/registration conjuncts. -/
+/-- Comprehensive inversion: `revoke`'s structural frame plus the six-field `clear_agent_state`
+    filter, with `tool_registered`/`invocation_tool`/`invocation_used`/`invocation_egress`/
+    `agent_budget` all framed. -/
 theorem revoke_inv_full
     (st : state.KernelState) (bg : background.BackgroundTheory)
     (prnt target : types.AgentId)
@@ -30,16 +35,16 @@ theorem revoke_inv_full
       types.AgentId.root = .ok rootVal ∧ target ≠ rootVal ∧
       (∀ y, vsMem st'.agent_active y ↔ vsMem st.agent_active y ∧ y ≠ target) ∧
       st'.tool_registered = st.tool_registered ∧ st'.invocation_tool = st.invocation_tool ∧
+      st'.invocation_used = st.invocation_used ∧ st'.invocation_egress = st.invocation_egress ∧
+      st'.agent_budget = st.agent_budget ∧
       st'.agent_cap.entries.val = st.agent_cap.entries.val.filter (removeKept target) ∧
       st'.agent_parent.entries.val = st.agent_parent.entries.val.filter (removeKept target) ∧
       st'.taint_levels.entries.val = st.taint_levels.entries.val.filter (removeKept target) ∧
+      st'.integ_levels.entries.val = st.integ_levels.entries.val.filter (removeKept target) ∧
       st'.in_flight.entries.val = st.in_flight.entries.val.filter (removeKept target) ∧
-      st'.gh_taint_invoked.entries.val = st.gh_taint_invoked.entries.val.filter (removeKept target) ∧
-      st'.gh_taint_received.entries.val = st.gh_taint_received.entries.val.filter (removeKept target) ∧
       st'.agent_instruction.entries.val = st.agent_instruction.entries.val.filter (removeKept target) ∧
       st'.override_used.entries.val = st.override_used.entries.val.filter (removeKept target) ∧
-      st'.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept target) ∧
-      st'.agent_budget.entries.val = st.agent_budget.entries.val.filter (removeKept target) := by
+      st'.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept target) := by
   simp only [transitions.revoke] at hok
   obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
     (vecMapGet_spec types.AgentId.Insts.CoreCloneClone
@@ -115,8 +120,8 @@ theorem revoke_inv_full
       st.agent_cap target)
   rw [hvm1Eq] at hok
   simp only [bind_tc_ok] at hok
-  obtain ⟨st1, hclearEq, hActiveF, hParentF, hCapF, hInvocF, hToolF, hTaint, hInflight,
-    hGhInv, hGhRec, hInstr, hOverride, hClrFlow, hBudget⟩ :=
+  obtain ⟨st1, hclearEq, hActiveF, hParentF, hCapF, hInvocF, hUsedF, hEgressF, hToolF, hBudgetF,
+    hTaint, hInteg, hInflight, hInstr, hOverride, hClrFlow⟩ :=
     spec_imp_exists (clearAgentState_spec
       { st with agent_active := vs, agent_parent := vm, agent_cap := vm1 } target)
   rw [hclearEq] at hok
@@ -125,9 +130,9 @@ theorem revoke_inv_full
   subst hst
   exact ⟨rootVal, hlast, hb1Iff.mp hb1, hb2Iff.mp hb2, hrootEq,
     (fun h => by simp [hb3Iff.mpr h] at hb3),
-    (fun y => by rw [hActiveF]; exact hvsMem y), hToolF, hInvocF,
+    (fun y => by rw [hActiveF]; exact hvsMem y), hToolF, hInvocF, hUsedF, hEgressF, hBudgetF,
     (by rw [hCapF]; exact hvm1Char), (by rw [hParentF]; exact hvmChar),
-    hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hClrFlow, hBudget⟩
+    hTaint, hInteg, hInflight, hInstr, hOverride, hClrFlow⟩
 
 /-- `revoke` preserves the unified `R`. -/
 theorem revoke_preservesR
@@ -139,7 +144,8 @@ theorem revoke_preservesR
     ∃ a', (Tzimtzum.revoke prnt target).guard a ∧
           (Tzimtzum.revoke prnt target).next a a' ∧ R st' bg a' := by
   obtain ⟨rootVal, hParentEdge, hPrntActive, hTargetActive, hrootEq, htargetNe, hActive, hToolF,
-      hInvocF, hCap, hParent, hTaint, hInflight, hGhInv, hGhRec, hInstr, hOverride, hClrFlow, hBudget⟩ :=
+      hInvocF, hUsedF, hEgressF, hBudgetF, hCap, hParent, hTaint, hInteg, hInflight, hInstr,
+      hOverride, hClrFlow⟩ :=
     revoke_inv_full st bg prnt target hR.ndParent st' ev hok
   have hrootId : a.root_agent = rootVal := by rw [hR.root] at hrootEq; exact Result.ok.inj hrootEq
   refine ⟨{ a with
@@ -148,10 +154,8 @@ theorem revoke_preservesR
       agent_cap := fun N C => a.agent_cap N C ∧ N ≠ target
       agent_instruction := fun A I => a.agent_instruction A I ∧ A ≠ target
       taint_levels := fun A L => a.taint_levels A L ∧ A ≠ target
-      agent_budget := fun G L => a.agent_budget G L ∧ G ≠ target
+      integ_levels := fun A L => a.integ_levels A L ∧ A ≠ target
       in_flight := fun A I => a.in_flight A I ∧ A ≠ target
-      gh_taint_invoked := fun A L => a.gh_taint_invoked A L ∧ A ≠ target
-      gh_taint_received := fun A L => a.gh_taint_received A L ∧ A ≠ target
       override_used := fun A T L => a.override_used A T L ∧ A ≠ target
       flow_override := fun A T L => a.flow_override A T L ∧ A ≠ target }, ?_, ?_, ?_⟩
   · -- guard
@@ -162,9 +166,10 @@ theorem revoke_preservesR
     simp [Tzimtzum.revoke]
   · -- R st' bg a'
     refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer,
-      hR.trustedIss, hR.instrIssuer, hR.flowAllows, hR.flowInspects, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_, ?_, ?_⟩
+      ?_, ?_, ?_, ?_, ?_, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor,
+      hR.toolIntegInspectFloor, hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
+      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor, ?_,
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · -- active
       intro x; show (a.agent_active x ∧ x ≠ target) ↔ vsMem st'.agent_active x
       rw [hActive x, hR.active x]
@@ -193,37 +198,29 @@ theorem revoke_preservesR
       show (a.taint_levels ag L ∧ ag ≠ target) ↔ vmsMemLast st'.taint_levels ag (confC L)
       rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hTaint hR.ndTaint),
         vmsMem_filter_removeKept _ _ _ hTaint, vmsMem_iff_vmsMemLast _ hR.ndTaint, ← hR.taint]
+    · -- integ
+      intro ag L
+      show (a.integ_levels ag L ∧ ag ≠ target) ↔ vmsMemLast st'.integ_levels ag (integC L)
+      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hInteg hR.ndInteg),
+        vmsMem_filter_removeKept _ _ _ hInteg, vmsMem_iff_vmsMemLast _ hR.ndInteg, ← hR.integ]
     · -- inflight
       intro ag inv
       show (a.in_flight ag inv ∧ ag ≠ target) ↔ vmsMemLast st'.in_flight ag inv
       rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hInflight hR.ndInflight),
         vmsMem_filter_removeKept _ _ _ hInflight, vmsMem_iff_vmsMemLast _ hR.ndInflight, ← hR.inflight]
-    · -- ghInvoked
-      intro ag L
-      show (a.gh_taint_invoked ag L ∧ ag ≠ target) ↔ vmsMemLast st'.gh_taint_invoked ag (confC L)
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hGhInv hR.ndGhInvoked),
-        vmsMem_filter_removeKept _ _ _ hGhInv, vmsMem_iff_vmsMemLast _ hR.ndGhInvoked, ← hR.ghInvoked]
-    · -- ghReceived
-      intro ag L
-      show (a.gh_taint_received ag L ∧ ag ≠ target) ↔ vmsMemLast st'.gh_taint_received ag (confC L)
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hGhRec hR.ndGhReceived),
-        vmsMem_filter_removeKept _ _ _ hGhRec, vmsMem_iff_vmsMemLast _ hR.ndGhReceived, ← hR.ghReceived]
     · -- override
       intro ag t L
       show (a.override_used ag t L ∧ ag ≠ target) ↔
         vmsMemLast st'.override_used ag { tool := t, level := confC L }
       rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hOverride hR.ndOverride),
         vmsMem_filter_removeKept _ _ _ hOverride, vmsMem_iff_vmsMemLast _ hR.ndOverride, ← hR.override]
-    · -- budget (active-guarded; G ≠ target on the active set, filter leaves it untouched)
-      intro G L hactive'
-      obtain ⟨hGactive, hGne⟩ := hactive'
-      show (a.agent_budget G L ∧ G ≠ target) ↔ (budgetReadC st'.agent_budget G).val = L
-      have hbr : budgetReadC st'.agent_budget G = budgetReadC st.agent_budget G := by
-        unfold budgetReadC; rw [hBudget, vmLastEntry_filter_removeKept, if_neg hGne]
-      rw [hbr]
-      have hL : (a.agent_budget G L ∧ G ≠ target) ↔ a.agent_budget G L :=
-        ⟨fun h => h.1, fun h => ⟨h, hGne⟩⟩
-      rw [hL]; exact hR.budget G L hGactive
+    · -- budget: fully framed (revoke never writes it, no active-guard needed)
+      intro G; show a.agent_budget G = (budgetReadC st'.agent_budget G).val
+      rw [hBudgetF]; exact hR.budget G
+    · -- invUsed (global history, untouched)
+      show RinvocationUsed st' a; rw [RinvocationUsed, hUsedF]; exact hR.invUsed
+    · -- invEgress (global history, untouched)
+      show RinvocationEgress st' a; rw [RinvocationEgress, hEgressF]; exact hR.invEgress
     · -- flowOverride
       intro ag t L
       show (a.flow_override ag t L ∧ ag ≠ target) ↔
@@ -239,12 +236,12 @@ theorem revoke_preservesR
     · exact vmNodupKeysFilter hCap hR.ndCap
     · exact vmNodupKeysFilter hInstr hR.ndInstr
     · exact vmNodupKeysFilter hTaint hR.ndTaint
+    · exact vmNodupKeysFilter hInteg hR.ndInteg
     · exact vmNodupKeysFilter hInflight hR.ndInflight
-    · exact vmNodupKeysFilter hGhInv hR.ndGhInvoked
-    · exact vmNodupKeysFilter hGhRec hR.ndGhReceived
     · exact vmNodupKeysFilter hOverride hR.ndOverride
     · exact vmNodupKeysFilter hClrFlow hR.ndFlowOverride
-    · exact vmNodupKeysFilter hBudget hR.ndBudget
+    · -- ndBudget: framed
+      show vmNodupKeys st'.agent_budget; rw [hBudgetF]; exact hR.ndBudget
     · -- wfInflight
       intro ag I hmem
       have hmem' : vmsMemLast st.in_flight ag I := by

@@ -100,12 +100,13 @@ theorem load_instruction_preservesR
   · -- next
     simp [Tzimtzum.load_instruction]
   · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg, hR.parent, hR.cap, ?_,
-      hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, hR.override, hR.budget, hR.toolCap,
-      hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
-      hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, ?_,
-      hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, hR.ndOverride, hR.ndFlowOverride,
-      hR.ndBudget, hR.wfInflight⟩
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg,
+      hR.parent, hR.cap, ?_, hR.taint, hR.integ, hR.inflight, hR.override, hR.budget, hR.invUsed,
+      hR.invEgress, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor,
+      hR.toolIntegInspectFloor, hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
+      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor,
+      hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, ?_, hR.ndTaint, hR.ndInteg,
+      hR.ndInflight, hR.ndOverride, hR.ndFlowOverride, hR.ndBudget, hR.wfInflight⟩
     · -- instr: last-match view, converted from R's pre-state view
       intro ag ins
       show (a.agent_instruction ag ins ∨ (ag = agent ∧ ins = instr)) ↔ vmsMemLast vmAfter ag ins

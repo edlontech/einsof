@@ -2,33 +2,91 @@ import ArgusLean.Refinement.Unified.Bridges
 
 /-! # Layer 1 — `grant_override` preserves the unified `R`
 
-`grant_override` (the 13th, Campaign-A action) arms/re-arms a single-use flow override for
-`(target, tool, level)`: it (1) inserts `{tool, level}` into `target`'s `flow_override` set, (2)
-removes that same key from `target`'s `override_used` set, then (3) debits `granter`'s budget by the
-flat weight one. The five gates mirror `return_endorsed`'s — `granter`/`target` active (`VecSet.contains`), the
-`GrantOverride` cap (`set_contains`, bridged via `R.ndCap` like `sentinel_credit_budget`'s
-`CreditBudget` gate), `affordable granter 1`, and the re-arm guard `target` has no in-flight
+`grant_override` (Campaign A, hardened in the integrity-taint campaign, design §5.6) arms/re-arms a
+single-use flow override for `(target, tool, level)`: it (1) inserts `{tool, level}` into `target`'s
+`flow_override` set, (2) removes that same key from `target`'s `override_used` set, then (3) debits
+`granter`'s budget by the **weighted** cost `declass_weight level` (was a flat `1`). The six gates:
+`granter`/`target` active (`VecSet.contains`), the `GrantOverride` cap (`set_contains`, bridged via
+`R.ndCap` like `sentinel_credit_budget`'s `CreditBudget` gate), the **robust-declassification lever
+floor** (new: every integrity level `granter` holds must clear `bg.lever_integ_floor` — strict, no
+inspect/vouch arm, since there is no conformance object here to vouch a near-miss granter with),
+`affordable granter (declass_weight level)`, and the re-arm guard `target` has no in-flight
 invocations (`set_nonempty target = false`, exactly `return_endorsed`'s child-no-in-flight guard).
+
+The lever-floor gate is a `while`-loop over `granter`'s `integ_levels` (`get_set_or_empty`), each
+element checked against `bg.lever_integ_floor` via `IntegLevel::le` (the same rank-compare
+`integLeC`/`integLevel_le_spec` the integrity gate proofs use); `grantOverrideLoop_spec` below
+mirrors `vecSetContains_loop_spec`'s `loop.spec_decr_nat` shape, folding a "found a level that fails
+the floor" `Bool` instead of an equality test.
 
 The two override writes use the last-match `vmsMemLast` specs (`vecMapKVecSetInsertInto_vmLast_spec` /
 `vecMapKVecSetRemoveFrom_spec`) with the `OverrideKey` instances, characterising the post-images as a
 point-add / point-remove at `(target, {tool, confC (confA level)})` (the `confC`/`confA` roundtrip
 collapses the level component). `debitBudget_full` then frames every other field and re-establishes
-`R.budget`/`R.ndBudget` (the `return_endorsed` budget walk), threaded through the intermediate state
-`{ st with override_used := vm1, flow_override := vm }` whose `agent_budget` is `st.agent_budget`. The
-write nodup posts re-establish `R.ndOverride`/`R.ndFlowOverride`. No flow-gate reads ⇒ `ceilingAdmits`
-irrelevant; no root naming ⇒ no `AgentId.root` axiom. -/
+`R.budget`/`R.ndBudget` (Campaign B: a plain get-style equation, no active-guard needed), threaded
+through the intermediate state `{ st with override_used := vm1, flow_override := vm }` whose
+`agent_budget` is `st.agent_budget`. The write nodup posts re-establish
+`R.ndOverride`/`R.ndFlowOverride`. No flow-gate reads ⇒ `ceilingAdmits` irrelevant; no root naming ⇒
+no `AgentId.root` axiom. -/
 
 namespace ArgusLean.Refinement
 
-open Aeneas Aeneas.Std Result argus_kernel
+open Aeneas Aeneas.Std Result ControlFlow argus_kernel
 open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
-/-- Comprehensive inversion for a successful `grant_override` step: the five gates plus the structural
-    three-write post-state (`flow_override` point-add, `override_used` point-remove, `granter` budget
-    debit) and the two override-key nodup posts. -/
+/-- Generalised loop spec for `grant_override_loop`: starting from any position `i0` with the
+    accumulator `denied0` reflecting whether the already-scanned prefix of `granter_integ` holds a
+    level that fails `bg.lever_integ_floor`, the loop returns whether ANY level in the whole set
+    fails the floor. Mirrors `vecSetContains_loop_spec`'s `loop.spec_decr_nat` shape, folding a
+    per-element `IntegLevel::le` test instead of an equality test. -/
+theorem grantOverrideLoop_spec
+    (bg : background.BackgroundTheory) (granter_integ : collections.VecSet types.IntegLevel)
+    (denied0 : Bool) (i0 : Usize)
+    (hi0 : i0.val ≤ granter_integ.items.val.length)
+    (hdenied0 : denied0 = true ↔
+      ∃ l ∈ granter_integ.items.val.take i0.val, integLeC bg.lever_integ_floor l = false) :
+    transitions.grant_override_loop bg granter_integ denied0 i0 ⦃ b =>
+      (b = true ↔ ∃ l ∈ granter_integ.items.val, integLeC bg.lever_integ_floor l = false) ⦄ := by
+  unfold transitions.grant_override_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => granter_integ.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ granter_integ.items.val.length ∧
+        (p.1 = true ↔
+          ∃ l ∈ granter_integ.items.val.take p.2.val, integLeC bg.lever_integ_floor l = false))
+  · rintro ⟨denied, i⟩ ⟨hile, hden⟩
+    simp only [transitions.grant_override_loop.body]
+    have hi1 : collections.VecSet.len types.IntegLevel.Insts.CoreCloneClone
+        types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel granter_integ =
+        .ok (alloc.vec.Vec.len granter_integ.items) := rfl
+    rw [hi1]; simp only [bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : i.val < granter_integ.items.val.length := by scalar_tac
+      simp only [collections.VecSet.at, background.BackgroundTheory.impl.lever_integ_floor,
+        bind_tc_ok]
+      step as ⟨lvl, hlvl⟩
+      rw [integLevel_le_spec]
+      step*
+      split <;>
+        (step*
+         simp only [i2_post]
+         refine ⟨by omega, ?_⟩
+         simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
+           List.mem_append, List.mem_singleton, ← hlvl]
+         grind)
+    case isFalse h =>
+      have heq' : i.val = granter_integ.items.val.length := by scalar_tac
+      simp only [spec_ok]
+      simp only [heq', List.take_length] at hden
+      simpa using hden
+  · exact ⟨hi0, hdenied0⟩
+
+/-- Comprehensive inversion for a successful `grant_override` step: the six gates (incl. the new
+    lever-floor loop) plus the structural three-write post-state (`flow_override` point-add,
+    `override_used` point-remove, `granter` budget debit by `declass_weight level`) and the two
+    override-key nodup posts. -/
 theorem grant_override_inv_full
     (st : state.KernelState) (bg : background.BackgroundTheory)
     (granter target : types.AgentId) (tool : types.ToolId) (level : types.ConfLevel)
@@ -37,11 +95,13 @@ theorem grant_override_inv_full
     (hcapBud : st.agent_budget.entries.val.length < Usize.max)
     (st' : state.KernelState) (ev : event.KernelAction)
     (hok : transitions.grant_override st bg granter target tool level = .ok (.Ok (st', ev))) :
-    ∃ vmFo vmOu vmBud,
+    ∃ vmFo vmOu vmBud, ∃ weight : Std.U8,
       vsMem st.agent_active granter ∧
       vsMem st.agent_active target ∧
       vmsMem st.agent_cap granter capability.CapKind.GrantOverride ∧
-      (1#u8 : Std.U8) ≤ budgetReadC st.agent_budget granter ∧
+      (∀ l, vmsMemLast st.integ_levels granter l → integLeC bg.lever_integ_floor l = true) ∧
+      weight.val = Tzimtzum.declass_weight (confA level) ∧
+      weight ≤ budgetReadC st.agent_budget granter ∧
       (∀ inv, ¬ vmsMemLast st.in_flight target inv) ∧
       (∀ k v, vmsMemLast vmFo k v ↔
         vmsMemLast st.flow_override k v ∨ (k = target ∧ v = { tool := tool, level := level })) ∧
@@ -49,7 +109,7 @@ theorem grant_override_inv_full
         vmsMemLast st.override_used k v ∧ ¬ (k = target ∧ v = { tool := tool, level := level })) ∧
       st' = { st with override_used := vmOu, flow_override := vmFo, agent_budget := vmBud } ∧
       (∀ G, budgetReadC vmBud G =
-        if G = granter then core.num.U8.saturating_sub (budgetReadC st.agent_budget granter) 1#u8
+        if G = granter then core.num.U8.saturating_sub (budgetReadC st.agent_budget granter) weight
         else budgetReadC st.agent_budget G) ∧
       (vmNodupKeys st.flow_override → vmNodupKeys vmFo) ∧
       (vmNodupKeys st.override_used → vmNodupKeys vmOu) ∧
@@ -81,14 +141,38 @@ theorem grant_override_inv_full
   simp only [bind_tc_ok] at hok
   have hb2 : b2 = true := by cases b2 with | true => rfl | false => simp at hok
   simp only [hb2, reduceIte] at hok
-  -- Gate 4: `granter` can afford the weight-1 debit.
-  obtain ⟨b3, hb3Eq, hb3Iff⟩ := spec_imp_exists (affordable_spec st granter 1#u8)
+  -- `granter_integ ← get_set_or_empty(st.integ_levels, granter)`.
+  obtain ⟨granter_integ, hgiEq, hgiMem⟩ := spec_imp_exists
+    (getSetOrEmpty_spec types.AgentId.Insts.CoreCloneClone types.AgentId.Insts.CoreCmpPartialEqAgentId
+      agentId_eq_spec types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel integLevel_clone_spec st.integ_levels granter)
+  rw [hgiEq] at hok
+  simp only [bind_tc_ok] at hok
+  -- Gate 4: the lever-floor loop.
+  obtain ⟨lever_denied, hldEq, hldIff⟩ := spec_imp_exists
+    (grantOverrideLoop_spec bg granter_integ false 0#usize (by simp) (by simp))
+  rw [hldEq] at hok
+  simp only [bind_tc_ok] at hok
+  have hld : lever_denied = false := by cases lever_denied with | false => rfl | true => simp at hok
+  simp only [hld, reduceIte, Bool.false_eq_true] at hok
+  have hLeverOk : ∀ l, vmsMemLast st.integ_levels granter l → integLeC bg.lever_integ_floor l = true := by
+    intro l hl
+    by_contra hne
+    have : lever_denied = true := hldIff.mpr ⟨l, (hgiMem l).mpr hl, by simpa using hne⟩
+    rw [hld] at this; simp at this
+  -- `weight ← declass_weight level`.
+  obtain ⟨weight, hwEq, hwVal⟩ := declassWeight_spec (confA level)
+  have hwEq' : types.declass_weight level = .ok weight := by rw [← hwEq, confC_confA]
+  rw [hwEq'] at hok
+  simp only [bind_tc_ok] at hok
+  -- Gate 5: `granter` can afford the weighted debit.
+  obtain ⟨b3, hb3Eq, hb3Iff⟩ := spec_imp_exists (affordable_spec st granter weight)
   rw [hb3Eq] at hok
   simp only [bind_tc_ok] at hok
   have hb3 : b3 = true := by cases b3 with | true => rfl | false => simp at hok
   simp only [hb3, reduceIte] at hok
-  have hAfford : (1#u8 : Std.U8) ≤ budgetReadC st.agent_budget granter := hb3Iff.mp hb3
-  -- Gate 5: re-arm guard — `target` has no in-flight invocations.
+  have hAfford : weight ≤ budgetReadC st.agent_budget granter := hb3Iff.mp hb3
+  -- Gate 6: re-arm guard — `target` has no in-flight invocations.
   obtain ⟨b4, hb4Eq, hb4Iff⟩ := spec_imp_exists
     (vecMapKVecSetSetNonempty_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
@@ -138,12 +222,12 @@ theorem grant_override_inv_full
   simp only [bind_tc_ok] at hok
   -- Write 3: debit `granter`'s budget on the intermediate state.
   obtain ⟨st1, hst1Eq, vmBud, hStruct, hBud, hBudNd⟩ := spec_imp_exists
-    (debitBudget_full { st with override_used := vmOu, flow_override := vmFo } granter 1#u8 hcapBud)
+    (debitBudget_full { st with override_used := vmOu, flow_override := vmFo } granter weight hcapBud)
   rw [hst1Eq] at hok
   simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
   obtain ⟨hStateEq, _hEventEq⟩ := hok
-  refine ⟨vmFo, vmOu, vmBud, hbIff.mp hb, hb1Iff.mp hb1, hb2Imp hb2, hAfford, hNoFlight,
-    hvmFoMem, hvmOuMem, ?_, ?_, ?_, hOuEq ▸ hvmOuNd, hBudNd⟩
+  refine ⟨vmFo, vmOu, vmBud, weight, hbIff.mp hb, hb1Iff.mp hb1, hb2Imp hb2, hLeverOk, hwVal, hAfford,
+    hNoFlight, hvmFoMem, hvmOuMem, ?_, ?_, ?_, hOuEq ▸ hvmOuNd, hBudNd⟩
   · rw [← hStateEq, hStruct]
   · -- `budgetReadC vmBud` debits `granter`; the intermediate's budget is `st.agent_budget`
     intro G; exact hBud G
@@ -161,8 +245,8 @@ theorem grant_override_preservesR
     (hok : transitions.grant_override st bg granter target tool level = .ok (.Ok (st', ev))) :
     ∃ a', (Tzimtzum.grant_override granter target tool (confA level)).guard a ∧
           (Tzimtzum.grant_override granter target tool (confA level)).next a a' ∧ R st' bg a' := by
-  obtain ⟨vmFo, vmOu, vmBud, hGranterActive, hTargetActive, hGranterCap, hAfford, hNoFlight,
-      hFoMem, hOuMem, rfl, hBud, hFoNd, hOuNd, hBudNd⟩ :=
+  obtain ⟨vmFo, vmOu, vmBud, weight, hGranterActive, hTargetActive, hGranterCap, hLeverOk, hwVal,
+      hAfford, hNoFlight, hFoMem, hOuMem, rfl, hBud, hFoNd, hOuNd, hBudNd⟩ :=
     grant_override_inv_full st bg granter target tool level hcapFoE hcapFoS hcapBud st' ev hok
   have hGranterActiveA : a.agent_active granter := (hR.active granter).mpr hGranterActive
   refine ⟨{ a with
@@ -170,32 +254,42 @@ theorem grant_override_preservesR
         a.flow_override A T L ∨ (A = target ∧ T = tool ∧ L = confA level)
       override_used := fun A T L =>
         a.override_used A T L ∧ ¬ (A = target ∧ T = tool ∧ L = confA level)
-      agent_budget := fun A L =>
-        (A = granter ∧ ∀ b, a.agent_budget granter b → L = b - 1)
-        ∨ (A ≠ granter ∧ a.agent_budget A L) }, ?_, ?_, ?_⟩
+      agent_budget := fun A =>
+        if A = granter then a.agent_budget granter - Tzimtzum.declass_weight (confA level)
+        else a.agent_budget A }, ?_, ?_, ?_⟩
   · -- guard
     simp only [Tzimtzum.grant_override]
-    refine ⟨hGranterActiveA, (hR.active target).mpr hTargetActive, ?_, ?_, ?_⟩
+    refine ⟨hGranterActiveA, (hR.active target).mpr hTargetActive, ?_, ?_, ?_, ?_⟩
     · rw [hR.cap_grantov]
       exact (hR.cap granter capability.CapKind.GrantOverride).mpr
         ((vmsMem_iff_vmsMemLast st.agent_cap hR.ndCap granter capability.CapKind.GrantOverride).mp
           hGranterCap)
-    · -- affordable granter 1: the abstract budget covers weight 1
-      refine ⟨(budgetReadC st.agent_budget granter).val,
-        (hR.budget granter _ hGranterActiveA).mpr rfl, ?_⟩
-      have : (1#u8 : Std.U8).val ≤ (budgetReadC st.agent_budget granter).val := by scalar_tac
-      simpa using this
+    · -- lever floor: strict, no vouch arm
+      intro L hL
+      have hlast : vmsMemLast st.integ_levels granter (integC L) := (hR.integ granter L).mp hL
+      have hcheck := hLeverOk (integC L) hlast
+      show Tzimtzum.le_integ a.lever_integ_floor L
+      rw [← integA_integC L, le_integ_integLeC, hR.leverFloor, integC_integA]
+      exact hcheck
+    · -- affordable granter (declass_weight (confA level)): a plain inequality (Campaign B, no
+      -- existential — `agent_budget` is a total `Nat` function)
+      show Tzimtzum.declass_weight (confA level) ≤ a.agent_budget granter
+      rw [hR.budget granter, ← hwVal]
+      exact_mod_cast hAfford
     · intro I hc
       exact hNoFlight I ((hR.inflight target I).mp hc)
-  · -- next
+  · -- next: the classical `ite` at `AgentId`'s abstract type needs a decidable-irrelevant
+    -- case split instead of syntactic `rfl` (same shape as `Delegate`'s budget conjunct).
     simp [Tzimtzum.grant_override]
+    funext G; by_cases hG : G = granter <;> simp [hG]
   · -- R st' bg a'
     refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, hR.tool_reg,
-      hR.parent, hR.cap, hR.instr, hR.taint, hR.inflight, hR.ghInvoked, hR.ghReceived, ?_, ?_,
-      hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
-      hR.instrIssuer, hR.flowAllows, hR.flowInspects, ?_, hR.invTool, hR.ndParent, hR.ndCap,
-      hR.ndInstr, hR.ndTaint, hR.ndInflight, hR.ndGhInvoked, hR.ndGhReceived, ?_, ?_, ?_,
-      hR.wfInflight⟩
+      hR.parent, hR.cap, hR.instr, hR.taint, hR.integ, hR.inflight, ?_, ?_, hR.invUsed,
+      hR.invEgress, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor,
+      hR.toolIntegInspectFloor, hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
+      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor, ?_,
+      hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr, hR.ndTaint, hR.ndInteg, hR.ndInflight, ?_, ?_,
+      ?_, hR.wfInflight⟩
     · -- override (point-remove at (target, tool, level))
       intro ag t L
       have hkey : (t = tool ∧ L = confA level) ↔
@@ -207,30 +301,14 @@ theorem grant_override_preservesR
       show (a.override_used ag t L ∧ ¬ (ag = target ∧ t = tool ∧ L = confA level)) ↔
         vmsMemLast vmOu ag { tool := t, level := confC L }
       rw [hOuMem ag { tool := t, level := confC L }, hR.override ag t L, hkey]
-    · -- budget (granter debit by weight 1; numeric Nat subtraction collapse)
-      intro G L hactiveG
-      show ((G = granter ∧ ∀ b, a.agent_budget granter b → L = b - 1) ∨ (G ≠ granter ∧ a.agent_budget G L))
-        ↔ (budgetReadC vmBud G).val = L
+    · -- budget (granter debit by `declass_weight (confA level)`; no active-guard needed)
+      intro G
+      show (if G = granter then a.agent_budget granter - Tzimtzum.declass_weight (confA level)
+          else a.agent_budget G) = (budgetReadC vmBud G).val
       rw [hBud G]
       by_cases hG : G = granter
-      · subst hG
-        simp only [true_and, ne_eq, not_true_eq_false, false_and, or_false, if_true,
-          saturatingSub_val]
-        have hone : (1#u8 : Std.U8).val = 1 := by rfl
-        rw [hone]
-        constructor
-        · intro h
-          exact (h (budgetReadC st.agent_budget G).val ((hR.budget G _ hactiveG).mpr rfl)).symm
-        · intro hread b hab
-          have : (budgetReadC st.agent_budget G).val = b := (hR.budget G b hactiveG).mp hab
-          omega
-      · rw [if_neg hG]
-        constructor
-        · rintro (⟨hp, _⟩ | ⟨_, hab⟩)
-          · exact absurd hp hG
-          · rw [← hR.budget G L hactiveG]; exact hab
-        · intro hread
-          exact Or.inr ⟨hG, (hR.budget G L hactiveG).mpr hread⟩
+      · rw [if_pos hG, if_pos hG, saturatingSub_val, hR.budget granter, hwVal]
+      · rw [if_neg hG, if_neg hG, hR.budget G]
     · -- flowOverride (point-add at (target, tool, level))
       intro A T L
       have hkey : (T = tool ∧ L = confA level) ↔
