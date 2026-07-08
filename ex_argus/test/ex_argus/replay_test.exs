@@ -34,7 +34,7 @@ defmodule ExArgus.ReplayTest do
   ]
 
   test "run returns one outcome per entry and threads state through" do
-    outcomes = Replay.run(@log, bg(%{network_external: :public}))
+    outcomes = Replay.run([ExArgus.log_header() | @log], bg(%{network_external: :public}))
     assert length(outcomes) == 5
 
     assert [{:ok, _, _}, {:ok, _, _}, {:ok, _, _}, {:ok, _, _}, {:error, :flow_gate_blocked}] =
@@ -43,7 +43,7 @@ defmodule ExArgus.ReplayTest do
 
   test "errors do not halt the replay" do
     log = [{:register_tool, ["send_email"]} | @log]
-    outcomes = Replay.run(log, bg(%{network_external: :public}))
+    outcomes = Replay.run([ExArgus.log_header() | log], bg(%{network_external: :public}))
     assert [{:ok, _, _}, {:error, :tool_already_registered} | _] = outcomes
     assert length(outcomes) == 6
   end
@@ -52,7 +52,7 @@ defmodule ExArgus.ReplayTest do
     live = bg(%{network_external: :public})
     candidate = bg(%{network_external: :sensitive})
 
-    divergences = Replay.diff(@log, live, candidate)
+    divergences = Replay.diff([ExArgus.log_header() | @log], live, candidate)
 
     assert [
              %{
@@ -66,6 +66,47 @@ defmodule ExArgus.ReplayTest do
 
   test "identical backgrounds produce no divergences" do
     live = bg(%{network_external: :public})
-    assert Replay.diff(@log, live, live) == []
+    assert Replay.diff([ExArgus.log_header() | @log], live, live) == []
+  end
+
+  test "run rejects a headerless log without replaying any entry" do
+    assert Replay.run(@log, bg(%{network_external: :public})) == {:error, :state_version_mismatch}
+  end
+
+  test "run rejects a log stamped for a prior state version" do
+    log = [{:state_version, 3} | @log]
+    assert Replay.run(log, bg(%{network_external: :public})) == {:error, :state_version_mismatch}
+  end
+
+  test "diff rejects a headerless log" do
+    live = bg(%{network_external: :public})
+    assert Replay.diff(@log, live, live) == {:error, :state_version_mismatch}
+  end
+
+  test "diff rejects a log stamped for a prior state version" do
+    live = bg(%{network_external: :public})
+    log = [{:state_version, 3} | @log]
+    assert Replay.diff(log, live, live) == {:error, :state_version_mismatch}
+  end
+
+  test "run rejects a log stamped with a float version, not just a numerically-equal integer" do
+    log = [{:state_version, 4.0} | @log]
+
+    assert Replay.run(log, bg(%{network_external: :public})) ==
+             {:error, :state_version_mismatch}
+  end
+
+  test "run replays stamped-4 logs containing unregister_tool and sentinel_degrade_integrity" do
+    log = [
+      ExArgus.log_header(),
+      {:register_tool, ["send_email"]},
+      {:delegate, ["root", "a1"]},
+      {:sentinel_degrade_integrity, ["a1", :standard, %{}]},
+      {:unregister_tool, ["send_email"]}
+    ]
+
+    outcomes = Replay.run(log, bg(%{network_external: :public}))
+
+    assert [{:ok, _, _}, {:ok, _, _}, {:ok, _, _}, {:ok, _, _}] = outcomes
   end
 end

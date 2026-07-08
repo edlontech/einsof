@@ -38,7 +38,7 @@ defmodule ExArgus.Instance do
   @type entry :: {atom, [term]}
   @type recovery_error :: %{
           index: non_neg_integer,
-          entry: entry,
+          entry: term,
           reason: Offline.error_reason() | :unknown_transition
         }
 
@@ -54,15 +54,29 @@ defmodule ExArgus.Instance do
   state, audit completeness -- is hash-chain / mesh territory.) For the lenient
   skip-and-continue mode, use offline `ExArgus.Replay.run/2`.
 
+  The log must begin with `ExArgus.log_header/0`, checked BEFORE any entry replays -- a
+  missing or mismatched header returns `{:error, %{reason: :state_version_mismatch}}` and
+  no instance is created (not even at the initial state).
+
   An entry whose `fun` is not one of the 15 kernel transitions aborts immediately with
   `reason: :unknown_transition`; no `apply` is attempted.
   """
   @spec recover(background, [entry]) :: {:ok, t} | {:error, recovery_error}
   def recover(bg, log) do
+    case ExArgus.strip_log_header(log) do
+      {:ok, entries} ->
+        recover_entries(bg, entries)
+
+      :error ->
+        {:error, %{index: 0, entry: List.first(log), reason: :state_version_mismatch}}
+    end
+  end
+
+  defp recover_entries(bg, entries) do
     handle = new(bg)
 
     result =
-      log
+      entries
       |> Enum.with_index()
       |> Enum.reduce_while(:ok, fn {{fun, args}, i}, :ok ->
         if fun in @recoverable_transitions do

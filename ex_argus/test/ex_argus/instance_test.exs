@@ -84,7 +84,7 @@ defmodule ExArgus.InstanceTest do
   end
 
   test "recover replays an accepted-call log to an identical projection + dense seq" do
-    {:ok, h} = Instance.recover(bg(), @recover_log)
+    {:ok, h} = Instance.recover(bg(), [ExArgus.log_header() | @recover_log])
     assert Instance.seq(h) == length(@recover_log)
 
     live = Instance.new(bg())
@@ -101,11 +101,11 @@ defmodule ExArgus.InstanceTest do
 
     assert {:error,
             %{index: 1, entry: {:register_tool, ["read_file"]}, reason: :tool_already_registered}} =
-             Instance.recover(bg(), corrupt)
+             Instance.recover(bg(), [ExArgus.log_header() | corrupt])
   end
 
   test "recover of an empty log yields a fresh instance at seq 0" do
-    assert {:ok, h} = Instance.recover(bg(), [])
+    assert {:ok, h} = Instance.recover(bg(), [ExArgus.log_header()])
     assert Instance.seq(h) == 0
     assert Instance.state(h) == Instance.state(Instance.new(bg()))
   end
@@ -114,14 +114,37 @@ defmodule ExArgus.InstanceTest do
     log = [{:register_tool, ["read_file"]}, {:bogus_fun, []}]
 
     assert {:error, %{index: 1, entry: {:bogus_fun, []}, reason: :unknown_transition}} =
-             Instance.recover(bg(), log)
+             Instance.recover(bg(), [ExArgus.log_header() | log])
   end
 
   test "recover aborts on an entry naming a non-transition Instance function" do
     log = [{:register_tool, ["read_file"]}, {:state, []}]
 
     assert {:error, %{index: 1, entry: {:state, []}, reason: :unknown_transition}} =
-             Instance.recover(bg(), log)
+             Instance.recover(bg(), [ExArgus.log_header() | log])
+  end
+
+  test "recover rejects a headerless log without creating an instance or replaying any entry" do
+    assert {:error, %{reason: :state_version_mismatch}} = Instance.recover(bg(), @recover_log)
+  end
+
+  test "recover rejects a log stamped for a prior state version" do
+    log = [{:state_version, 3} | @recover_log]
+    assert {:error, %{reason: :state_version_mismatch}} = Instance.recover(bg(), log)
+  end
+
+  test "recover succeeds on a stamped-4 log containing the two new V3 transitions" do
+    log = [
+      ExArgus.log_header(),
+      {:register_tool, ["read_file"]},
+      {:delegate, ["root", "a1"]},
+      {:sentinel_degrade_integrity, ["a1", :standard, %{}]},
+      {:unregister_tool, ["read_file"]}
+    ]
+
+    assert {:ok, h} = Instance.recover(bg(), log)
+    assert Instance.seq(h) == 4
+    refute "read_file" in Instance.state(h).tool_registered
   end
 
   test "instance explain on live state matches offline explain on the projected snapshot" do
@@ -252,7 +275,7 @@ defmodule ExArgus.InstanceTest do
     check all(tail <- StreamData.list_of(entry_gen(), max_length: 20)) do
       log = @agreement_setup ++ tail
 
-      offline_outcomes = ExArgus.Replay.run(log, bg())
+      offline_outcomes = ExArgus.Replay.run([ExArgus.log_header() | log], bg())
 
       handle = Instance.new(bg())
 
@@ -365,7 +388,7 @@ defmodule ExArgus.InstanceTest do
       {:grant_override, ["root", "a1", "send_email", :sensitive]}
     ]
 
-    {:ok, h} = Instance.recover(flow_bg(), recovery_log)
+    {:ok, h} = Instance.recover(flow_bg(), [ExArgus.log_header() | recovery_log])
     assert Instance.seq(h) == length(recovery_log)
 
     live = Instance.new(flow_bg())

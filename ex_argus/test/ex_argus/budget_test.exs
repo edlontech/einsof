@@ -116,7 +116,7 @@ defmodule ExArgus.BudgetTest do
       {:sentinel_credit_budget, ["a1", 5]}
     ]
 
-    {:ok, h} = Instance.recover(bg(), recovery_log)
+    {:ok, h} = Instance.recover(bg(), [ExArgus.log_header() | recovery_log])
     assert Instance.seq(h) == length(recovery_log)
 
     live = Instance.new(bg())
