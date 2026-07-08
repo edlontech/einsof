@@ -27,7 +27,7 @@ pub use collections::{VecMap, VecSet};
 pub use error::KernelError;
 pub use event::{KernelAction, KernelEvent};
 pub use kernel::Kernel;
-pub use state::KernelState;
+pub use state::{KernelState, STATE_VERSION};
 pub use traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle, EventStore};
 pub use types::{
     AgentId, BUDGET_CAPACITY, ConfLevel, EgressKind, InstructionId, IntegLevel, InvocationId,

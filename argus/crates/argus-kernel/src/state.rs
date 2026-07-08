@@ -1,7 +1,15 @@
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
 use crate::collections::{VecMap, VecSet};
-use crate::types::{AgentId, BUDGET_CAPACITY, ConfLevel, InstructionId, InvocationId, OverrideKey, ToolId};
+use crate::types::{
+    AgentId, BUDGET_CAPACITY, ConfLevel, EgressKind, InstructionId, IntegLevel, InvocationId,
+    OverrideKey, ToolId,
+};
+
+/// The state-shape version the ex_argus NIF binds against (design campaign map §5.8 step 2).
+/// TzimtzumV3 (dual integrity lattice, per-invocation attestation, unified crossing) is shape
+/// version 4.
+pub const STATE_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelState {
@@ -9,8 +17,18 @@ pub struct KernelState {
     pub agent_parent: VecMap<AgentId, AgentId>,
     pub agent_cap: VecMap<AgentId, VecSet<CapKind>>,
     pub taint_levels: VecMap<AgentId, VecSet<ConfLevel>>,
+    /// Integrity levels the agent has ingested (dual of `taint_levels`). Effective integrity is
+    /// the MIN of the set; EMPTY SET = FULLY TRUSTED (dual of "empty taint set = untainted").
+    /// Cleared per-agent by `clear_agent_state` (`delegate`/`revoke`/`cascade_revoke`).
+    pub integ_levels: VecMap<AgentId, VecSet<IntegLevel>>,
     pub in_flight: VecMap<AgentId, VecSet<InvocationId>>,
     pub invocation_tool: VecMap<InvocationId, ToolId>,
+    /// Global freshness history: set at `invoke_start`, NEVER cleared (not by `revoke`,
+    /// `cascade_revoke`, or `delegate` -- it is history of invocation ids, not agent state).
+    pub invocation_used: VecSet<InvocationId>,
+    /// Oracle-attested egress kinds of each invocation. Global like `invocation_tool`, never
+    /// cleared.
+    pub invocation_egress: VecMap<InvocationId, VecSet<EgressKind>>,
     pub tool_registered: VecSet<ToolId>,
     pub agent_instruction: VecMap<AgentId, VecSet<InstructionId>>,
     /// Single-use flow_override consumption (MF-3). Records the `(tool, level)` override
@@ -54,8 +72,11 @@ impl KernelState {
             agent_parent: VecMap::new(),
             agent_cap,
             taint_levels: VecMap::new(),
+            integ_levels: VecMap::new(),
             in_flight: VecMap::new(),
             invocation_tool: VecMap::new(),
+            invocation_used: VecSet::new(),
+            invocation_egress: VecMap::new(),
             tool_registered: VecSet::new(),
             agent_instruction: VecMap::new(),
             override_used: VecMap::new(),
@@ -127,6 +148,26 @@ impl KernelState {
 
         taint
     }
+
+    /// Speculative (worst-case) integrity: held integrity levels, plus the `output_integ` of
+    /// every in-flight tool (dual of `speculative_taint`).
+    pub fn speculative_integ(&self, agent: &AgentId, bg: &BackgroundTheory) -> VecSet<IntegLevel> {
+        let mut integ: VecSet<IntegLevel> = self.integ_levels.get_set_or_empty(agent);
+
+        let flights = self.in_flight.get_set_or_empty(agent);
+        let mut j = 0;
+        while j < flights.len() {
+            let inv = flights.at(j);
+            if let Some(tool_id) = self.invocation_tool.get_cloned(inv) {
+                if let Some(tmeta) = bg.tool_metadata(&tool_id) {
+                    integ.insert(tmeta.output_integ);
+                }
+            }
+            j += 1;
+        }
+
+        integ
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +208,24 @@ mod tests {
     fn initial_state_no_in_flight() {
         let state = KernelState::initial();
         assert!(state.in_flight.is_empty());
+    }
+
+    #[test]
+    fn initial_state_no_integrity_taint() {
+        let state = KernelState::initial();
+        assert!(state.integ_levels.is_empty());
+    }
+
+    #[test]
+    fn initial_state_no_invocation_history() {
+        let state = KernelState::initial();
+        assert!(state.invocation_used.is_empty());
+        assert!(state.invocation_egress.is_empty());
+    }
+
+    #[test]
+    fn state_version_is_four() {
+        assert_eq!(STATE_VERSION, 4);
     }
 
     #[test]
@@ -246,6 +305,57 @@ mod tests {
 
         let taint = state.speculative_taint(&agent, &bg);
         assert!(taint.contains(&ConfLevel::Sensitive));
+    }
+
+    #[test]
+    fn speculative_integ_empty_for_clean_agent() {
+        let state = KernelState::initial();
+        let bg = BackgroundTheoryBuilder::new().build();
+        let integ = state.speculative_integ(&AgentId::new("agent-1"), &bg);
+        assert!(integ.is_empty());
+    }
+
+    #[test]
+    fn speculative_integ_includes_in_flight_output_integ() {
+        let mut state = KernelState::initial();
+        let agent = AgentId::new("agent-1");
+        let tool = ToolId::new("web_fetch");
+        let inv = InvocationId::new("inv-1");
+
+        state.agent_active.insert(agent.clone());
+        state.invocation_tool.insert(inv.clone(), tool.clone());
+        state.in_flight.insert_into(agent.clone(), inv);
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            tool,
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Untrusted,
+            },
+        );
+        let bg = builder.build();
+
+        let integ = state.speculative_integ(&agent, &bg);
+        assert!(integ.contains(&IntegLevel::Untrusted));
+    }
+
+    #[test]
+    fn speculative_integ_includes_held_levels() {
+        let mut state = KernelState::initial();
+        let agent = AgentId::new("agent-1");
+        state.integ_levels.insert_into(agent.clone(), IntegLevel::Standard);
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let integ = state.speculative_integ(&agent, &bg);
+        assert!(integ.contains(&IntegLevel::Standard));
     }
 
     #[test]

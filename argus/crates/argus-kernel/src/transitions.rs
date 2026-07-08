@@ -55,6 +55,7 @@ fn flow_decision(
 
 fn clear_agent_state(st: &mut KernelState, agent: &AgentId) {
     st.taint_levels.remove(agent);
+    st.integ_levels.remove(agent);
     st.in_flight.remove(agent);
     st.agent_instruction.remove(agent);
     st.override_used.remove(agent);
@@ -872,6 +873,19 @@ mod tests {
     }
 
     #[test]
+    fn delegate_gives_grantee_empty_integ_levels() {
+        let mut st = KernelState::initial();
+        let bg = BackgroundTheoryBuilder::new().build();
+        let grantee = AgentId::new("child-1");
+        st
+            .integ_levels
+            .insert(grantee.clone(), VecSet::from([IntegLevel::Untrusted]));
+
+        let (new_state, _) = delegate(st, &bg, AgentId::root(), grantee.clone()).unwrap();
+        assert!(new_state.integ_levels.get(&grantee).is_none());
+    }
+
+    #[test]
     fn delegate_child_cannot_endorse_until_credited() {
         // Design finding 5 regression: a delegated child cannot self-fund an endorsed
         // completion (bounded + conforming) until sentinel_credit_budget faucets it.
@@ -1053,6 +1067,24 @@ mod tests {
                 target: child,
             }
         );
+    }
+
+    #[test]
+    fn revoke_clears_integ_levels_but_leaves_invocation_used_intact() {
+        let mut st = KernelState::initial();
+        let bg = BackgroundTheoryBuilder::new().build();
+        let child = AgentId::new("child-1");
+        let inv = InvocationId::new("inv-1");
+        st.agent_active.insert(child.clone());
+        st.agent_parent.insert(child.clone(), AgentId::root());
+        st
+            .integ_levels
+            .insert(child.clone(), VecSet::from([IntegLevel::Untrusted]));
+        st.invocation_used.insert(inv.clone());
+
+        let (new_state, _) = revoke(st, &bg, AgentId::root(), child.clone()).unwrap();
+        assert!(new_state.integ_levels.get(&child).is_none());
+        assert!(new_state.invocation_used.contains(&inv));
     }
 
     #[test]
