@@ -148,6 +148,66 @@ pub fn declass_weight(level: ConfLevel) -> u8 {
     }
 }
 
+/// The dual taint dimension: it falls as an agent ingests untrusted content (confidentiality
+/// taint rises as an agent reads secret data). Mirrors `ConfLevel` exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IntegLevel {
+    Untrusted,
+    Standard,
+    Trusted,
+    Attested,
+}
+
+impl IntegLevel {
+    fn rank(self) -> u8 {
+        match self {
+            Self::Untrusted => 0,
+            Self::Standard => 1,
+            Self::Trusted => 2,
+            Self::Attested => 3,
+        }
+    }
+
+    /// Total-order compare via rank (extraction-friendly: no trait dispatch).
+    pub fn le(self, other: Self) -> bool {
+        self.rank() <= other.rank()
+    }
+}
+
+impl Ord for IntegLevel {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+impl PartialOrd for IntegLevel {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Display for IntegLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Untrusted => f.write_str("untrusted"),
+            Self::Standard => f.write_str("standard"),
+            Self::Trusted => f.write_str("trusted"),
+            Self::Attested => f.write_str("attested"),
+        }
+    }
+}
+
+/// Endorsement weight: dual of `declass_weight`. Attested content is free to endorse, untrusted
+/// is dearest -- prices endorsement by how far below attested the ingested content sits.
+pub fn integ_weight(level: IntegLevel) -> u8 {
+    match level {
+        IntegLevel::Attested => 0,
+        IntegLevel::Trusted => 1,
+        IntegLevel::Standard => 2,
+        IntegLevel::Untrusted => 4,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EgressKind {
     NetworkExternal,
@@ -197,6 +257,39 @@ mod tests {
     fn conf_level_equality() {
         assert_eq!(ConfLevel::Public, ConfLevel::Public);
         assert_ne!(ConfLevel::Public, ConfLevel::Internal);
+    }
+
+    #[test]
+    fn integ_level_le() {
+        assert!(IntegLevel::Untrusted.le(IntegLevel::Standard));
+        assert!(IntegLevel::Standard.le(IntegLevel::Trusted));
+        assert!(IntegLevel::Trusted.le(IntegLevel::Attested));
+        assert!(!IntegLevel::Standard.le(IntegLevel::Untrusted));
+        assert!(!IntegLevel::Trusted.le(IntegLevel::Standard));
+        assert!(!IntegLevel::Attested.le(IntegLevel::Trusted));
+    }
+
+    #[test]
+    fn integ_level_ordering() {
+        assert!(IntegLevel::Untrusted < IntegLevel::Standard);
+        assert!(IntegLevel::Standard < IntegLevel::Trusted);
+        assert!(IntegLevel::Trusted < IntegLevel::Attested);
+    }
+
+    #[test]
+    fn integ_weight_by_level() {
+        assert_eq!(integ_weight(IntegLevel::Attested), 0);
+        assert_eq!(integ_weight(IntegLevel::Trusted), 1);
+        assert_eq!(integ_weight(IntegLevel::Standard), 2);
+        assert_eq!(integ_weight(IntegLevel::Untrusted), 4);
+    }
+
+    #[test]
+    fn integ_level_display() {
+        assert_eq!(IntegLevel::Untrusted.to_string(), "untrusted");
+        assert_eq!(IntegLevel::Standard.to_string(), "standard");
+        assert_eq!(IntegLevel::Trusted.to_string(), "trusted");
+        assert_eq!(IntegLevel::Attested.to_string(), "attested");
     }
 
     #[test]
