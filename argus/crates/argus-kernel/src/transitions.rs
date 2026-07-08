@@ -178,6 +178,43 @@ pub fn register_tool(
     Ok((st, KernelAction::RegisterTool { tool }))
 }
 
+/// A compromised tool can leave the authorization surface: the guard forbids removing a tool
+/// with an in-flight invocation for ANY agent (preserves `in_flight_registered` by construction).
+/// Re-registration later is permitted -- `register_tool`'s guard is unchanged.
+pub fn unregister_tool(
+    mut st: KernelState,
+    _bg: &BackgroundTheory,
+    tool: ToolId,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    if !st.tool_registered.contains(&tool) {
+        return Err(KernelError::ToolNotRegistered);
+    }
+
+    let mut tool_in_flight = false;
+    let mut i = 0;
+    while i < st.in_flight.len() {
+        let flights = st.in_flight.val_at(i).clone();
+        let mut j = 0;
+        while j < flights.len() {
+            let flight_inv = flights.at(j);
+            if let Some(flight_tool) = st.invocation_tool.get_cloned(flight_inv) {
+                if flight_tool == tool {
+                    tool_in_flight = true;
+                }
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    if tool_in_flight {
+        return Err(KernelError::ToolInFlight);
+    }
+
+    st.tool_registered.remove(&tool);
+
+    Ok((st, KernelAction::UnregisterTool { tool }))
+}
+
 pub fn load_instruction(
     mut st: KernelState,
     bg: &BackgroundTheory,
@@ -1169,6 +1206,95 @@ mod tests {
         let st = KernelState::initial();
         let bg = BackgroundTheoryBuilder::new().build();
         assert!(register_tool(st, &bg, ToolId::new("unknown")).is_err());
+    }
+
+    // --- unregister_tool ---
+
+    #[test]
+    fn unregister_tool_rejects_never_registered() {
+        let st = KernelState::initial();
+        let bg = BackgroundTheoryBuilder::new().build();
+        assert_eq!(
+            unregister_tool(st, &bg, ToolId::new("unknown")),
+            Err(KernelError::ToolNotRegistered)
+        );
+    }
+
+    #[test]
+    fn unregister_tool_blocked_by_other_agents_in_flight() {
+        let mut st = state_with_agent("a1", &[CapKind::FilesystemRead]);
+        let bg = bg_with_tools();
+        let a2 = AgentId::new("a2");
+        st.agent_active.insert(a2.clone());
+        st.agent_parent.insert(a2.clone(), AgentId::root());
+        st.agent_cap
+            .insert(a2.clone(), VecSet::from([CapKind::FilesystemRead]));
+
+        let (st, _) = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &PassAll,
+            a2,
+            ToolId::new("read_file"),
+            InvocationId::new("inv-a2"),
+            VecSet::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unregister_tool(st, &bg, ToolId::new("read_file")),
+            Err(KernelError::ToolInFlight)
+        );
+    }
+
+    #[test]
+    fn unregister_tool_full_lifecycle() {
+        let st = state_with_agent("a1", &[CapKind::FilesystemRead]);
+        let bg = bg_with_tools();
+        let tool = ToolId::new("read_file");
+        let agent = AgentId::new("a1");
+        let inv = InvocationId::new("inv-1");
+
+        let (st, _) = invoke_start(
+            st,
+            &bg,
+            &AllowAll,
+            &PassAll,
+            agent.clone(),
+            tool.clone(),
+            inv.clone(),
+            VecSet::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unregister_tool(st.clone(), &bg, tool.clone()),
+            Err(KernelError::ToolInFlight)
+        );
+
+        let (st, _) = invoke_complete(st, &bg, &ConformsAll, agent.clone(), inv).unwrap();
+
+        let (st, action) = unregister_tool(st, &bg, tool.clone()).unwrap();
+        assert!(!st.tool_registered.contains(&tool));
+        assert_eq!(action, KernelAction::UnregisterTool { tool: tool.clone() });
+
+        assert_eq!(
+            invoke_start(
+                st.clone(),
+                &bg,
+                &AllowAll,
+                &PassAll,
+                agent,
+                tool.clone(),
+                InvocationId::new("inv-2"),
+                VecSet::new(),
+            ),
+            Err(KernelError::ToolNotRegistered)
+        );
+
+        let (st, _) = register_tool(st, &bg, tool.clone()).unwrap();
+        assert!(st.tool_registered.contains(&tool));
     }
 
     // --- delegate ---

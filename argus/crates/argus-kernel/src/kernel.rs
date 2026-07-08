@@ -74,6 +74,11 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
         self.apply(result)
     }
 
+    pub fn unregister_tool(&mut self, tool: ToolId) -> Result<KernelEvent, KernelError> {
+        let result = transitions::unregister_tool(self.state.clone(), &self.background, tool);
+        self.apply(result)
+    }
+
     pub fn load_instruction(
         &mut self,
         agent: AgentId,

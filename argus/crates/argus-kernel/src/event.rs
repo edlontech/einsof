@@ -6,6 +6,9 @@ pub enum KernelAction {
     RegisterTool {
         tool: ToolId,
     },
+    UnregisterTool {
+        tool: ToolId,
+    },
     Delegate {
         grantor: AgentId,
         grantee: AgentId,
@@ -89,6 +92,9 @@ mod tests {
             KernelAction::RegisterTool {
                 tool: ToolId::new("t"),
             },
+            KernelAction::UnregisterTool {
+                tool: ToolId::new("t"),
+            },
             KernelAction::Delegate {
                 grantor: AgentId::root(),
                 grantee: AgentId::new("a"),
@@ -149,7 +155,7 @@ mod tests {
                 level: ConfLevel::Sensitive,
             },
         ];
-        assert_eq!(actions.len(), 14);
+        assert_eq!(actions.len(), 15);
     }
 
     #[test]

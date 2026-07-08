@@ -60,6 +60,8 @@ pub enum KernelError {
     /// A declared confidentiality/integrity level fails to bound the child's held taint/integ
     /// sets (`return_endorsed`'s coverage guards).
     DeclarationNotCovering,
+    /// The tool still has in-flight invocations (`unregister_tool`'s guard).
+    ToolInFlight,
     /// The event store failed to persist an event.
     EventStore,
 }
