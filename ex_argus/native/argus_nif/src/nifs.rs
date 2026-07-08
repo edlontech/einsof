@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use argus_kernel::{transitions, AgentId, InstructionId, InvocationId, KernelState, ToolId};
 
-use crate::enums::{CapKindN, ConfLevelN};
+use crate::enums::{attested_into_kernel, CapKindN, ConfLevelN, EgressKindN, IntegLevelN};
 use crate::event::{ActionN, KernelErrorN, Outcome};
 use crate::oracles::{ConstAuthorizer, ConstConformance, MapContentGate};
 use crate::state::{BackgroundN, StateN};
@@ -24,6 +24,15 @@ pub fn initial_state() -> StateN {
 #[rustler::nif(schedule = "DirtyCpu")]
 pub fn register_tool(state: StateN, bg: BackgroundN, tool: String) -> Outcome {
     finish!(transitions::register_tool(
+        state.into_kernel(),
+        &bg.into_kernel(),
+        ToolId(tool)
+    ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+pub fn unregister_tool(state: StateN, bg: BackgroundN, tool: String) -> Outcome {
+    finish!(transitions::unregister_tool(
         state.into_kernel(),
         &bg.into_kernel(),
         ToolId(tool)
@@ -94,13 +103,17 @@ pub fn return_endorsed(
     child: String,
     parent: String,
     return_conforms: bool,
+    clvl: ConfLevelN,
+    ilvl: IntegLevelN,
 ) -> Outcome {
     finish!(transitions::return_endorsed(
         state.into_kernel(),
         &bg.into_kernel(),
         &ConstConformance(return_conforms),
         AgentId(child),
-        AgentId(parent)
+        AgentId(parent),
+        clvl.into_kernel(),
+        ilvl.into_kernel()
     ))
 }
 
@@ -138,6 +151,7 @@ pub fn grant_override(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 #[rustler::nif(schedule = "DirtyCpu")]
 pub fn invoke_start(
     state: StateN,
@@ -147,7 +161,9 @@ pub fn invoke_start(
     inv: String,
     authorizer_allows: bool,
     content_gate: HashMap<String, bool>,
+    attested_egress: Vec<EgressKindN>,
 ) -> Outcome {
+    let attested = attested_into_kernel(attested_egress);
     finish!(transitions::invoke_start(
         state.into_kernel(),
         &bg.into_kernel(),
@@ -155,7 +171,8 @@ pub fn invoke_start(
         &MapContentGate(content_gate),
         AgentId(agent),
         ToolId(tool),
-        InvocationId(inv)
+        InvocationId(inv),
+        attested
     ))
 }
 
@@ -202,6 +219,23 @@ pub fn sentinel_elevate_taint(
     content_gate: HashMap<String, bool>,
 ) -> Outcome {
     finish!(transitions::sentinel_elevate_taint(
+        state.into_kernel(),
+        &bg.into_kernel(),
+        &MapContentGate(content_gate),
+        AgentId(agent),
+        level.into_kernel()
+    ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+pub fn sentinel_degrade_integrity(
+    state: StateN,
+    bg: BackgroundN,
+    agent: String,
+    level: IntegLevelN,
+    content_gate: HashMap<String, bool>,
+) -> Outcome {
+    finish!(transitions::sentinel_degrade_integrity(
         state.into_kernel(),
         &bg.into_kernel(),
         &MapContentGate(content_gate),

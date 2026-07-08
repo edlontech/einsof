@@ -1,22 +1,24 @@
 use argus_kernel::{KernelAction, KernelError};
 use rustler::{NifTaggedEnum, NifUnitEnum};
 
-use crate::enums::{CapKindN, ConfLevelN};
+use crate::enums::{CapKindN, ConfLevelN, IntegLevelN};
 use crate::state::StateN;
 
 #[derive(Debug, NifTaggedEnum)]
 pub enum ActionN {
     RegisterTool(String),
+    UnregisterTool(String),
     LoadInstruction(String, String),
     Delegate(String, String),
     GrantCapability(String, String, CapKindN),
     Revoke(String, String),
     CascadeRevoke(String, String),
     InvokeStart(String, String, String),
-    InvokeComplete(String, String),
-    ReturnEndorsed(String, String),
+    InvokeComplete(String, String, bool),
+    ReturnEndorsed(String, String, ConfLevelN, IntegLevelN),
     ReturnUnendorsed(String, String),
     SentinelElevateTaint(String, ConfLevelN),
+    SentinelDegradeIntegrity(String, IntegLevelN),
     SentinelCreditBudget(String, u8),
     GrantOverride(String, String, String, ConfLevelN),
 }
@@ -25,6 +27,7 @@ impl ActionN {
     pub fn from_kernel(a: KernelAction) -> Self {
         match a {
             KernelAction::RegisterTool { tool } => Self::RegisterTool(tool.0),
+            KernelAction::UnregisterTool { tool } => Self::UnregisterTool(tool.0),
             KernelAction::LoadInstruction { agent, instr } => {
                 Self::LoadInstruction(agent.0, instr.0)
             }
@@ -37,15 +40,23 @@ impl ActionN {
             KernelAction::InvokeStart { agent, tool, inv } => {
                 Self::InvokeStart(agent.0, tool.0, inv.0)
             }
-            KernelAction::InvokeComplete { agent, inv } => Self::InvokeComplete(agent.0, inv.0),
-            KernelAction::ReturnEndorsed { child, parent } => {
-                Self::ReturnEndorsed(child.0, parent.0)
+            KernelAction::InvokeComplete { agent, inv, endorsed } => {
+                Self::InvokeComplete(agent.0, inv.0, endorsed)
             }
+            KernelAction::ReturnEndorsed { child, parent, clvl, ilvl } => Self::ReturnEndorsed(
+                child.0,
+                parent.0,
+                ConfLevelN::from_kernel(clvl),
+                IntegLevelN::from_kernel(ilvl),
+            ),
             KernelAction::ReturnUnendorsed { child, parent } => {
                 Self::ReturnUnendorsed(child.0, parent.0)
             }
             KernelAction::SentinelElevateTaint { agent, level } => {
                 Self::SentinelElevateTaint(agent.0, ConfLevelN::from_kernel(level))
+            }
+            KernelAction::SentinelDegradeIntegrity { agent, level } => {
+                Self::SentinelDegradeIntegrity(agent.0, IntegLevelN::from_kernel(level))
             }
             KernelAction::SentinelCreditBudget { agent, amount } => {
                 Self::SentinelCreditBudget(agent.0, amount)
@@ -80,6 +91,12 @@ pub enum KernelErrorN {
     NotConforming,
     BudgetExhausted,
     MissingToolBinding,
+    InvocationReplayed,
+    AttestationInvalid,
+    IntegrityFloorDenied,
+    LeverIntegrityDenied,
+    DeclarationNotCovering,
+    ToolInFlight,
     EventStore,
 }
 
@@ -107,6 +124,12 @@ impl KernelErrorN {
             KernelError::NotConforming => Self::NotConforming,
             KernelError::BudgetExhausted => Self::BudgetExhausted,
             KernelError::MissingToolBinding => Self::MissingToolBinding,
+            KernelError::InvocationReplayed => Self::InvocationReplayed,
+            KernelError::AttestationInvalid => Self::AttestationInvalid,
+            KernelError::IntegrityFloorDenied => Self::IntegrityFloorDenied,
+            KernelError::LeverIntegrityDenied => Self::LeverIntegrityDenied,
+            KernelError::DeclarationNotCovering => Self::DeclarationNotCovering,
+            KernelError::ToolInFlight => Self::ToolInFlight,
             KernelError::EventStore => Self::EventStore,
         }
     }
@@ -150,10 +173,42 @@ mod tests {
     }
 
     #[test]
+    fn action_from_kernel_maps_invoke_complete_endorsed() {
+        let a = KernelAction::InvokeComplete {
+            agent: AgentId::new("a1"),
+            inv: argus_kernel::InvocationId::new("i"),
+            endorsed: true,
+        };
+        match ActionN::from_kernel(a) {
+            ActionN::InvokeComplete(agent, inv, endorsed) => {
+                assert_eq!((agent.as_str(), inv.as_str()), ("a1", "i"));
+                assert!(endorsed);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
     fn error_from_kernel_maps_capability_missing() {
         assert!(matches!(
             KernelErrorN::from_kernel(KernelError::CapabilityMissing),
             KernelErrorN::CapabilityMissing
+        ));
+    }
+
+    #[test]
+    fn error_from_kernel_maps_v3_variants() {
+        assert!(matches!(
+            KernelErrorN::from_kernel(KernelError::AttestationInvalid),
+            KernelErrorN::AttestationInvalid
+        ));
+        assert!(matches!(
+            KernelErrorN::from_kernel(KernelError::IntegrityFloorDenied),
+            KernelErrorN::IntegrityFloorDenied
+        ));
+        assert!(matches!(
+            KernelErrorN::from_kernel(KernelError::ToolInFlight),
+            KernelErrorN::ToolInFlight
         ));
     }
 }

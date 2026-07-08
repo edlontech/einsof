@@ -1,4 +1,4 @@
-use argus_kernel::{CapKind, ConfLevel, EgressKind, FlowMode};
+use argus_kernel::{CapKind, ConfLevel, EgressKind, FlowMode, IntegLevel, VecSet};
 use rustler::NifUnitEnum;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NifUnitEnum)]
@@ -29,6 +29,33 @@ impl ConfLevelN {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NifUnitEnum)]
+pub enum IntegLevelN {
+    Untrusted,
+    Standard,
+    Trusted,
+    Attested,
+}
+
+impl IntegLevelN {
+    pub fn into_kernel(self) -> IntegLevel {
+        match self {
+            Self::Untrusted => IntegLevel::Untrusted,
+            Self::Standard => IntegLevel::Standard,
+            Self::Trusted => IntegLevel::Trusted,
+            Self::Attested => IntegLevel::Attested,
+        }
+    }
+    pub fn from_kernel(l: IntegLevel) -> Self {
+        match l {
+            IntegLevel::Untrusted => Self::Untrusted,
+            IntegLevel::Standard => Self::Standard,
+            IntegLevel::Trusted => Self::Trusted,
+            IntegLevel::Attested => Self::Attested,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NifUnitEnum)]
 pub enum EgressKindN {
     NetworkExternal,
     NetworkInternal,
@@ -53,6 +80,12 @@ impl EgressKindN {
             EgressKind::Ipc => Self::Ipc,
         }
     }
+}
+
+/// Decode an attested-egress list off the wire into the kernel's set representation. Shared by
+/// every `attested_egress` NIF parameter (`invoke_start`/`explain_invoke`, offline and instance).
+pub fn attested_into_kernel(kinds: Vec<EgressKindN>) -> VecSet<EgressKind> {
+    kinds.into_iter().map(EgressKindN::into_kernel).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, NifUnitEnum)]
@@ -162,6 +195,18 @@ mod tests {
             ConfLevel::Restricted,
         ] {
             assert_eq!(ConfLevelN::from_kernel(c).into_kernel(), c);
+        }
+    }
+
+    #[test]
+    fn integ_level_roundtrips() {
+        for l in [
+            IntegLevel::Untrusted,
+            IntegLevel::Standard,
+            IntegLevel::Trusted,
+            IntegLevel::Attested,
+        ] {
+            assert_eq!(IntegLevelN::from_kernel(l).into_kernel(), l);
         }
     }
 

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use argus_kernel::{
-    AgentId, BackgroundTheory, BackgroundTheoryBuilder, CapKind, ConfLevel, InstructionId,
-    InvocationId, IssuerId, KernelState, OverrideKey, ToolId, ToolMetadata, VecMap, VecSet,
+    AgentId, BackgroundTheory, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind,
+    InstructionId, IntegLevel, InvocationId, IssuerId, KernelState, OverrideKey, ToolId,
+    ToolMetadata, VecMap, VecSet,
 };
 use rustler::{NifMap, NifStruct};
 
-use crate::enums::{CapKindN, ConfLevelN, EgressKindN};
+use crate::enums::{CapKindN, ConfLevelN, EgressKindN, IntegLevelN};
 
 #[derive(Debug, Clone, NifMap)]
 pub struct ToolMetadataN {
@@ -15,6 +16,9 @@ pub struct ToolMetadataN {
     pub conf_floor: ConfLevelN,
     pub output_bounded: bool,
     pub issuer: String,
+    pub integ_floor: IntegLevelN,
+    pub integ_inspect_floor: IntegLevelN,
+    pub output_integ: IntegLevelN,
 }
 
 impl ToolMetadataN {
@@ -25,6 +29,9 @@ impl ToolMetadataN {
             conf_floor: self.conf_floor.into_kernel(),
             output_bounded: self.output_bounded,
             issuer: IssuerId(self.issuer),
+            integ_floor: self.integ_floor.into_kernel(),
+            integ_inspect_floor: self.integ_inspect_floor.into_kernel(),
+            output_integ: self.output_integ.into_kernel(),
         }
     }
 }
@@ -37,6 +44,8 @@ pub struct BackgroundN {
     pub inspect_ceiling: HashMap<EgressKindN, ConfLevelN>,
     pub trusted_issuers: Vec<String>,
     pub instruction_issuer: HashMap<String, String>,
+    pub lever_integ_floor: IntegLevelN,
+    pub lever_integ_inspect_floor: IntegLevelN,
 }
 
 impl BackgroundN {
@@ -69,6 +78,10 @@ impl BackgroundN {
         for (instr, issuer) in self.instruction_issuer {
             b.register_instruction(InstructionId(instr), IssuerId(issuer));
         }
+        b.set_lever_floors(
+            self.lever_integ_floor.into_kernel(),
+            self.lever_integ_inspect_floor.into_kernel(),
+        );
         b.build()
     }
 }
@@ -80,11 +93,12 @@ pub struct StateN {
     pub agent_parent: HashMap<String, String>,
     pub agent_cap: HashMap<String, Vec<CapKindN>>,
     pub taint_levels: HashMap<String, Vec<ConfLevelN>>,
+    pub integ_levels: HashMap<String, Vec<IntegLevelN>>,
     pub in_flight: HashMap<String, Vec<String>>,
     pub invocation_tool: HashMap<String, String>,
+    pub invocation_used: Vec<String>,
+    pub invocation_egress: HashMap<String, Vec<EgressKindN>>,
     pub tool_registered: Vec<String>,
-    pub gh_taint_invoked: HashMap<String, Vec<ConfLevelN>>,
-    pub gh_taint_received: HashMap<String, Vec<ConfLevelN>>,
     pub agent_instruction: HashMap<String, Vec<String>>,
     pub override_used: HashMap<String, Vec<(String, ConfLevelN)>>,
     pub flow_override: HashMap<String, Vec<(String, ConfLevelN)>>,
@@ -122,15 +136,22 @@ impl StateN {
                 .collect(),
             agent_cap: into_set_map(self.agent_cap, CapKindN::into_kernel),
             taint_levels: into_set_map(self.taint_levels, ConfLevelN::into_kernel),
+            integ_levels: into_set_map(self.integ_levels, IntegLevelN::into_kernel),
             in_flight: into_set_map(self.in_flight, InvocationId),
             invocation_tool: self
                 .invocation_tool
                 .into_iter()
                 .map(|(k, v)| (InvocationId(k), ToolId(v)))
                 .collect(),
+            invocation_used: self.invocation_used.into_iter().map(InvocationId).collect(),
+            invocation_egress: self
+                .invocation_egress
+                .into_iter()
+                .map(|(k, v)| {
+                    (InvocationId(k), v.into_iter().map(EgressKindN::into_kernel).collect())
+                })
+                .collect(),
             tool_registered: self.tool_registered.into_iter().map(ToolId).collect(),
-            gh_taint_invoked: into_set_map(self.gh_taint_invoked, ConfLevelN::into_kernel),
-            gh_taint_received: into_set_map(self.gh_taint_received, ConfLevelN::into_kernel),
             agent_instruction: into_set_map(self.agent_instruction, InstructionId),
             override_used: into_set_map(self.override_used, |(t, l)| OverrideKey {
                 tool: ToolId(t),
@@ -160,19 +181,24 @@ impl StateN {
             taint_levels: from_set_map(&ks.taint_levels, |c: &ConfLevel| {
                 ConfLevelN::from_kernel(*c)
             }),
+            integ_levels: from_set_map(&ks.integ_levels, |l: &IntegLevel| {
+                IntegLevelN::from_kernel(*l)
+            }),
             in_flight: from_set_map(&ks.in_flight, |i: &InvocationId| i.0.clone()),
             invocation_tool: ks
                 .invocation_tool
                 .iter()
                 .map(|(k, v)| (k.0.clone(), v.0.clone()))
                 .collect(),
+            invocation_used: ks.invocation_used.iter().map(|i| i.0.clone()).collect(),
+            invocation_egress: ks
+                .invocation_egress
+                .iter()
+                .map(|(k, v)| {
+                    (k.0.clone(), v.iter().map(|e: &EgressKind| EgressKindN::from_kernel(*e)).collect())
+                })
+                .collect(),
             tool_registered: ks.tool_registered.iter().map(|t| t.0.clone()).collect(),
-            gh_taint_invoked: from_set_map(&ks.gh_taint_invoked, |c: &ConfLevel| {
-                ConfLevelN::from_kernel(*c)
-            }),
-            gh_taint_received: from_set_map(&ks.gh_taint_received, |c: &ConfLevel| {
-                ConfLevelN::from_kernel(*c)
-            }),
             agent_instruction: from_set_map(&ks.agent_instruction, |i: &InstructionId| {
                 i.0.clone()
             }),
@@ -231,5 +257,20 @@ mod tests {
             .unwrap()
             .contains(&ConfLevel::Sensitive));
         assert_eq!(back.budget(&AgentId::new("a1")), 13);
+    }
+
+    #[test]
+    fn integrity_state_roundtrips() {
+        let mut ks = KernelState::initial();
+        let agent = AgentId::new("a1");
+        let inv = InvocationId::new("i1");
+        ks.integ_levels.insert_into(agent.clone(), IntegLevel::Standard);
+        ks.invocation_used.insert(inv.clone());
+        ks.invocation_egress.insert(inv.clone(), VecSet::from([EgressKind::NetworkExternal]));
+        let back = StateN::from_kernel(&ks).into_kernel();
+        assert!(back.integ_levels.get(&agent).unwrap().contains(&IntegLevel::Standard));
+        assert!(back.invocation_used.contains(&inv));
+        assert!(back.invocation_egress.get(&inv).unwrap().contains(&EgressKind::NetworkExternal));
+        assert_eq!(back, ks);
     }
 }
