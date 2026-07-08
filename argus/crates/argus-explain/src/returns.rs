@@ -1,6 +1,6 @@
 use argus_kernel::{AgentId, BackgroundTheory, ContentGateOracle, KernelError, KernelState};
 
-use crate::invoke::{gate_finding, integ_check_denied};
+use crate::invoke::{gate_finding, integ_gate_finding};
 use crate::report::{ExplainReport, GateCheck};
 
 pub fn explain_return_unendorsed<C: ContentGateOracle>(
@@ -14,6 +14,8 @@ pub fn explain_return_unendorsed<C: ContentGateOracle>(
         verdict: None,
         missing_caps: Vec::new(),
         findings: Vec::new(),
+        integ_findings: Vec::new(),
+        lever_findings: Vec::new(),
         authorizer_denied: false,
     };
     let precondition = if st.agent_parent.get(child) != Some(parent) {
@@ -56,11 +58,9 @@ pub fn explain_return_unendorsed<C: ContentGateOracle>(
         return report;
     }
 
-    // Integrity gate mirror (verdict-level only; Task 16 adds full findings). No override
-    // arm -- endorsement is the only way up, so unlike the conf gate this has no
-    // consumption clause to mirror.
+    // Integrity gate: child integ x parent's in-flight tools. No override arm -- endorsement
+    // is the only way up, so unlike the conf gate this has no consumption clause to mirror.
     let child_integ = st.integ_levels.get_set_or_empty(child);
-    let mut integ_denied = false;
     for igi in 0..child_integ.len() {
         let level = *child_integ.at(igi);
         for fi in 0..flights.len() {
@@ -71,22 +71,26 @@ pub fn explain_return_unendorsed<C: ContentGateOracle>(
             let Some(flight_meta) = bg.tool_metadata(&flight_tool) else {
                 continue;
             };
-            if integ_check_denied(
-                content_gate, st, bg, parent, &flight_tool, flight_inv,
+            report.integ_findings.push(integ_gate_finding(
+                content_gate, st, bg, GateCheck::ChildIntegVsParentInFlight,
+                parent, &flight_tool, flight_inv,
                 flight_meta.integ_floor, flight_meta.integ_inspect_floor, level,
-            ) {
-                integ_denied = true;
-            }
+            ));
         }
     }
 
-    report.verdict = if integ_denied { Some(KernelError::IntegrityFloorDenied) } else { None };
+    report.verdict = if report.denied_integ_findings().next().is_some() {
+        Some(KernelError::IntegrityFloorDenied)
+    } else {
+        None
+    };
     report
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::report::Rescue;
     use argus_kernel::{
         transitions, AgentId, BackgroundTheory, BackgroundTheoryBuilder, ConfLevel,
         ContentGateOracle, EgressKind, IntegLevel, InvocationId, IssuerId, KernelError,
@@ -173,5 +177,87 @@ mod tests {
         let report = agree(&st, &bg, true);
         assert_eq!(report.verdict, Some(KernelError::NotDirectChild));
         assert!(report.findings.is_empty());
+    }
+
+    fn integ_fixture(inspect_floor: IntegLevel, held: IntegLevel) -> (KernelState, BackgroundTheory) {
+        let mut st = KernelState::initial();
+        let child = AgentId::new("c");
+        let parent = AgentId::new("p");
+        st.agent_active.insert(child.clone());
+        st.agent_active.insert(parent.clone());
+        st.agent_parent.insert(parent.clone(), AgentId::root());
+        st.agent_parent.insert(child.clone(), parent.clone());
+        st.integ_levels.insert(child, VecSet::from([held]));
+        st.in_flight.insert_into(parent, InvocationId::new("pi"));
+        st.invocation_tool.insert(InvocationId::new("pi"), ToolId::new("destructive"));
+
+        let mut b = BackgroundTheoryBuilder::new();
+        b.trust_issuer(IssuerId::new("trusted"));
+        b.register_tool(
+            ToolId::new("destructive"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: inspect_floor,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        (st, b.build())
+    }
+
+    #[test]
+    fn child_integ_vs_parent_flight_denied() {
+        let (st, bg) = integ_fixture(IntegLevel::Trusted, IntegLevel::Untrusted);
+        let report = agree(&st, &bg, false);
+        assert_eq!(report.verdict, Some(KernelError::IntegrityFloorDenied));
+        let f = report.denied_integ_findings().next().unwrap();
+        assert_eq!(f.check, GateCheck::ChildIntegVsParentInFlight);
+        assert_eq!(f.tool, "destructive");
+        assert_eq!(f.level, IntegLevel::Untrusted);
+        assert!(f.rescues.contains(&Rescue::EndorseIngestion { tool: "destructive".into() }));
+    }
+
+    #[test]
+    fn child_integ_inspect_band_denied_without_gate() {
+        let (st, bg) = integ_fixture(IntegLevel::Standard, IntegLevel::Standard);
+        let report = agree(&st, &bg, false);
+        assert_eq!(report.verdict, Some(KernelError::IntegrityFloorDenied));
+        let f = report.denied_integ_findings().next().unwrap();
+        assert!(f.rescues.contains(&Rescue::ContentGatePass { tool: "destructive".into() }));
+    }
+
+    #[test]
+    fn child_integ_inspect_band_passes_with_gate() {
+        let (st, bg) = integ_fixture(IntegLevel::Standard, IntegLevel::Standard);
+        let report = agree(&st, &bg, true);
+        assert_eq!(report.verdict, None);
+    }
+
+    #[test]
+    fn successful_return_propagates_both_taint_and_integ() {
+        let mut st = KernelState::initial();
+        let child = AgentId::new("c");
+        let parent = AgentId::new("p");
+        st.agent_active.insert(child.clone());
+        st.agent_active.insert(parent.clone());
+        st.agent_parent.insert(parent.clone(), AgentId::root());
+        st.agent_parent.insert(child.clone(), parent.clone());
+        st.taint_levels.insert(child.clone(), VecSet::from([ConfLevel::Sensitive]));
+        st.integ_levels.insert(child, VecSet::from([IntegLevel::Untrusted]));
+        let bg = BackgroundTheoryBuilder::new().build();
+
+        let report = agree(&st, &bg, false);
+        assert_eq!(report.verdict, None);
+
+        let (new_st, _) = transitions::return_unendorsed(
+            st, &bg, &ConstGate(false), AgentId::new("c"), AgentId::new("p"),
+        )
+        .unwrap();
+        assert!(new_st.taint_levels.get(&AgentId::new("p")).unwrap().contains(&ConfLevel::Sensitive));
+        assert!(new_st.integ_levels.get(&AgentId::new("p")).unwrap().contains(&IntegLevel::Untrusted));
     }
 }

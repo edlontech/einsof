@@ -3,7 +3,10 @@ use argus_kernel::{
     FlowMode, IntegLevel, InvocationId, KernelError, KernelState, ToolId, VecSet,
 };
 
-use crate::report::{CheckOutcome, ExplainReport, GateCheck, GateFinding, Rescue};
+use crate::report::{
+    CheckOutcome, ExplainReport, GateCheck, GateFinding, IntegCheckOutcome, IntegGateFinding,
+    Rescue,
+};
 
 /// Evaluate one (level, egress) pair exactly as `flow_decision` does, but producing a
 /// finding with rescue counterfactuals instead of an accumulator update.
@@ -51,27 +54,62 @@ pub(crate) fn gate_finding(
     GateFinding { check, tool: tool.0.clone(), level, egress, mode, outcome, rescues }
 }
 
-/// Verdict-level mirror of the kernel's `integ_decision` (CHECK 4 a/b/c): boolean denial only,
-/// no findings or rescues -- full integrity diagnostics are Task 16. ALLOW iff `floor.le(level)`,
-/// else INSPECT iff `inspect_floor.le(level)` and the vouched invocation's content gate passes,
-/// else DENY. No override arm -- endorsement is the only way up.
+/// Three-way integrity mode (dual of `FlowMode`, computed directly from the two floors --
+/// no oracle involved, mirroring the branch structure `integ_decision` folds into a bool).
+/// `pub(crate)`: shared with `levers.rs`, whose lever gates use the same three-way branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IntegMode {
+    Allow,
+    Inspect,
+    Deny,
+}
+
+pub(crate) fn integ_mode(floor: IntegLevel, inspect_floor: IntegLevel, level: IntegLevel) -> IntegMode {
+    if floor.le(level) {
+        IntegMode::Allow
+    } else if inspect_floor.le(level) {
+        IntegMode::Inspect
+    } else {
+        IntegMode::Deny
+    }
+}
+
+/// Evaluate one (level, floor) integrity pair exactly as `integ_decision` does, but producing
+/// a finding with rescue counterfactuals instead of a bare bool. `floor`/`inspect_floor` always
+/// belong to `tool` (CHECK 4a/4b/4c and the return/degrade mirrors all gate a tool's own
+/// metadata), so a floor relabel is always an available rescue; no override arm exists for
+/// integrity -- endorsement is the only way up.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn integ_check_denied(
+pub(crate) fn integ_gate_finding(
     content_gate: &impl ContentGateOracle,
     st: &KernelState,
     bg: &BackgroundTheory,
+    check: GateCheck,
     agent: &AgentId,
     tool: &ToolId,
     vouch_inv: &InvocationId,
     floor: IntegLevel,
     inspect_floor: IntegLevel,
     level: IntegLevel,
-) -> bool {
-    if floor.le(level) {
-        false
-    } else {
-        !(inspect_floor.le(level) && content_gate.passes(agent, tool, vouch_inv, st, bg))
+) -> IntegGateFinding {
+    let mode = integ_mode(floor, inspect_floor, level);
+    let outcome = match mode {
+        IntegMode::Allow => IntegCheckOutcome::Allowed,
+        IntegMode::Inspect if content_gate.passes(agent, tool, vouch_inv, st, bg) => {
+            IntegCheckOutcome::AllowedViaInspect
+        }
+        IntegMode::Inspect | IntegMode::Deny => IntegCheckOutcome::Denied,
+    };
+    let mut rescues = Vec::new();
+    if outcome == IntegCheckOutcome::Denied {
+        match mode {
+            IntegMode::Inspect => rescues.push(Rescue::ContentGatePass { tool: tool.0.clone() }),
+            IntegMode::Deny => rescues.push(Rescue::EndorseIngestion { tool: tool.0.clone() }),
+            IntegMode::Allow => {}
+        }
+        rescues.push(Rescue::IntegFloorRelabel { tool: tool.0.clone(), current_floor: floor });
     }
+    IntegGateFinding { check, tool: tool.0.clone(), level, floor, inspect_floor, outcome, rescues }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -89,6 +127,8 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         verdict: None,
         missing_caps: Vec::new(),
         findings: Vec::new(),
+        integ_findings: Vec::new(),
+        lever_findings: Vec::new(),
         authorizer_denied: false,
     };
     let precondition = if !st.agent_active.contains(agent) {
@@ -181,20 +221,15 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
 
     report.authorizer_denied = !authorizer.allows(agent, tool, inv, st, bg);
 
-    // CHECK 4 a/b/c: integrity gate mirror (verdict-level only; Task 16 adds full findings).
-    let mut integ_denied = false;
-
     // CHECK 4a: every speculative-integrity level the agent carries against the new tool's
     // floor, vouched by the NEW invocation.
     let spec_integ = st.speculative_integ(agent, bg);
     for li in 0..spec_integ.len() {
         let level = *spec_integ.at(li);
-        if integ_check_denied(
-            content_gate, st, bg, agent, tool, inv,
-            tool_meta.integ_floor, tool_meta.integ_inspect_floor, level,
-        ) {
-            integ_denied = true;
-        }
+        report.integ_findings.push(integ_gate_finding(
+            content_gate, st, bg, GateCheck::SpecIntegVsNewFloor,
+            agent, tool, inv, tool_meta.integ_floor, tool_meta.integ_inspect_floor, level,
+        ));
     }
 
     // CHECK 4b: the new tool's emission against every in-flight tool's floor, vouched by the
@@ -207,22 +242,20 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         let Some(flight_meta) = bg.tool_metadata(&flight_tool) else {
             continue;
         };
-        if integ_check_denied(
-            content_gate, st, bg, agent, &flight_tool, flight_inv,
+        report.integ_findings.push(integ_gate_finding(
+            content_gate, st, bg, GateCheck::NewEmissionVsInFlightFloor,
+            agent, &flight_tool, flight_inv,
             flight_meta.integ_floor, flight_meta.integ_inspect_floor, tool_meta.output_integ,
-        ) {
-            integ_denied = true;
-        }
+        ));
     }
 
     // CHECK 4c: the new tool's own emission against its own floor, vouched by the NEW
     // invocation.
-    if integ_check_denied(
-        content_gate, st, bg, agent, tool, inv,
+    report.integ_findings.push(integ_gate_finding(
+        content_gate, st, bg, GateCheck::SelfEmissionVsOwnFloor,
+        agent, tool, inv,
         tool_meta.integ_floor, tool_meta.integ_inspect_floor, tool_meta.output_integ,
-    ) {
-        integ_denied = true;
-    }
+    ));
 
     report.verdict = if !report.missing_caps.is_empty() {
         Some(KernelError::CapabilityMissing)
@@ -230,7 +263,7 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
         Some(KernelError::FlowGateBlocked)
     } else if report.authorizer_denied {
         Some(KernelError::AuthorizerDenied)
-    } else if integ_denied {
+    } else if report.denied_integ_findings().next().is_some() {
         Some(KernelError::IntegrityFloorDenied)
     } else {
         None
@@ -364,5 +397,153 @@ mod tests {
         let report = agree(&st, &bg(), true, true);
         assert_eq!(report.verdict, Some(KernelError::AgentInactive));
         assert!(report.findings.is_empty());
+    }
+
+    fn bg_integ_strict_deny() -> BackgroundTheory {
+        let mut b = BackgroundTheoryBuilder::new();
+        b.trust_issuer(IssuerId::new("trusted"));
+        b.register_tool(
+            ToolId::new("send_email"),
+            ToolMetadata {
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Trusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
+        b.build()
+    }
+
+    fn bg_integ_inspect_band() -> BackgroundTheory {
+        let mut b = BackgroundTheoryBuilder::new();
+        b.trust_issuer(IssuerId::new("trusted"));
+        b.register_tool(
+            ToolId::new("send_email"),
+            ToolMetadata {
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Standard,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
+        b.build()
+    }
+
+    fn integ_agent_state(level: IntegLevel) -> KernelState {
+        let mut st = KernelState::initial();
+        let a = AgentId::new("a1");
+        st.agent_active.insert(a.clone());
+        st.agent_parent.insert(a.clone(), AgentId::root());
+        st.agent_cap.insert(a.clone(), VecSet::from([CapKind::NetworkEgress]));
+        st.tool_registered.insert(ToolId::new("send_email"));
+        st.integ_levels.insert(a, VecSet::from([level]));
+        st
+    }
+
+    #[test]
+    fn denied_integ_finding_carries_check_and_rescues() {
+        let report = agree(&integ_agent_state(IntegLevel::Untrusted), &bg_integ_strict_deny(), true, false);
+        assert_eq!(report.verdict, Some(KernelError::IntegrityFloorDenied));
+        let f = report
+            .denied_integ_findings()
+            .find(|f| f.check == GateCheck::SpecIntegVsNewFloor)
+            .unwrap();
+        assert_eq!(f.level, IntegLevel::Untrusted);
+        assert_eq!(f.floor, IntegLevel::Trusted);
+        assert!(f.rescues.contains(&Rescue::EndorseIngestion { tool: "send_email".into() }));
+        assert!(f.rescues.contains(&Rescue::IntegFloorRelabel {
+            tool: "send_email".into(),
+            current_floor: IntegLevel::Trusted,
+        }));
+    }
+
+    #[test]
+    fn integ_finding_denied_in_inspect_band_rescued_by_gate_pass() {
+        let report = agree(&integ_agent_state(IntegLevel::Standard), &bg_integ_inspect_band(), true, false);
+        assert_eq!(report.verdict, Some(KernelError::IntegrityFloorDenied));
+        let f = report
+            .denied_integ_findings()
+            .find(|f| f.check == GateCheck::SpecIntegVsNewFloor)
+            .unwrap();
+        assert!(f.rescues.contains(&Rescue::ContentGatePass { tool: "send_email".into() }));
+        assert!(f.rescues.contains(&Rescue::IntegFloorRelabel {
+            tool: "send_email".into(),
+            current_floor: IntegLevel::Trusted,
+        }));
+    }
+
+    #[test]
+    fn integ_inspect_band_passes_with_content_gate() {
+        let report = agree(&integ_agent_state(IntegLevel::Standard), &bg_integ_inspect_band(), true, true);
+        assert_eq!(report.verdict, None);
+    }
+
+    fn bg_integ_4b() -> BackgroundTheory {
+        let mut b = BackgroundTheoryBuilder::new();
+        b.trust_issuer(IssuerId::new("trusted"));
+        b.register_tool(
+            ToolId::new("send_email"),
+            ToolMetadata {
+                capabilities: VecSet::from([CapKind::NetworkEgress]),
+                egress: VecSet::from([EgressKind::NetworkExternal]),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Untrusted,
+            },
+        );
+        b.register_tool(
+            ToolId::new("flight_tool"),
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Trusted,
+                integ_inspect_floor: IntegLevel::Trusted,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
+        b.build()
+    }
+
+    fn agent_with_flight_tool() -> KernelState {
+        let mut st = KernelState::initial();
+        let a = AgentId::new("a1");
+        st.agent_active.insert(a.clone());
+        st.agent_parent.insert(a.clone(), AgentId::root());
+        st.agent_cap.insert(a.clone(), VecSet::from([CapKind::NetworkEgress]));
+        st.tool_registered.insert(ToolId::new("send_email"));
+        st.tool_registered.insert(ToolId::new("flight_tool"));
+        let inv = InvocationId::new("flight-inv");
+        st.invocation_tool.insert(inv.clone(), ToolId::new("flight_tool"));
+        st.in_flight.insert_into(a, inv);
+        st
+    }
+
+    #[test]
+    fn check_4b_denies_new_emission_vs_in_flight_floor() {
+        let report = agree(&agent_with_flight_tool(), &bg_integ_4b(), true, false);
+        assert_eq!(report.verdict, Some(KernelError::IntegrityFloorDenied));
+        let f = report
+            .denied_integ_findings()
+            .find(|f| f.check == GateCheck::NewEmissionVsInFlightFloor)
+            .unwrap();
+        assert_eq!(f.tool, "flight_tool");
+        assert_eq!(f.level, IntegLevel::Untrusted);
     }
 }

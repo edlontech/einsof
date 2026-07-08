@@ -31,5 +31,5 @@ pub use state::{KernelState, STATE_VERSION};
 pub use traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle, EventStore};
 pub use types::{
     AgentId, BUDGET_CAPACITY, ConfLevel, EgressKind, InstructionId, IntegLevel, InvocationId,
-    IssuerId, OverrideKey, ToolId, integ_weight,
+    IssuerId, OverrideKey, ToolId, declass_weight, integ_weight,
 };
