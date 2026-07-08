@@ -1843,6 +1843,11 @@ theorem vecSetInsertNodup_spec {T : Type} [DecidableEq T]
 axiom invocationId_ne_spec (a b : types.InvocationId) :
     types.InvocationId.Insts.CoreCmpPartialEqInvocationId.ne a b = .ok (decide (a ≠ b))
 
+/-- Same extractor-residual family (String-backed `ne` default trait method): needed by
+    `unregister_tool`'s `VecSet.remove` on `tool_registered`. -/
+axiom toolId_ne_spec (a b : types.ToolId) :
+    types.ToolId.Insts.CoreCmpPartialEqToolId.ne a b = .ok (decide (a ≠ b))
+
 -- `DecidableEq types.OverrideKey` (also derived in `FlowBridging`; both yield the same structural
 -- instance) — needed for the `decide (a ≠ b)` in `overrideKey_ne_spec` below.
 deriving instance DecidableEq for types.OverrideKey
