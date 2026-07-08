@@ -736,8 +736,49 @@ pub fn return_unendorsed<C: ContentGateOracle>(
         return Err(KernelError::FlowGateBlocked);
     }
 
+    let child_integ = st.integ_levels.get_set_or_empty(&child);
+
+    // Integrity-gate admission, folded over child-held integ levels x parent's in-flight
+    // tools with no early return. Graduated (ALLOW / INSPECT+vouch), NO override arm --
+    // endorsement is the only way up, so unlike the conf gate this has no consumption
+    // clause to mirror.
+    let mut integ_denied = false;
+    let mut igi = 0;
+    while igi < child_integ.len() {
+        let level = *child_integ.at(igi);
+        let mut fi = 0;
+        while fi < parent_flights.len() {
+            let flight_inv = parent_flights.at(fi);
+            if let Some(flight_tool_id) = st.invocation_tool.get_cloned(flight_inv) {
+                if let Some(flight_meta) = bg.tool_metadata(&flight_tool_id) {
+                    if let IntegDecision::Denied = integ_decision(
+                        content_gate,
+                        &parent,
+                        &flight_tool_id,
+                        flight_inv,
+                        &st,
+                        bg,
+                        flight_meta.integ_floor,
+                        flight_meta.integ_inspect_floor,
+                        level,
+                    ) {
+                        integ_denied = true;
+                    }
+                }
+            }
+            fi += 1;
+        }
+        igi += 1;
+    }
+    if integ_denied {
+        return Err(KernelError::IntegrityFloorDenied);
+    }
+
     if !child_taint.is_empty() {
         st.taint_levels.extend_into(parent.clone(), &child_taint);
+    }
+    if !child_integ.is_empty() {
+        st.integ_levels.extend_into(parent.clone(), &child_integ);
     }
 
     // Eager override consumption (Actions.lean:362-366): armed against the parent's in-flight
@@ -2345,6 +2386,154 @@ mod tests {
             .invocation_tool
             .insert(InvocationId::new("i"), ToolId::new("t"));
         assert!(return_unendorsed(st, &bg, &PassAll, child, AgentId::root()).is_err());
+    }
+
+    fn return_unendorsed_integrity_fixture(
+        integ_floor: IntegLevel,
+        integ_inspect_floor: IntegLevel,
+    ) -> (KernelState, BackgroundTheory, AgentId, AgentId, InvocationId) {
+        let mut st = KernelState::initial();
+        let parent = AgentId::root();
+        let child = AgentId::new("child-1");
+        let flight_inv = InvocationId::new("parent-inv");
+        let flight_tool = ToolId::new("delete_repo");
+
+        st.agent_active.insert(child.clone());
+        st.agent_parent.insert(child.clone(), parent.clone());
+        st
+            .integ_levels
+            .insert(child.clone(), VecSet::from([IntegLevel::Untrusted]));
+        st.in_flight.insert_into(parent.clone(), flight_inv.clone());
+        st
+            .invocation_tool
+            .insert(flight_inv.clone(), flight_tool.clone());
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            flight_tool,
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor,
+                integ_inspect_floor,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        let bg = builder.build();
+        (st, bg, child, parent, flight_inv)
+    }
+
+    #[test]
+    fn return_unendorsed_blocked_by_integrity_gate() {
+        let (st, bg, child, parent, _) =
+            return_unendorsed_integrity_fixture(IntegLevel::Trusted, IntegLevel::Trusted);
+        let result = return_unendorsed(st, &bg, &FailAll, child, parent);
+        assert_eq!(result.unwrap_err(), KernelError::IntegrityFloorDenied);
+    }
+
+    #[test]
+    fn return_unendorsed_integrity_inspect_band_vouch_admits() {
+        let (st, bg, child, parent, _) =
+            return_unendorsed_integrity_fixture(IntegLevel::Trusted, IntegLevel::Untrusted);
+        assert!(
+            return_unendorsed(st, &bg, &PassAll, child, parent).is_ok(),
+            "inspect band + passing content gate should admit the propagation"
+        );
+    }
+
+    #[test]
+    fn return_unendorsed_integrity_vouch_keyed_to_flight_invocation() {
+        struct PassesOnly(InvocationId);
+        impl ContentGateOracle for PassesOnly {
+            fn passes(
+                &self,
+                _: &AgentId,
+                _: &ToolId,
+                inv: &InvocationId,
+                _: &KernelState,
+                _: &BackgroundTheory,
+            ) -> bool {
+                *inv == self.0
+            }
+        }
+
+        let (st, bg, child, parent, flight_inv) =
+            return_unendorsed_integrity_fixture(IntegLevel::Trusted, IntegLevel::Untrusted);
+        assert!(
+            return_unendorsed(st, &bg, &PassesOnly(flight_inv), child.clone(), parent.clone())
+                .is_ok(),
+            "vouch keyed on the flight invocation should admit the propagation"
+        );
+
+        let (st, bg, child, parent, _) =
+            return_unendorsed_integrity_fixture(IntegLevel::Trusted, IntegLevel::Untrusted);
+        let result = return_unendorsed(
+            st,
+            &bg,
+            &PassesOnly(InvocationId::new("other-inv")),
+            child,
+            parent,
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            KernelError::IntegrityFloorDenied,
+            "vouch keyed on any invocation other than the flight one must not rescue the gate"
+        );
+    }
+
+    #[test]
+    fn return_unendorsed_propagates_both_taint_and_integrity() {
+        let mut st = KernelState::initial();
+        let child = AgentId::new("child-1");
+        st.agent_active.insert(child.clone());
+        st.agent_parent.insert(child.clone(), AgentId::root());
+        st
+            .taint_levels
+            .insert(child.clone(), VecSet::from([ConfLevel::Sensitive]));
+        st
+            .integ_levels
+            .insert(child.clone(), VecSet::from([IntegLevel::Standard]));
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let (new_state, _) =
+            return_unendorsed(st, &bg, &PassAll, child, AgentId::root()).unwrap();
+        assert!(
+            new_state
+                .taint_levels
+                .get(&AgentId::root())
+                .unwrap()
+                .contains(&ConfLevel::Sensitive),
+            "taint set must propagate to the parent"
+        );
+        assert!(
+            new_state
+                .integ_levels
+                .get(&AgentId::root())
+                .unwrap()
+                .contains(&IntegLevel::Standard),
+            "integ set must propagate to the parent"
+        );
+    }
+
+    #[test]
+    fn return_unendorsed_integrity_denial_not_rescued_by_flow_override() {
+        let (mut st, bg, child, parent, flight_inv) =
+            return_unendorsed_integrity_fixture(IntegLevel::Trusted, IntegLevel::Trusted);
+        let flight_tool = st.invocation_tool.get_cloned(&flight_inv).unwrap();
+        st.flow_override.insert_into(
+            parent.clone(),
+            OverrideKey { tool: flight_tool, level: ConfLevel::Public },
+        );
+        let result = return_unendorsed(st, &bg, &FailAll, child, parent);
+        assert_eq!(
+            result.unwrap_err(),
+            KernelError::IntegrityFloorDenied,
+            "an armed flow_override must not rescue an integrity gate denial"
+        );
     }
 
     // --- invoke_start ---

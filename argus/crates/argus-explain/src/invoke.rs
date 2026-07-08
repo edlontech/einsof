@@ -56,7 +56,7 @@ pub(crate) fn gate_finding(
 /// else INSPECT iff `inspect_floor.le(level)` and the vouched invocation's content gate passes,
 /// else DENY. No override arm -- endorsement is the only way up.
 #[allow(clippy::too_many_arguments)]
-fn integ_check_denied(
+pub(crate) fn integ_check_denied(
     content_gate: &impl ContentGateOracle,
     st: &KernelState,
     bg: &BackgroundTheory,

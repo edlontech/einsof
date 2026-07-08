@@ -1,6 +1,6 @@
 use argus_kernel::{AgentId, BackgroundTheory, ContentGateOracle, KernelError, KernelState};
 
-use crate::invoke::gate_finding;
+use crate::invoke::{gate_finding, integ_check_denied};
 use crate::report::{ExplainReport, GateCheck};
 
 pub fn explain_return_unendorsed<C: ContentGateOracle>(
@@ -51,11 +51,36 @@ pub fn explain_return_unendorsed<C: ContentGateOracle>(
         }
     }
 
-    report.verdict = if report.denied_findings().next().is_some() {
-        Some(KernelError::FlowGateBlocked)
-    } else {
-        None
-    };
+    if report.denied_findings().next().is_some() {
+        report.verdict = Some(KernelError::FlowGateBlocked);
+        return report;
+    }
+
+    // Integrity gate mirror (verdict-level only; Task 16 adds full findings). No override
+    // arm -- endorsement is the only way up, so unlike the conf gate this has no
+    // consumption clause to mirror.
+    let child_integ = st.integ_levels.get_set_or_empty(child);
+    let mut integ_denied = false;
+    for igi in 0..child_integ.len() {
+        let level = *child_integ.at(igi);
+        for fi in 0..flights.len() {
+            let flight_inv = flights.at(fi);
+            let Some(flight_tool) = st.invocation_tool.get_cloned(flight_inv) else {
+                continue;
+            };
+            let Some(flight_meta) = bg.tool_metadata(&flight_tool) else {
+                continue;
+            };
+            if integ_check_denied(
+                content_gate, st, bg, parent, &flight_tool, flight_inv,
+                flight_meta.integ_floor, flight_meta.integ_inspect_floor, level,
+            ) {
+                integ_denied = true;
+            }
+        }
+    }
+
+    report.verdict = if integ_denied { Some(KernelError::IntegrityFloorDenied) } else { None };
     report
 }
 
