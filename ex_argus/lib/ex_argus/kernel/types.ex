@@ -24,6 +24,9 @@ defmodule ExArgus.Kernel.Types do
   @typedoc "Confidentiality level (`Public < Internal < Sensitive < Restricted`)."
   @type conf_level :: :public | :internal | :sensitive | :restricted
 
+  @typedoc "Integrity level (`Untrusted < Standard < Trusted < Attested`)."
+  @type integ_level :: :untrusted | :standard | :trusted | :attested
+
   @typedoc "Egress channel kind."
   @type egress_kind :: :network_external | :network_internal | :filesystem_write | :ipc
 
@@ -51,12 +54,20 @@ defmodule ExArgus.Kernel.Types do
   @typedoc "Flow-gate mode for a `{conf_level, egress_kind}` pair."
   @type flow_mode :: :allow | :inspect | :deny
 
-  @typedoc "Per-tool metadata in the background theory (a plain map, not a struct)."
+  @typedoc """
+  Per-tool metadata in the background theory (a plain map, not a struct).
+
+  All keys are required -- the NIF decode fails closed (raises) on a missing key rather
+  than defaulting, since a missing integrity field could otherwise silently mean "trusted".
+  """
   @type tool_metadata :: %{
           capabilities: [cap_kind()],
           egress: [egress_kind()],
           conf_floor: conf_level(),
           output_bounded: boolean(),
-          issuer: issuer_id()
+          issuer: issuer_id(),
+          integ_floor: integ_level(),
+          integ_inspect_floor: integ_level(),
+          output_integ: integ_level()
         }
 end

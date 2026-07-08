@@ -1,7 +1,7 @@
 defmodule ExArgus do
   @moduledoc "Elixir binding for the verified argus-kernel."
 
-  @state_version 3
+  @state_version 4
 
   @doc """
   Wire-shape version of `ExArgus.Kernel.State`.
