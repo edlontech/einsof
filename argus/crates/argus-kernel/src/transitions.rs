@@ -866,6 +866,66 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
     Ok((st, KernelAction::SentinelElevateTaint { agent, level }))
 }
 
+/// Dual of `sentinel_elevate_taint` for the integrity dimension (design §5.6,
+/// Actions.lean:387-400). The platform reports ingestion at level `l`, gated against every
+/// in-flight tool's integrity floor (graduated: ALLOW / INSPECT+vouch, NO override arm --
+/// endorsement is the only way up). A blocked degrade means the Warden must HOLD the ingestion
+/// until the in-flight invocation completes (design §6 platform obligation).
+pub fn sentinel_degrade_integrity<C: ContentGateOracle>(
+    mut st: KernelState,
+    bg: &BackgroundTheory,
+    content_gate: &C,
+    agent: AgentId,
+    level: IntegLevel,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    if !st.agent_active.contains(&agent) {
+        return Err(KernelError::AgentInactive);
+    }
+
+    // Integrity gate folded over the agent's in-flight tools at the degrade `level`, with no
+    // early return; `missing_binding` / `integ_denied` are checked once after the fold.
+    let mut integ_denied = false;
+    let mut missing_binding = false;
+    let in_flight_invs = st.in_flight.get_set_or_empty(&agent);
+    let mut fi = 0;
+    while fi < in_flight_invs.len() {
+        let inv = in_flight_invs.at(fi);
+        match st.invocation_tool.get_cloned(inv) {
+            Some(tool) => {
+                if let Some(meta) = bg.tool_metadata(&tool) {
+                    if let IntegDecision::Denied = integ_decision(
+                        content_gate,
+                        &agent,
+                        &tool,
+                        inv,
+                        &st,
+                        bg,
+                        meta.integ_floor,
+                        meta.integ_inspect_floor,
+                        level,
+                    ) {
+                        integ_denied = true;
+                    }
+                }
+            }
+            None => {
+                missing_binding = true;
+            }
+        }
+        fi += 1;
+    }
+    if missing_binding {
+        return Err(KernelError::MissingToolBinding);
+    }
+    if integ_denied {
+        return Err(KernelError::IntegrityFloorDenied);
+    }
+
+    st.integ_levels.insert_into(agent.clone(), level);
+
+    Ok((st, KernelAction::SentinelDegradeIntegrity { agent, level }))
+}
+
 /// Capability-gated granular budget credit (saturates at capacity). Full refresh =
 /// credit `BUDGET_CAPACITY`. The rare, logged exception that keeps a long-running orchestrator
 /// from dead-ending on an exhausted budget.
@@ -3105,6 +3165,142 @@ mod tests {
         assert!(
             result.is_err(),
             "second sentinel raise must fail: single-use override already spent"
+        );
+    }
+
+    fn sentinel_degrade_fixture(
+        integ_floor: IntegLevel,
+        integ_inspect_floor: IntegLevel,
+    ) -> (KernelState, BackgroundTheory, AgentId, InvocationId) {
+        let mut st = KernelState::initial();
+        let agent = AgentId::new("a1");
+        let flight_inv = InvocationId::new("flight-inv");
+        let flight_tool = ToolId::new("delete_repo");
+
+        st.agent_active.insert(agent.clone());
+        st.agent_parent.insert(agent.clone(), AgentId::root());
+        st.in_flight.insert_into(agent.clone(), flight_inv.clone());
+        st
+            .invocation_tool
+            .insert(flight_inv.clone(), flight_tool.clone());
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.trust_issuer(IssuerId::new("trusted"));
+        builder.register_tool(
+            flight_tool,
+            ToolMetadata {
+                capabilities: VecSet::new(),
+                egress: VecSet::new(),
+                conf_floor: ConfLevel::Public,
+                output_bounded: false,
+                issuer: IssuerId::new("trusted"),
+                integ_floor,
+                integ_inspect_floor,
+                output_integ: IntegLevel::Attested,
+            },
+        );
+        let bg = builder.build();
+        (st, bg, agent, flight_inv)
+    }
+
+    #[test]
+    fn sentinel_degrade_integrity_blocked_by_inflight_then_succeeds_after_complete() {
+        // Scenario 6: a destructive Trusted-floor tool in flight blocks a degrade to Untrusted;
+        // once the invocation completes, the same degrade succeeds.
+        let (st, bg, agent, flight_inv) =
+            sentinel_degrade_fixture(IntegLevel::Trusted, IntegLevel::Trusted);
+
+        let result = sentinel_degrade_integrity(
+            st.clone(),
+            &bg,
+            &FailAll,
+            agent.clone(),
+            IntegLevel::Untrusted,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::IntegrityFloorDenied);
+
+        let (st, _) = invoke_complete(st, &bg, &ConformsAll, agent.clone(), flight_inv)
+            .expect("invoke_complete should succeed");
+        let (st, _) =
+            sentinel_degrade_integrity(st, &bg, &FailAll, agent.clone(), IntegLevel::Untrusted)
+                .expect("degrade should succeed once nothing is in flight");
+        assert!(
+            st.integ_levels
+                .get(&agent)
+                .unwrap()
+                .contains(&IntegLevel::Untrusted)
+        );
+    }
+
+    #[test]
+    fn sentinel_degrade_integrity_no_flight_inserts_level() {
+        let mut st = KernelState::initial();
+        let agent = AgentId::new("a1");
+        st.agent_active.insert(agent.clone());
+        st.agent_parent.insert(agent.clone(), AgentId::root());
+        let bg = BackgroundTheoryBuilder::new().build();
+
+        let (st, action) = sentinel_degrade_integrity(
+            st,
+            &bg,
+            &FailAll,
+            agent.clone(),
+            IntegLevel::Untrusted,
+        )
+        .expect("degrade with nothing in flight should succeed");
+        assert!(
+            st.integ_levels
+                .get(&agent)
+                .unwrap()
+                .contains(&IntegLevel::Untrusted)
+        );
+        assert_eq!(
+            action,
+            KernelAction::SentinelDegradeIntegrity {
+                agent,
+                level: IntegLevel::Untrusted,
+            }
+        );
+    }
+
+    #[test]
+    fn sentinel_degrade_integrity_inspect_band_vouch() {
+        let (st, bg, agent, _) =
+            sentinel_degrade_fixture(IntegLevel::Trusted, IntegLevel::Untrusted);
+
+        assert!(
+            sentinel_degrade_integrity(
+                st.clone(),
+                &bg,
+                &PassAll,
+                agent.clone(),
+                IntegLevel::Untrusted
+            )
+            .is_ok(),
+            "inspect band + passing content gate should admit the degrade"
+        );
+
+        let result =
+            sentinel_degrade_integrity(st, &bg, &FailAll, agent, IntegLevel::Untrusted);
+        assert_eq!(result.unwrap_err(), KernelError::IntegrityFloorDenied);
+    }
+
+    #[test]
+    fn sentinel_degrade_integrity_denial_not_rescued_by_flow_override() {
+        let (mut st, bg, agent, flight_inv) =
+            sentinel_degrade_fixture(IntegLevel::Trusted, IntegLevel::Trusted);
+        let flight_tool = st.invocation_tool.get_cloned(&flight_inv).unwrap();
+        st.flow_override.insert_into(
+            agent.clone(),
+            OverrideKey { tool: flight_tool, level: ConfLevel::Public },
+        );
+
+        let result =
+            sentinel_degrade_integrity(st, &bg, &FailAll, agent, IntegLevel::Untrusted);
+        assert_eq!(
+            result.unwrap_err(),
+            KernelError::IntegrityFloorDenied,
+            "an armed flow_override must not rescue an integrity gate denial"
         );
     }
 

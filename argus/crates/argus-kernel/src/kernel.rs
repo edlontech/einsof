@@ -202,6 +202,20 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
         ))
     }
 
+    pub fn sentinel_degrade_integrity(
+        &mut self,
+        agent: AgentId,
+        level: IntegLevel,
+    ) -> Result<KernelEvent, KernelError> {
+        self.apply(transitions::sentinel_degrade_integrity(
+            self.state.clone(),
+            &self.background,
+            &self.content_gate,
+            agent,
+            level,
+        ))
+    }
+
     pub fn sentinel_credit_budget(
         &mut self,
         agent: AgentId,

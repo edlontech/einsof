@@ -47,6 +47,10 @@ pub enum KernelAction {
         agent: AgentId,
         level: ConfLevel,
     },
+    SentinelDegradeIntegrity {
+        agent: AgentId,
+        level: IntegLevel,
+    },
     SentinelCreditBudget {
         agent: AgentId,
         amount: u8,
@@ -126,6 +130,10 @@ mod tests {
                 agent: AgentId::new("a"),
                 level: ConfLevel::Sensitive,
             },
+            KernelAction::SentinelDegradeIntegrity {
+                agent: AgentId::new("a"),
+                level: IntegLevel::Untrusted,
+            },
             KernelAction::SentinelCreditBudget {
                 agent: AgentId::new("a"),
                 amount: 1,
@@ -141,7 +149,7 @@ mod tests {
                 level: ConfLevel::Sensitive,
             },
         ];
-        assert_eq!(actions.len(), 13);
+        assert_eq!(actions.len(), 14);
     }
 
     #[test]
