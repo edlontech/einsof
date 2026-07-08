@@ -108,4 +108,12 @@ theorem creditBudget_full (st : state.KernelState) (agent : types.AgentId) (n : 
   · rw [if_neg hG]
     unfold budgetReadC; rw [hvmLast G, if_neg hG]
 
+
+/-- `le_integ` with the abstracted concrete level on the LEFT is the kernel's rank compare —
+    the mirrored companion of `le_integ_integLeC`, for floor guards where the concrete side is
+    the floor (`return_endorsed`/`return_unendorsed`/`sentinel_degrade_integrity`). -/
+theorem le_integ_integLeC' (c : types.IntegLevel) (L : Tzimtzum.IntegLevel) :
+    Tzimtzum.le_integ (integA c) L ↔ integLeC c (integC L) = true := by
+  cases c <;> cases L <;> simp [Tzimtzum.le_integ, Tzimtzum.integRank, integA, integC, integLeC]
+
 end ArgusLean.Refinement

@@ -23,11 +23,6 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 4000000
 
-/-- `le_integ` with the abstracted concrete level on the LEFT is the kernel's rank compare —
-    the mirrored companion of `le_integ_integLeC` (also used, file-locally, by `ReturnEndorsed`). -/
-private theorem le_integ_integLeC' (c : types.IntegLevel) (L : Tzimtzum.IntegLevel) :
-    Tzimtzum.le_integ (integA c) L ↔ integLeC c (integC L) = true := by
-  cases c <;> cases L <;> simp [Tzimtzum.le_integ, Tzimtzum.integRank, integA, integC, integLeC]
 
 /-! ## Conf gate: inner loop (per child taint level, over the parent's flights) -/
 

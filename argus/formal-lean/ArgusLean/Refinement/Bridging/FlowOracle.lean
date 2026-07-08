@@ -173,15 +173,6 @@ theorem flowModeC_inspect_iff (bg : background.BackgroundTheory) (level : types.
   by_cases ha : ceilAdmitsC bg.allow_ceiling level E <;>
     by_cases hi : ceilAdmitsC bg.inspect_ceiling level E <;> simp [ha, hi]
 
-theorem flowModeC_deny_iff (bg : background.BackgroundTheory) (level : types.ConfLevel)
-    (E : types.EgressKind) :
-    flowModeC bg level E = background.FlowMode.Deny ↔
-      (ceilAdmitsC bg.allow_ceiling level E = false ∧
-       ceilAdmitsC bg.inspect_ceiling level E = false) := by
-  unfold flowModeC
-  by_cases ha : ceilAdmitsC bg.allow_ceiling level E <;>
-    by_cases hi : ceilAdmitsC bg.inspect_ceiling level E <;> simp [ha, hi]
-
 /-- Equational form of `flowMode_spec`, for feeding `gateEgress_spec`'s `hfmOf`. -/
 theorem flowMode_eq (bg : background.BackgroundTheory) (level : types.ConfLevel)
     (E : types.EgressKind) :
@@ -339,16 +330,6 @@ def egItems (bg : background.BackgroundTheory) (tool : types.ToolId) : List type
   match toolMetaC bg tool with
   | none => []
   | some m => m.egress.items.val
-
-/-- `inv` lacks a tool binding (the `MissingToolBinding` condition). -/
-def invMissing (st : state.KernelState) (inv : types.InvocationId) : Prop :=
-  invToolC st inv = none
-
-/-- The length of `agent`'s live (last-match) in-flight set, `0` when `agent` is absent. -/
-def inFlightLen (st : state.KernelState) (agent : types.AgentId) : Nat :=
-  match vmLastEntry st.in_flight.entries.val agent with
-  | none => 0
-  | some p => p.2.items.val.length
 
 end ArgusLean.Refinement
 

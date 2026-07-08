@@ -27,12 +27,6 @@ private theorem declassWeight_le (L : Tzimtzum.ConfLevel) : Tzimtzum.declass_wei
 private theorem integWeight_le (L : Tzimtzum.IntegLevel) : Tzimtzum.integ_weight L ≤ 4 := by
   cases L <;> decide
 
-/-- `le_integ` with the abstracted concrete level on the LEFT is the kernel's rank compare —
-    the mirrored companion of `le_integ_integLeC`, for the lever-floor and declared-`ilvl`
-    lower-bound guards where the concrete side is the floor. -/
-private theorem le_integ_integLeC' (c : types.IntegLevel) (L : Tzimtzum.IntegLevel) :
-    Tzimtzum.le_integ (integA c) L ↔ integLeC c (integC L) = true := by
-  cases c <;> cases L <;> simp [Tzimtzum.le_integ, Tzimtzum.integRank, integA, integC, integLeC]
 
 /-- Lever loop (loop 0): sticky-denied fold over the child's integ set — denied iff some held
     level neither clears the lever floor nor sits in the vouched inspect band. -/
