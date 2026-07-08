@@ -3,10 +3,10 @@ import Tzimtzum
 
 /-! # C1 refinement spike — state relation
 
-The abstract TzimtzumV2 state (`Tzimtzum.St`) instantiated at the kernel's concrete
+The abstract TzimtzumV3 state (`Tzimtzum.St`) instantiated at the kernel's concrete
 sorts, plus the relation `Rtool` capturing exactly the fields the `register_tool`
-transition reads or writes. (The full state relation `R` over all 28 fields is the C2
-fan-out task; `Rtool` is the per-action slice the spike's simulation needs.) -/
+transition reads or writes. (The full state relation `R` over all V3 fields lives in
+`Unified/Relation.lean`; `Rtool` is the per-action slice the spike's simulation needs.) -/
 
 namespace ArgusLean.Refinement
 
@@ -15,9 +15,9 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
-/-- The abstract TzimtzumV2 state at the kernel's concrete sorts. `ConfLevel` is a concrete
-    inductive baked into `St` (the numeric budget is a plain `Nat`); the remaining seven sorts are the
-    extracted `String`/inductive types. -/
+/-- The abstract TzimtzumV3 state at the kernel's concrete sorts. `ConfLevel` and `IntegLevel`
+    are concrete inductives baked into `St` (the declassification budget is a plain `Nat`); the
+    remaining seven sorts are the extracted `String`/inductive types. -/
 abbrev AbsState := Tzimtzum.St types.AgentId types.ToolId types.InvocationId
   capability.CapKind types.EgressKind types.IssuerId types.InstructionId
 
@@ -65,6 +65,72 @@ theorem declassWeight_spec (L : Tzimtzum.ConfLevel) :
 theorem confC_injective : Function.Injective confC :=
   fun a b h => by have := congrArg confA h; simpa using this
 
+/-! ## Integrity correspondence (dual of confidentiality)
+
+`IntegLevel` mirrors `ConfLevel` exactly: a concrete four-constructor inductive baked into `St`
+(not a type parameter), so the integrity taint fields (`integ_levels`, and the levers'
+`tool_integ_floor`/`lever_integ_floor` family via `le_integ`) cross from the abstract lattice to
+the extracted `types.*` lattice with the same constructor-for-constructor total maps. -/
+
+/-- Abstract → concrete integrity level. -/
+def integC : Tzimtzum.IntegLevel → types.IntegLevel
+  | .untrusted => .Untrusted
+  | .standard  => .Standard
+  | .trusted   => .Trusted
+  | .attested  => .Attested
+
+/-- Concrete → abstract integrity level (the inverse of `integC`). -/
+def integA : types.IntegLevel → Tzimtzum.IntegLevel
+  | .Untrusted => .untrusted
+  | .Standard  => .standard
+  | .Trusted   => .trusted
+  | .Attested  => .attested
+
+@[simp] theorem integC_integA (l : types.IntegLevel) : integC (integA l) = l := by cases l <;> rfl
+
+@[simp] theorem integA_integC (l : Tzimtzum.IntegLevel) : integA (integC l) = l := by cases l <;> rfl
+
+theorem integC_injective : Function.Injective integC :=
+  fun a b h => by have := congrArg integA h; simpa using this
+
+/-- The kernel's `integ_weight` over a concrete level computes (as a total `.ok`) the abstract
+    endorsement weight as its `Nat` value — the dual of `declassWeight_spec`, needed to relate the
+    weighted `return_endorsed`/crossing debit `integ_weight ilvl` (spec) to the concrete
+    `weight ← integ_weight ilvl` the kernel computes. -/
+theorem integWeight_spec (L : Tzimtzum.IntegLevel) :
+    ∃ w : Std.U8, types.integ_weight (integC L) = .ok w ∧ w.val = Tzimtzum.integ_weight L := by
+  cases L <;> exact ⟨_, rfl, by rfl⟩
+
+/-! ## Global invocation-history correspondence: `invocation_used`, `invocation_egress`
+
+Both are new V3 mutable `KernelState` fields tracking per-invocation facts that, once written by
+`invoke_start`, are never cleared (not by `revoke`/`cascade_revoke`/`delegate` — this is history
+of invocation ids, not agent state). On the abstract side `invocation_used` is likewise a mutable
+relation, but `invocation_egress` is a **background** field of `St` (Section "Immutable
+background" — actions never update it): the oracle-attested egress-kind classification of an
+invocation is fixed for all time, the same way `tool_conf_floor` is defined for every `ToolId`
+whether or not it is registered.
+
+This is the same state-vs-background seam `Rtool`'s `tool_issuer` clause already crosses (a
+background function read through the *materialised* metadata, guarded by `tool_metadata ... =
+some tm`): the concrete `KernelState.invocation_egress` only carries an entry once `invoke_start`
+has copied the attested set in, so its correspondence to the abstract background function is
+truthful **only for used invocations** — an unused invocation's abstract `invocation_egress` may
+already hold (it is a fixed total function, like `tool_conf_floor`) with no concrete entry yet to
+witness it. Hence `RinvocationEgress` is restricted to `invocation_used`, not a global
+biconditional. -/
+
+/-- Freshness-history correspondence: an invocation is used abstractly iff its id is a member of
+    the kernel's `invocation_used` set. -/
+def RinvocationUsed (st : state.KernelState) (a : AbsState) : Prop :=
+  ∀ I, a.invocation_used I ↔ vsMem st.invocation_used I
+
+/-- Attested-egress correspondence, restricted to invocations that have actually been started:
+    the kernel's persisted per-invocation egress-kind set agrees with the abstract background
+    `invocation_egress` relation. -/
+def RinvocationEgress (st : state.KernelState) (a : AbsState) : Prop :=
+  ∀ I, a.invocation_used I → ∀ E, a.invocation_egress I E ↔ vmsMemLast st.invocation_egress I E
+
 /-- Get-style membership for the cap map: `C` is a cap of `N` iff the *last* `N`-keyed entry
     (the live one under `VecMap` last-match semantics) holds `C`. Survives duplicate keys, so
     the `insert grantee ∅` that `delegate` uses to clear a grantee's caps reads as empty. -/
@@ -100,27 +166,28 @@ theorem capMem_filter_removeKept
 
 /-! ## Shared transition helper: `clear_agent_state`
 
-`clear_agent_state st agent` deletes `agent`'s key from the eight per-agent maps
-(`taint_levels`, `in_flight`, `gh_taint_invoked`, `gh_taint_received`, `agent_instruction`,
-`override_used`, `flow_override`, `agent_budget`) and frames everything else. Each delete is a
-`VecMap.remove`,
-so each touched field becomes the key-filtered entry list. Shared by `delegate` / `revoke` /
-`cascade_revoke`. -/
+`clear_agent_state st agent` deletes `agent`'s key from the six per-agent maps (`taint_levels`,
+`integ_levels`, `in_flight`, `agent_instruction`, `override_used`, `flow_override`) and frames
+everything else — the ghost taint maps (`gh_taint_invoked`/`gh_taint_received`) are gone in V3,
+and `agent_budget` is no longer cleared (Campaign B: `revoke`/`cascade_revoke` leave a revoked
+agent's budget entry framed/inert). Each delete is a `VecMap.remove`, so each touched field
+becomes the key-filtered entry list. Shared by `delegate` / `revoke` / `cascade_revoke`. -/
 theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
     transitions.clear_agent_state st agent ⦃ st1 =>
       st1.agent_active = st.agent_active ∧
       st1.agent_parent = st.agent_parent ∧
       st1.agent_cap = st.agent_cap ∧
       st1.invocation_tool = st.invocation_tool ∧
+      st1.invocation_used = st.invocation_used ∧
+      st1.invocation_egress = st.invocation_egress ∧
       st1.tool_registered = st.tool_registered ∧
+      st1.agent_budget = st.agent_budget ∧
       st1.taint_levels.entries.val = st.taint_levels.entries.val.filter (removeKept agent) ∧
+      st1.integ_levels.entries.val = st.integ_levels.entries.val.filter (removeKept agent) ∧
       st1.in_flight.entries.val = st.in_flight.entries.val.filter (removeKept agent) ∧
-      st1.gh_taint_invoked.entries.val = st.gh_taint_invoked.entries.val.filter (removeKept agent) ∧
-      st1.gh_taint_received.entries.val = st.gh_taint_received.entries.val.filter (removeKept agent) ∧
       st1.agent_instruction.entries.val = st.agent_instruction.entries.val.filter (removeKept agent) ∧
       st1.override_used.entries.val = st.override_used.entries.val.filter (removeKept agent) ∧
-      st1.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept agent) ∧
-      st1.agent_budget.entries.val = st.agent_budget.entries.val.filter (removeKept agent) ⦄ := by
+      st1.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept agent) ⦄ := by
   unfold transitions.clear_agent_state
   obtain ⟨vm0, h0Eq, h0⟩ := spec_imp_exists
     (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
@@ -128,33 +195,25 @@ theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
   rw [h0Eq]; simp only [bind_tc_ok]
   obtain ⟨vm1, h1Eq, h1⟩ := spec_imp_exists
     (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.in_flight agent)
+      st.integ_levels agent)
   rw [h1Eq]; simp only [bind_tc_ok]
   obtain ⟨vm2, h2Eq, h2⟩ := spec_imp_exists
     (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.gh_taint_invoked agent)
+      st.in_flight agent)
   rw [h2Eq]; simp only [bind_tc_ok]
   obtain ⟨vm3, h3Eq, h3⟩ := spec_imp_exists
     (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.gh_taint_received agent)
+      st.agent_instruction agent)
   rw [h3Eq]; simp only [bind_tc_ok]
   obtain ⟨vm4, h4Eq, h4⟩ := spec_imp_exists
     (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.agent_instruction agent)
+      st.override_used agent)
   rw [h4Eq]; simp only [bind_tc_ok]
   obtain ⟨vm5, h5Eq, h5⟩ := spec_imp_exists
     (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.override_used agent)
-  rw [h5Eq]; simp only [bind_tc_ok]
-  obtain ⟨vm6, h6Eq, h6⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
       st.flow_override agent)
-  rw [h6Eq]; simp only [bind_tc_ok]
-  obtain ⟨vm7, h7Eq, h7⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.agent_budget agent)
-  rw [h7Eq]; simp only [bind_tc_ok]
-  exact ⟨rfl, rfl, rfl, rfl, rfl, h0, h1, h2, h3, h4, h5, h6, h7⟩
+  rw [h5Eq]; simp only [bind_tc_ok]
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, h0, h1, h2, h3, h4, h5⟩
 
 /-! ## Budget reads/writes: `budget`, `affordable`, `debit_budget`, `credit_budget`
 
@@ -246,9 +305,10 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId) (w : S
     state.KernelState.debit_budget st agent w ⦃ st1 =>
       st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
       st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
-      st1.taint_levels = st.taint_levels ∧ st1.gh_taint_received = st.gh_taint_received ∧
-      st1.override_used = st.override_used ∧ st1.gh_taint_invoked = st.gh_taint_invoked ∧
+      st1.taint_levels = st.taint_levels ∧ st1.integ_levels = st.integ_levels ∧
+      st1.override_used = st.override_used ∧
       st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
+      st1.invocation_used = st.invocation_used ∧ st1.invocation_egress = st.invocation_egress ∧
       st1.tool_registered = st.tool_registered ∧ st1.flow_override = st.flow_override ∧
       (∀ G, budgetReadC st1.agent_budget G =
         if G = agent then core.num.U8.saturating_sub (budgetReadC st.agent_budget agent) w
@@ -262,7 +322,7 @@ theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId) (w : S
       core.clone.CloneU8 st.agent_budget agent (UScalar.saturating_sub b w) hcap)
   rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
   refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
-    trivial, trivial, fun G => ?_⟩
+    trivial, trivial, trivial, fun G => ?_⟩
   show budgetReadC vm G = _
   by_cases hG : G = agent
   · have hread : budgetReadC vm G = UScalar.saturating_sub b w := by
@@ -281,9 +341,10 @@ theorem creditBudget_spec (st : state.KernelState) (agent : types.AgentId) (n : 
     state.KernelState.credit_budget st agent n ⦃ st1 =>
       st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
       st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
-      st1.taint_levels = st.taint_levels ∧ st1.gh_taint_received = st.gh_taint_received ∧
-      st1.override_used = st.override_used ∧ st1.gh_taint_invoked = st.gh_taint_invoked ∧
+      st1.taint_levels = st.taint_levels ∧ st1.integ_levels = st.integ_levels ∧
+      st1.override_used = st.override_used ∧
       st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
+      st1.invocation_used = st.invocation_used ∧ st1.invocation_egress = st.invocation_egress ∧
       st1.tool_registered = st.tool_registered ∧ st1.flow_override = st.flow_override ∧
       (∀ G, budgetReadC st1.agent_budget G =
         if G = agent then
@@ -300,7 +361,7 @@ theorem creditBudget_spec (st : state.KernelState) (agent : types.AgentId) (n : 
       agent (core.cmp.impls.OrdU8.min (UScalar.saturating_add b n) types.BUDGET_CAPACITY) hcap)
   rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
   refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
-    trivial, trivial, fun G => ?_⟩
+    trivial, trivial, trivial, fun G => ?_⟩
   show budgetReadC vm G = _
   by_cases hG : G = agent
   · have hread : budgetReadC vm G =

@@ -229,7 +229,7 @@ theorem vecSetClone_spec {T : Type} (inst_c : core.clone.Clone T)
 /-! ## VecMap-of-VecSet nested membership
 
 `VecMap K (VecSet T)` is the concrete representation of every agent-keyed relation
-(`agent_instruction`, `agent_cap`, `taint_levels`, `gh_taint_*`, `override_used`). Its
+(`agent_instruction`, `agent_cap`, `taint_levels`, `integ_levels`, `override_used`). Its
 abstract meaning is the nested membership predicate `vmsMem`: key `k` maps to a set that
 contains `v`. With the `∃ entry` formulation the `insert_into` characterisation below holds
 without a key-uniqueness side condition (duplicate keys, were they present, contribute on
@@ -1421,6 +1421,23 @@ deriving instance DecidableEq for types.ConfLevel
   cases a <;> cases b <;>
     simp [types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq, types.ConfLevel.read_discriminant]
 
+/-- `IntegLevel.clone` is the identity (nullary enum, body is `ok self`). -/
+@[simp] theorem integLevel_clone_spec (a : types.IntegLevel) :
+    types.IntegLevel.Insts.CoreCloneClone.clone a = .ok a := rfl
+
+/-! ## `IntegLevel` equality
+
+`IntegLevel` (V3, dual of `ConfLevel`) is likewise a concrete nullary enum: its extracted `eq` is
+a discriminant comparison and its `clone` is the identity, both proved with no extractor trust. -/
+
+deriving instance DecidableEq for types.IntegLevel
+
+/-- `IntegLevel.eq` faithful decidable equality (nullary enum). -/
+@[simp] theorem integLevel_eq_spec (a b : types.IntegLevel) :
+    types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.eq a b = .ok (decide (a = b)) := by
+  cases a <;> cases b <;>
+    simp [types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.eq, types.IntegLevel.read_discriminant]
+
 /-! ## `VecSet.is_empty` and last-match nested membership
 
 `set_nonempty` / `get_set_or_empty` (the in-flight / taint reads the return actions perform) all
@@ -1614,7 +1631,8 @@ theorem vecSetUnionWith_spec {T : Type} [DecidableEq T]
 entry if absent. Its faithful image is the *last-match* nested membership `vmsMemLast`: `key`'s set
 gains `other`'s elements, every other key untouched. The find-index loop reuses the `lastMatchInv`
 machinery (same as `VecMap.insert`); the value update reuses `vecSetUnionWith_spec`. The shared write
-primitive for `return_unendorsed`'s `taint_levels` / `gh_taint_received` / `override_used`. -/
+primitive for `return_unendorsed`'s dual-set inheritance (`taint_levels` / `integ_levels`) and
+`override_used`. -/
 
 /-- Find-last-index loop for `extend_into`: the returned index satisfies the same `lastMatchInv` as
     the `insert`/`get` loops (last matching key, or off-the-end when absent). -/
