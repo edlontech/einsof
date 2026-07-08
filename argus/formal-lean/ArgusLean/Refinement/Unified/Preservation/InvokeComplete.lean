@@ -1,19 +1,20 @@
 import ArgusLean.Refinement.Unified.Bridges
 
-/-! # Layer 1 — `invoke_complete` preserves the unified `R`
+/-! # Layer 1 — the `invoke_complete` split pair preserves the unified `R`
 
-`invoke_complete` (Campaign B) is proved **directly** (not via reuse of a slice `_refines`): its budget
-clause is *unguarded* over all agents, strictly stronger than `R`'s active-guarded budget — so
-`R → Rslice` does not hold. We re-run the inversion exposing the *last-match* taint/gh views and the
-nodup posts (`invoke_complete_inv_full`), construct the abstract successor explicitly (the weighted
-self-debit on the endorsed path, the tool's `conf_floor` raise on the unendorsed path), and discharge
-the guarded budget from `R.budget`.
+V3 rewrite (design §5.4 "invoke_complete shape", task 10): the kernel's single `invoke_complete`
+with its `crossing_ok` `if/else` refines **two** spec actions with complementary total guards —
+`invoke_complete_endorsed` (requires `crossing_ok`, point-clears in-flight, self-debits the
+dimension-adjusted `crossing_weight`) and `invoke_complete_unendorsed` (requires `¬ crossing_ok`,
+point-clears in-flight, inserts the tool's `conf_floor` into taint AND its `output_integ` into
+integ, zero debit). The branch taken is visible in the event's `endorsed : Bool`, which is how the
+two preservation theorems select their spec action from the same kernel run.
 
-The endorsed (zero-taint) condition is now the 4-conjunct `output_bounded ∧ output_conforms ∧
-affordable (declass_weight floor) ∧ ¬ already-tainted-at-floor` (Campaign B: swapped `¬ exhausted`
-for weighted affordability and added the no-debit-when-already-tainted guard). The `output_conforms`
-call is the one opaque oracle (`hcf`); `R.wfInflight` rules out the kernel's defensive no-binding /
-no-metadata exits. -/
+The crossing guard is the 5-conjunct `output_bounded ∧ invocation_conforms ∧ cap_declassify ∧
+affordable crossing_weight ∧ (conf_helps ∨ integ_helps)` with the dimension-adjusted weight: pay
+`declass_weight conf_floor` only if the conf insert would be new, `integ_weight output_integ` only
+if the integ drop would be real. The conformance verdict is per-invocation (`CfAgree`-shaped `hcf`,
+V3 rekeying); `R.wfInflight` rules out the kernel's defensive no-binding / no-metadata exits. -/
 
 namespace ArgusLean.Refinement
 
@@ -22,30 +23,50 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
-/-- The endorsed (zero-taint) condition: the completed tool's output is bounded, the conformance oracle
-    passes, the agent can afford the weighted declassification cost, and the agent is not already tainted
-    at the tool's conf floor (re-tainting buys nothing, so it takes the unendorsed branch — no debit). -/
-def completeEndorsed (st : state.KernelState) (agent : types.AgentId)
+private theorem declassWeight_le (L : Tzimtzum.ConfLevel) : Tzimtzum.declass_weight L ≤ 4 := by
+  cases L <;> decide
+
+private theorem integWeight_le (L : Tzimtzum.IntegLevel) : Tzimtzum.integ_weight L ≤ 4 := by
+  cases L <;> decide
+
+open Classical in
+/-- The concrete dimension-adjusted crossing weight (design §5.4): the conf half is owed only if
+    the agent does not already hold the tool's conf floor, the integ half only if it does not
+    already hold the tool's output integrity. Mirror of the spec's `crossing_weight` over the
+    kernel's last-match reads. -/
+noncomputable def crossingWeightC (st : state.KernelState) (agent : types.AgentId)
+    (tmeta : background.ToolMetadata) : Nat :=
+  (if vmsMemLast st.taint_levels agent tmeta.conf_floor then 0
+   else Tzimtzum.declass_weight (confA tmeta.conf_floor))
+  + (if vmsMemLast st.integ_levels agent tmeta.output_integ then 0
+     else Tzimtzum.integ_weight (integA tmeta.output_integ))
+
+/-- The concrete crossing guard: the 5-conjunct `crossing_ok` over the kernel's reads (the
+    conformance verdict enters as the oracle boolean `cf`). Mirror of the spec's `crossing_ok`. -/
+def crossingOkC (st : state.KernelState) (agent : types.AgentId)
     (tmeta : background.ToolMetadata) (cf : Bool) : Prop :=
   tmeta.output_bounded = true ∧ cf = true ∧
-    (Tzimtzum.declass_weight (confA tmeta.conf_floor)) ≤ (budgetReadC st.agent_budget agent).val ∧
-    ¬ vmsMemLast st.taint_levels agent tmeta.conf_floor
+    vmsMemLast st.agent_cap agent capability.CapKind.Declassify ∧
+    crossingWeightC st agent tmeta ≤ (budgetReadC st.agent_budget agent).val ∧
+    (¬ vmsMemLast st.taint_levels agent tmeta.conf_floor
+     ∨ ¬ vmsMemLast st.integ_levels agent tmeta.output_integ)
 
-/-- Comprehensive inversion: the `invoke_complete_ok_inv` frame, but with the taint/gh writes read off
-    in the canonical last-match `vmsMemLast` view and every written map's `vmNodupKeys` post exposed
-    (`in_flight` remove, the endorsed-path weighted budget debit, the unendorsed-path taint/gh inserts). -/
+/-- Comprehensive inversion: gates, the in-flight point-clear, and the two-branch outcome — the
+    endorsed branch (event bool `true`, `crossingOkC`, weighted budget debit, taint/integ framed)
+    or the unendorsed branch (event bool `false`, `¬ crossingOkC`, budget framed, both inserts
+    exposed in the last-match view with their nodup posts). -/
 theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F)
     (st : state.KernelState) (bg : background.BackgroundTheory) (conformance : F)
     (agent : types.AgentId) (inv : types.InvocationId)
     (cfOf : types.ToolId → Bool)
-    (hcf : ∀ t s, cfInst.conforms conformance agent t s bg = .ok (cfOf t))
+    (hcf : ∀ t s, cfInst.conforms conformance agent t inv s bg = .ok (cfOf t))
     (hWf : ∀ ag I, vmsMemLast st.in_flight ag I →
       ∃ t tmeta, invToolC st I = some t ∧ toolMetaC bg t = some tmeta)
     (hcapBudget : st.agent_budget.entries.val.length < Usize.max)
     (hcapTaintE : st.taint_levels.entries.val.length < Usize.max)
     (hcapTaintS : ∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max)
-    (hcapGhE : st.gh_taint_invoked.entries.val.length < Usize.max)
-    (hcapGhS : ∀ p ∈ st.gh_taint_invoked.entries.val, p.2.items.val.length < Usize.max)
+    (hcapIntegE : st.integ_levels.entries.val.length < Usize.max)
+    (hcapIntegS : ∀ p ∈ st.integ_levels.entries.val, p.2.items.val.length < Usize.max)
     (st' : state.KernelState) (ev : event.KernelAction)
     (hok : transitions.invoke_complete cfInst st bg conformance agent inv = .ok (.Ok (st', ev))) :
     vmsMemLast st.in_flight agent inv ∧
@@ -55,24 +76,26 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
     (vmNodupKeys st.in_flight → vmNodupKeys st'.in_flight) ∧
     st'.agent_active = st.agent_active ∧ st'.agent_parent = st.agent_parent ∧
     st'.agent_cap = st.agent_cap ∧ st'.invocation_tool = st.invocation_tool ∧
-    st'.tool_registered = st.tool_registered ∧ st'.gh_taint_received = st.gh_taint_received ∧
-    st'.agent_instruction = st.agent_instruction ∧ st'.override_used = st.override_used ∧
-    st'.flow_override = st.flow_override ∧
-    ((completeEndorsed st agent tmeta (cfOf tool) ∧
-        st'.taint_levels = st.taint_levels ∧ st'.gh_taint_invoked = st.gh_taint_invoked ∧
+    st'.invocation_used = st.invocation_used ∧ st'.invocation_egress = st.invocation_egress ∧
+    st'.tool_registered = st.tool_registered ∧ st'.agent_instruction = st.agent_instruction ∧
+    st'.override_used = st.override_used ∧ st'.flow_override = st.flow_override ∧
+    ((ev = event.KernelAction.InvokeComplete agent inv true ∧
+        crossingOkC st agent tmeta (cfOf tool) ∧
+        st'.taint_levels = st.taint_levels ∧ st'.integ_levels = st.integ_levels ∧
         (∀ G, (budgetReadC st'.agent_budget G).val =
           if G = agent then
-            (budgetReadC st.agent_budget agent).val - Tzimtzum.declass_weight (confA tmeta.conf_floor)
+            (budgetReadC st.agent_budget agent).val - crossingWeightC st agent tmeta
           else (budgetReadC st.agent_budget G).val) ∧
         (vmNodupKeys st.agent_budget → vmNodupKeys st'.agent_budget))
-     ∨ (¬ completeEndorsed st agent tmeta (cfOf tool) ∧
+     ∨ (ev = event.KernelAction.InvokeComplete agent inv false ∧
+        ¬ crossingOkC st agent tmeta (cfOf tool) ∧
         st'.agent_budget = st.agent_budget ∧
         (∀ ag L', vmsMemLast st'.taint_levels ag L' ↔
           vmsMemLast st.taint_levels ag L' ∨ (ag = agent ∧ L' = tmeta.conf_floor)) ∧
         (vmNodupKeys st.taint_levels → vmNodupKeys st'.taint_levels) ∧
-        (∀ ag L', vmsMemLast st'.gh_taint_invoked ag L' ↔
-          vmsMemLast st.gh_taint_invoked ag L' ∨ (ag = agent ∧ L' = tmeta.conf_floor)) ∧
-        (vmNodupKeys st.gh_taint_invoked → vmNodupKeys st'.gh_taint_invoked))) := by
+        (∀ ag L', vmsMemLast st'.integ_levels ag L' ↔
+          vmsMemLast st.integ_levels ag L' ∨ (ag = agent ∧ L' = tmeta.output_integ)) ∧
+        (vmNodupKeys st.integ_levels → vmNodupKeys st'.integ_levels))) := by
   simp only [transitions.invoke_complete] at hok
   -- Gate 1: `(agent, inv)` in-flight.
   obtain ⟨b, hbEq, hbIff⟩ := spec_imp_exists
@@ -105,7 +128,7 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
       invocationId_ne_spec invocationId_clone_spec st.in_flight agent inv)
   have hvvNd : vmNd = vm := Result.ok.inj (hvmNdEq.symm.trans hvmEq)
   rw [hvmEq] at hok; simp only [bind_tc_ok] at hok
-  -- The bound tool of `inv`.
+  -- The bound tool of `inv` (`wfInflight` kills the defensive `none` exits).
   obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
     (vecMapGetCloned_spec types.InvocationId.Insts.CoreCloneClone
       types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
@@ -121,76 +144,134 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
   have ho1tmeta : o1 = some tmeta := by rw [ho1]; exact htmeta
   rw [ho1tmeta] at hok
   simp only [bind_tc_ok] at hok
-  -- Bind the declassification weight + the abstract weight value.
-  obtain ⟨weight, hwEq, hwVal⟩ := declassWeight_spec (confA tmeta.conf_floor)
-  rw [confC_confA] at hwEq
-  -- Bind the already-tainted read.
+  -- Already-tainted / already-degraded reads (the two `helps` dimensions). The full `simp` also
+  -- collapses the tuple-`let (conf_floor, output_bounded, output_integ)` (the V2 gotcha).
   obtain ⟨bt, hbtEq, hbtIff⟩ := spec_imp_exists
     (setContainsLast_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
       types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
       confLevel_eq_spec confLevel_clone_spec st.taint_levels agent tmeta.conf_floor)
-  -- Affordability of the weighted debit on `{st with in_flight := vm}` (same budget as `st`).
+  obtain ⟨bi, hbiEq, hbiIff⟩ := spec_imp_exists
+    (setContainsLast_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      types.IntegLevel.Insts.CoreCloneClone types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+      integLevel_eq_spec integLevel_clone_spec st.integ_levels agent tmeta.output_integ)
+  simp [hbtEq, hbiEq, bind_tc_ok] at hok
+  -- The two weight halves (dimension-adjusted: owed only when the dimension helps).
+  obtain ⟨wc, hwcEq, hwcVal⟩ :
+      ∃ wc : Std.U8,
+        (if bt = false then (do
+            let i1 ← types.declass_weight tmeta.conf_floor
+            Result.ok ((true : Bool), i1)) else Result.ok ((false : Bool), 0#u8))
+          = Result.ok (!bt, wc) ∧
+        wc.val = (if bt = true then 0 else Tzimtzum.declass_weight (confA tmeta.conf_floor)) := by
+    cases bt with
+    | true => exact ⟨0#u8, by simp, by simp⟩
+    | false =>
+      obtain ⟨w, hwEq, hwVal⟩ := declassWeight_spec (confA tmeta.conf_floor)
+      rw [confC_confA] at hwEq
+      exact ⟨w, by simp [hwEq], by simp [hwVal]⟩
+  obtain ⟨wi, hwiEq, hwiVal⟩ :
+      ∃ wi : Std.U8,
+        (if bi = false then (do
+            let i1 ← types.integ_weight tmeta.output_integ
+            Result.ok ((true : Bool), i1)) else Result.ok ((false : Bool), 0#u8))
+          = Result.ok (!bi, wi) ∧
+        wi.val = (if bi = true then 0 else Tzimtzum.integ_weight (integA tmeta.output_integ)) := by
+    cases bi with
+    | true => exact ⟨0#u8, by simp, by simp⟩
+    | false =>
+      obtain ⟨w, hwEq, hwVal⟩ := integWeight_spec (integA tmeta.output_integ)
+      rw [integC_integA] at hwEq
+      exact ⟨w, by simp [hwEq], by simp [hwVal]⟩
+  simp only [hwcEq, hwiEq, bind_tc_ok] at hok
+  -- The summed weight (no overflow: both halves are ≤ 4).
+  have hwcB : wc.val ≤ 4 := by
+    rw [hwcVal]; split
+    · omega
+    · exact declassWeight_le (confA tmeta.conf_floor)
+  have hwiB : wi.val ≤ 4 := by
+    rw [hwiVal]; split
+    · omega
+    · exact integWeight_le (integA tmeta.output_integ)
+  obtain ⟨wt, hwtEq, hwtVal⟩ := spec_imp_exists
+    (U8.add_spec (x := wc) (y := wi) (by scalar_tac))
+  have hCWval : wt.val = crossingWeightC st agent tmeta := by
+    rw [hwtVal, hwcVal, hwiVal, crossingWeightC]
+    congr 1
+    · by_cases h : vmsMemLast st.taint_levels agent tmeta.conf_floor
+      · rw [if_pos (hbtIff.mpr h), if_pos h]
+      · rw [if_neg (fun hc => h (hbtIff.mp hc)), if_neg h]
+    · by_cases h : vmsMemLast st.integ_levels agent tmeta.output_integ
+      · rw [if_pos (hbiIff.mpr h), if_pos h]
+      · rw [if_neg (fun hc => h (hbiIff.mp hc)), if_neg h]
+  -- The crossing decision chain collapses to one boolean.
+  obtain ⟨bcap, hcapEq, hcapIff⟩ := spec_imp_exists
+    (setContainsLast_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      capability.CapKind.Insts.CoreCloneClone capability.CapKind.Insts.CoreCmpPartialEqCapKind
+      capKind_eq_spec capKind_clone_spec st.agent_cap agent capability.CapKind.Declassify)
   obtain ⟨baf, hafEq, hafIff⟩ := spec_imp_exists
-    (affordable_spec { st with in_flight := vm } agent weight)
+    (affordable_spec { st with in_flight := vm } agent wt)
   have hbudgetEq : budgetReadC ({ st with in_flight := vm } : state.KernelState).agent_budget agent
       = budgetReadC st.agent_budget agent := rfl
   rw [hbudgetEq] at hafIff
-  -- Collapse the tuple-`let (conf_floor, output_bounded)` (full `simp` — the gotcha) and substitute
-  -- the conformance/weight/already-tainted/affordability reads.
-  -- The tuple-`let (conf_floor, output_bounded)` only collapses under full `simp` (the gotcha); it
-  -- also substitutes the conformance/weight/already-tainted/affordability reads.
   rw [hcf tool { st with in_flight := vm }] at hok
-  simp only [hwEq, hbtEq, hafEq, bind_tc_ok] at hok
-  simp [hwEq, hbtEq, hafEq] at hok
-  -- The do-notation `zero_taint` collapses to a single boolean (full `simp`).
-  have hZTval : (if tmeta.output_bounded = true then
-        (if cfOf tool = true then (if baf then (Result.ok (! bt) : Result Bool) else Result.ok false)
-          else Result.ok false) else Result.ok false)
-      = Result.ok (tmeta.output_bounded && cfOf tool && baf && ! bt) := by
-    cases tmeta.output_bounded <;> cases cfOf tool <;> cases baf <;> simp
-  have hZTiff : (tmeta.output_bounded && cfOf tool && baf && ! bt) = true ↔
-      completeEndorsed st agent tmeta (cfOf tool) := by
-    unfold completeEndorsed
-    rw [Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true, Bool.not_eq_true', and_assoc,
-      and_assoc]
+  simp [hwtEq, hcapEq, hafEq, bind_tc_ok] at hok
+  have hCOval : (if tmeta.output_bounded = true then
+        (if cfOf tool = true then
+          (if bcap = true then
+            (if baf = true then
+              (if bt = false then (Result.ok true : Result Bool) else Result.ok (!bi))
+              else Result.ok false)
+            else Result.ok false)
+          else Result.ok false)
+        else Result.ok false)
+      = Result.ok (tmeta.output_bounded && cfOf tool && bcap && baf && (!bt || !bi)) := by
+    cases tmeta.output_bounded <;> cases cfOf tool <;> cases bcap <;> cases baf <;> cases bt
+      <;> cases bi <;> simp
+  rw [hCOval] at hok; simp only [bind_tc_ok] at hok
+  have hCOiff : (tmeta.output_bounded && cfOf tool && bcap && baf && (!bt || !bi)) = true ↔
+      crossingOkC st agent tmeta (cfOf tool) := by
+    unfold crossingOkC
+    simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', and_assoc]
     apply and_congr_right; intro _
     apply and_congr_right; intro _
     apply and_congr
-    · rw [hafIff]
-      constructor
-      · intro h; rw [← hwVal]; exact h
-      · intro h; have : weight.val ≤ (budgetReadC st.agent_budget agent).val := by rw [hwVal]; exact h
-        exact this
-    · rw [Bool.eq_false_iff]
-      constructor
-      · intro h hc; exact h (hbtIff.mpr hc)
-      · intro h hc; exact h (hbtIff.mp hc)
-  rw [hZTval] at hok; simp only [bind_tc_ok] at hok
-  cases hzt0 : tmeta.output_bounded && cfOf tool && baf && ! bt with
+    · exact hcapIff
+    · apply and_congr
+      · rw [hafIff]
+        constructor
+        · intro h; rw [← hCWval]; exact h
+        · intro h
+          show wt.val ≤ (budgetReadC st.agent_budget agent).val
+          rw [hCWval]; exact h
+      · apply or_congr
+        · rw [← hbtIff]; simp
+        · rw [← hbiIff]; simp
+  cases hco : (tmeta.output_bounded && cfOf tool && bcap && baf && (!bt || !bi)) with
   | true =>
-    simp only [hzt0, reduceIte] at hok
+    simp only [hco, reduceIte] at hok
     obtain ⟨st1, hst1Eq, vmB, hStruct, hBudW, hBudNd⟩ :=
-      spec_imp_exists (debitBudget_full { st with in_flight := vm } agent weight hcapBudget)
+      spec_imp_exists (debitBudget_full { st with in_flight := vm } agent wt hcapBudget)
     rw [hst1Eq] at hok
     simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
-    obtain ⟨hStateEq, _⟩ := hok
+    obtain ⟨hStateEq, hEventEq⟩ := hok
     rw [hStruct] at hStateEq
     subst hStateEq
-    refine ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-      rfl, rfl, Or.inl ⟨hZTiff.mp hzt0, rfl, rfl, ?_, ?_⟩⟩
+    refine ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl,
+      rfl, rfl, rfl, rfl, Or.inl ⟨hEventEq.symm, hCOiff.mp hco, rfl, rfl, ?_, ?_⟩⟩
     · intro k v; exact hvmMem k v
     · exact fun h => hvvNd ▸ hvmNd h
     · intro G
       have hbw := hBudW G
-      rw [hbudgetEq] at hbw
       rw [hbw]
       by_cases hG : G = agent
-      · rw [if_pos hG, if_pos hG, saturatingSub_val, hwVal]
+      · rw [if_pos hG, if_pos hG, saturatingSub_val, hCWval]
       · rw [if_neg hG, if_neg hG]
     · exact fun h => hBudNd h
   | false =>
-    simp only [hzt0, Bool.false_eq_true, reduceIte] at hok
+    simp only [hco, Bool.false_eq_true, reduceIte] at hok
     obtain ⟨vm1, hvm1Eq, hvm1Mem⟩ := spec_imp_exists
       (vecMapKVecSetInsertInto_vmLast_spec types.AgentId.Insts.CoreCloneClone
         types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
@@ -208,24 +289,24 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
     obtain ⟨vm2, hvm2Eq, hvm2Mem⟩ := spec_imp_exists
       (vecMapKVecSetInsertInto_vmLast_spec types.AgentId.Insts.CoreCloneClone
         types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-        types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-        confLevel_eq_spec confLevel_clone_spec st.gh_taint_invoked agent tmeta.conf_floor
-        hcapGhE hcapGhS)
+        types.IntegLevel.Insts.CoreCloneClone types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+        integLevel_eq_spec integLevel_clone_spec st.integ_levels agent tmeta.output_integ
+        hcapIntegE hcapIntegS)
     obtain ⟨vm2Nd, hvm2NdEq, hvm2Nd⟩ := spec_imp_exists
       (vecMapKVecSetInsertInto_nodup types.AgentId.Insts.CoreCloneClone
         types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-        types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-        confLevel_eq_spec confLevel_clone_spec st.gh_taint_invoked agent tmeta.conf_floor
-        hcapGhE hcapGhS)
+        types.IntegLevel.Insts.CoreCloneClone types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+        integLevel_eq_spec integLevel_clone_spec st.integ_levels agent tmeta.output_integ
+        hcapIntegE hcapIntegS)
     have hvv2 : vm2Nd = vm2 := Result.ok.inj (hvm2NdEq.symm.trans hvm2Eq)
     rw [hvm2Eq] at hok; simp only [bind_tc_ok] at hok
     simp only [Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
-    obtain ⟨hStateEq, _⟩ := hok
+    obtain ⟨hStateEq, hEventEq⟩ := hok
     subst hStateEq
-    have hNotCe : ¬ completeEndorsed st agent tmeta (cfOf tool) := by
-      intro hce; have h := hZTiff.mpr hce; rw [hzt0] at h; exact absurd h (by decide)
-    refine ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-      rfl, rfl, Or.inr ⟨hNotCe, rfl, ?_, ?_, ?_, ?_⟩⟩
+    have hNotCo : ¬ crossingOkC st agent tmeta (cfOf tool) := by
+      intro hce; have h := hCOiff.mpr hce; rw [hco] at h; exact absurd h (by decide)
+    refine ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl,
+      rfl, rfl, rfl, rfl, Or.inr ⟨hEventEq.symm, hNotCo, rfl, ?_, ?_, ?_, ?_⟩⟩
     · intro k v; exact hvmMem k v
     · exact fun h => hvvNd ▸ hvmNd h
     · intro ag L'; exact hvm1Mem ag L'
@@ -233,56 +314,100 @@ theorem invoke_complete_inv_full {F : Type} (cfInst : traits.ConformanceOracle F
     · intro ag L'; exact hvm2Mem ag L'
     · exact fun h => hvv2 ▸ hvm2Nd h
 
-/-- `invoke_complete` preserves the unified `R`. -/
-theorem invoke_complete_preservesR {F : Type} (cfInst : traits.ConformanceOracle F)
+/-- The concrete crossing guard is the abstract one (given `R` and the tool binding): each of the
+    five conjuncts crosses via its `R` view; the weight halves align dimension-by-dimension. -/
+theorem crossingOk_abs_iff (st : state.KernelState) (bg : background.BackgroundTheory)
+    (a : AbsState) (agent : types.AgentId) (inv : types.InvocationId)
+    (tool : types.ToolId) (tmeta : background.ToolMetadata) (cf : Bool)
+    (hR : R st bg a)
+    (htool : invToolC st inv = some tool) (htmeta : toolMetaC bg tool = some tmeta)
+    (hcfA : cf = true ↔ a.invocation_conforms inv) :
+    crossingOkC st agent tmeta cf ↔ Tzimtzum.crossing_ok a agent inv := by
+  have htoolA : a.invocation_tool inv = tool := hR.invTool inv tool htool
+  have hcfloorA : a.tool_conf_floor (a.invocation_tool inv) = confA tmeta.conf_floor := by
+    rw [htoolA]; exact hR.toolFloor tool tmeta htmeta
+  have hointegA : a.tool_output_integ (a.invocation_tool inv) = integA tmeta.output_integ := by
+    rw [htoolA]; exact hR.toolOutputInteg tool tmeta htmeta
+  have hConfHelps : Tzimtzum.conf_helps a agent inv ↔
+      ¬ vmsMemLast st.taint_levels agent tmeta.conf_floor := by
+    rw [Tzimtzum.conf_helps, hcfloorA, hR.taint agent (confA tmeta.conf_floor), confC_confA]
+  have hIntegHelps : Tzimtzum.integ_helps a agent inv ↔
+      ¬ vmsMemLast st.integ_levels agent tmeta.output_integ := by
+    rw [Tzimtzum.integ_helps, hointegA, hR.integ agent (integA tmeta.output_integ), integC_integA]
+  have hCW : Tzimtzum.crossing_weight a agent inv = crossingWeightC st agent tmeta := by
+    rw [Tzimtzum.crossing_weight, crossingWeightC]
+    congr 1
+    · rw [hcfloorA]
+      by_cases h : vmsMemLast st.taint_levels agent tmeta.conf_floor
+      · rw [if_neg (fun hc => (hConfHelps.mp hc) h), if_pos h]
+      · rw [if_pos (hConfHelps.mpr h), if_neg h]
+    · rw [hointegA]
+      by_cases h : vmsMemLast st.integ_levels agent tmeta.output_integ
+      · rw [if_neg (fun hc => (hIntegHelps.mp hc) h), if_pos h]
+      · rw [if_pos (hIntegHelps.mpr h), if_neg h]
+  rw [crossingOkC, Tzimtzum.crossing_ok]
+  apply and_congr
+  · rw [htoolA]; exact (hR.toolBounded tool tmeta htmeta).symm
+  · apply and_congr
+    · exact hcfA
+    · apply and_congr
+      · rw [hR.cap agent a.cap_declassify, hR.cap_declass]
+      · apply and_congr
+        · rw [Tzimtzum.St.affordable, hCW, hR.budget agent]
+        · exact (or_congr hConfHelps.symm hIntegHelps.symm).symm.symm
+
+/-- The endorsed branch of the kernel's `invoke_complete` refines `invoke_complete_endorsed`
+    (design §5.4): the event's `endorsed = true` selects the branch. -/
+theorem invoke_complete_endorsed_preservesR {F : Type} (cfInst : traits.ConformanceOracle F)
     (st : state.KernelState) (bg : background.BackgroundTheory) (conformance : F)
     (a : AbsState) (agent : types.AgentId) (inv : types.InvocationId)
     (cfOf : types.ToolId → Bool)
-    (hcf : ∀ t s, cfInst.conforms conformance agent t s bg = .ok (cfOf t))
-    (hcfA : ∀ t, cfOf t = true ↔ a.output_conforms agent t)
+    (hcf : ∀ t s, cfInst.conforms conformance agent t inv s bg = .ok (cfOf t))
+    (hcfA : ∀ t, cfOf t = true ↔ a.invocation_conforms inv)
     (hR : R st bg a)
     (hcapBudget : st.agent_budget.entries.val.length < Usize.max)
     (hcapTaintE : st.taint_levels.entries.val.length < Usize.max)
     (hcapTaintS : ∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max)
-    (hcapGhE : st.gh_taint_invoked.entries.val.length < Usize.max)
-    (hcapGhS : ∀ p ∈ st.gh_taint_invoked.entries.val, p.2.items.val.length < Usize.max)
-    (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.invoke_complete cfInst st bg conformance agent inv = .ok (.Ok (st', ev))) :
-    ∃ a', (Tzimtzum.invoke_complete agent inv).guard a ∧
-          (Tzimtzum.invoke_complete agent inv).next a a' ∧ R st' bg a' := by
-  obtain ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, hInFlightW, hInflNd, hAct, hPar, hCap, hInvT,
-      hToolReg, hGhRecv, hAgInstr, hOv, hFlowOv, hBranch⟩ :=
+    (hcapIntegE : st.integ_levels.entries.val.length < Usize.max)
+    (hcapIntegS : ∀ p ∈ st.integ_levels.entries.val, p.2.items.val.length < Usize.max)
+    (st' : state.KernelState)
+    (hok : transitions.invoke_complete cfInst st bg conformance agent inv
+      = .ok (.Ok (st', event.KernelAction.InvokeComplete agent inv true))) :
+    ∃ a', (Tzimtzum.invoke_complete_endorsed agent inv).guard a ∧
+          (Tzimtzum.invoke_complete_endorsed agent inv).next a a' ∧ R st' bg a' := by
+  obtain ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, hInFlightW, hInflNd, hAct, hPar, hCap,
+      hInvT, hInvU, hInvE, hToolReg, hAgInstr, hOv, hFlowOv, hBranch⟩ :=
     invoke_complete_inv_full cfInst st bg conformance agent inv cfOf hcf hR.wfInflight hcapBudget
-      hcapTaintE hcapTaintS hcapGhE hcapGhS st' ev hok
+      hcapTaintE hcapTaintS hcapIntegE hcapIntegS st' _ hok
+  rcases hBranch with ⟨_, hCo, hTaintEq, hIntegEq, hBudW, hBudNd⟩ |
+    ⟨hEvEq, _, _, _, _, _, _⟩
+  case inr =>
+    -- The event says `endorsed = true`; the unendorsed branch is impossible.
+    simp at hEvEq
+  have hCoA : Tzimtzum.crossing_ok a agent inv :=
+    (crossingOk_abs_iff st bg a agent inv tool tmeta (cfOf tool) hR htool htmeta (hcfA tool)).mp hCo
   have htoolA : a.invocation_tool inv = tool := hR.invTool inv tool htool
-  have hcfloorA : a.tool_conf_floor tool = confA tmeta.conf_floor := hR.toolFloor tool tmeta htmeta
-  -- The abstract endorsed predicate, the 4-conjunct of the `invoke_complete` action body.
-  have hCeIff : completeEndorsed st agent tmeta (cfOf tool) ↔
-      (a.tool_output_bounded (a.invocation_tool inv) ∧ a.output_conforms agent (a.invocation_tool inv) ∧
-        a.affordable agent (Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv))) ∧
-        ¬ a.taint_levels agent (a.tool_conf_floor (a.invocation_tool inv))) := by
-    rw [htoolA, hcfloorA, completeEndorsed]
-    have hbudA : a.agent_budget agent (budgetReadC st.agent_budget agent).val :=
-      (hR.budget agent _ ((hR.active agent).mpr hActive)).mpr rfl
-    constructor
-    · rintro ⟨hob, hcf', hafford, hnt⟩
-      refine ⟨(hR.toolBounded tool tmeta htmeta).mpr hob, (hcfA tool).mp hcf', ?_, ?_⟩
-      · exact ⟨(budgetReadC st.agent_budget agent).val, hbudA, hafford⟩
-      · intro hc
-        have := (hR.taint agent (confA tmeta.conf_floor)).mp hc
-        rw [confC_confA] at this; exact hnt this
-    · rintro ⟨hob, hcf', ⟨bv, hbv, hle⟩, hnt⟩
-      refine ⟨(hR.toolBounded tool tmeta htmeta).mp hob, (hcfA tool).mpr hcf', ?_, ?_⟩
-      · -- affordability: the unique budget value is `(budgetReadC …).val`
-        have huniq : bv = (budgetReadC st.agent_budget agent).val := by
-          have := (hR.budget agent bv ((hR.active agent).mpr hActive)).mp hbv; omega
-        omega
-      · intro hc
-        apply hnt
-        have : vmsMemLast st.taint_levels agent (confC (confA tmeta.conf_floor)) := by
-          rw [confC_confA]; exact hc
-        exact (hR.taint agent (confA tmeta.conf_floor)).mpr this
-  -- the WF invariant transports along the frame (`invocation_tool` unchanged, `in_flight` shrinks)
+  have hCW : Tzimtzum.crossing_weight a agent inv = crossingWeightC st agent tmeta := by
+    have hcfloorA : a.tool_conf_floor (a.invocation_tool inv) = confA tmeta.conf_floor := by
+      rw [htoolA]; exact hR.toolFloor tool tmeta htmeta
+    have hointegA : a.tool_output_integ (a.invocation_tool inv) = integA tmeta.output_integ := by
+      rw [htoolA]; exact hR.toolOutputInteg tool tmeta htmeta
+    have hConfHelps : Tzimtzum.conf_helps a agent inv ↔
+        ¬ vmsMemLast st.taint_levels agent tmeta.conf_floor := by
+      rw [Tzimtzum.conf_helps, hcfloorA, hR.taint agent (confA tmeta.conf_floor), confC_confA]
+    have hIntegHelps : Tzimtzum.integ_helps a agent inv ↔
+        ¬ vmsMemLast st.integ_levels agent tmeta.output_integ := by
+      rw [Tzimtzum.integ_helps, hointegA, hR.integ agent (integA tmeta.output_integ), integC_integA]
+    rw [Tzimtzum.crossing_weight, crossingWeightC]
+    congr 1
+    · rw [hcfloorA]
+      by_cases h : vmsMemLast st.taint_levels agent tmeta.conf_floor
+      · rw [if_neg (fun hc => (hConfHelps.mp hc) h), if_pos h]
+      · rw [if_pos (hConfHelps.mpr h), if_neg h]
+    · rw [hointegA]
+      by_cases h : vmsMemLast st.integ_levels agent tmeta.output_integ
+      · rw [if_neg (fun hc => (hIntegHelps.mp hc) h), if_pos h]
+      · rw [if_pos (hIntegHelps.mpr h), if_neg h]
   have hWf' : ∀ ag I, vmsMemLast st'.in_flight ag I →
       ∃ t tmeta, invToolC st' I = some t ∧ toolMetaC bg t = some tmeta := by
     intro ag I hI
@@ -290,157 +415,148 @@ theorem invoke_complete_preservesR {F : Type} (cfInst : traits.ConformanceOracle
     rw [heq]
     exact hR.wfInflight ag I ((hInFlightW ag I).mp hI).1
   refine ⟨{ a with
-    in_flight := fun A I => a.in_flight A I ∧ ¬ (A = agent ∧ I = inv),
-    taint_levels := fun A L => a.taint_levels A L ∨
-      (A = agent ∧ ¬ (a.tool_output_bounded (a.invocation_tool inv) ∧
-          a.output_conforms agent (a.invocation_tool inv) ∧
-          a.affordable agent (Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv))) ∧
-          ¬ a.taint_levels agent (a.tool_conf_floor (a.invocation_tool inv))) ∧
-        a.tool_conf_floor (a.invocation_tool inv) = L),
-    gh_taint_invoked := fun A L => a.gh_taint_invoked A L ∨
-      (A = agent ∧ ¬ (a.tool_output_bounded (a.invocation_tool inv) ∧
-          a.output_conforms agent (a.invocation_tool inv) ∧
-          a.affordable agent (Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv))) ∧
-          ¬ a.taint_levels agent (a.tool_conf_floor (a.invocation_tool inv))) ∧
-        a.tool_conf_floor (a.invocation_tool inv) = L),
-    agent_budget := fun A L =>
-      (A = agent ∧
-        (((a.tool_output_bounded (a.invocation_tool inv) ∧
-            a.output_conforms agent (a.invocation_tool inv) ∧
-            a.affordable agent (Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv))) ∧
-            ¬ a.taint_levels agent (a.tool_conf_floor (a.invocation_tool inv))) ∧
-          ∀ b, a.agent_budget agent b →
-            L = b - Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv)))
-          ∨ (¬ (a.tool_output_bounded (a.invocation_tool inv) ∧
-              a.output_conforms agent (a.invocation_tool inv) ∧
-              a.affordable agent (Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv))) ∧
-              ¬ a.taint_levels agent (a.tool_conf_floor (a.invocation_tool inv))) ∧ a.agent_budget agent L)))
-      ∨ (A ≠ agent ∧ a.agent_budget A L) }, ?_, ?_, ?_⟩
+      in_flight := fun A I => a.in_flight A I ∧ ¬ (A = agent ∧ I = inv),
+      agent_budget := fun A =>
+        if A = agent then a.agent_budget agent - Tzimtzum.crossing_weight a agent inv
+        else a.agent_budget A }, ?_, ?_, ?_⟩
   · -- guard
-    exact ⟨(hR.inflight agent inv).mpr hInFlight, (hR.active agent).mpr hActive⟩
+    exact ⟨(hR.inflight agent inv).mpr hInFlight, (hR.active agent).mpr hActive, hCoA⟩
   · -- next
-    simp [Tzimtzum.invoke_complete]
+    simp [Tzimtzum.invoke_complete_endorsed]
+    funext G
+    by_cases hG : G = agent <;> simp [hG]
   · -- R st' bg a'
-    rcases hBranch with ⟨hCe, hTaintEq, hGhEq, hBudW, hBudNd⟩ | ⟨hNotCe, hBudEq, hTaintW, hTaintNd, hGhW, hGhNd⟩
-    · -- endorsed path
-      have hAbs := hCeIff.mp hCe
-      have hflrA : a.tool_conf_floor (a.invocation_tool inv) = confA tmeta.conf_floor := by
-        rw [htoolA]; exact hcfloorA
-      have hChain : ∀ L, a.agent_active agent →
-          ((∀ b, a.agent_budget agent b →
-              L = b - Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv)))
-          ↔ (budgetReadC st.agent_budget agent).val
-              - (Tzimtzum.declass_weight (confA tmeta.conf_floor)) = L) := by
-        intro L hGact
-        rw [hflrA]
-        have hbudA : a.agent_budget agent (budgetReadC st.agent_budget agent).val :=
-          (hR.budget agent _ hGact).mpr rfl
-        constructor
-        · intro h
-          exact (h (budgetReadC st.agent_budget agent).val hbudA).symm
-        · intro hread b hab
-          have : (budgetReadC st.agent_budget agent).val = b := (hR.budget agent b hGact).mp hab
-          omega
-      refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, fun x => by rw [hAct]; exact hR.active x,
-        fun t => by rw [hToolReg]; exact hR.tool_reg t, fun C P => by rw [hPar]; exact hR.parent C P,
-        fun N C => by rw [hCap]; exact hR.cap N C, fun ag ins => by rw [hAgInstr]; exact hR.instr ag ins,
-        fun ag L => ?_, fun ag I => ?_, fun ag L => ?_,
-        fun ag L => by rw [hGhRecv]; exact hR.ghReceived ag L,
-        fun ag t L => by rw [hOv]; exact hR.override ag t L, fun G L => ?_, hR.toolCap, hR.toolEgress,
-        hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer, hR.flowAllows,
-        hR.flowInspects, fun A T L => by rw [hFlowOv]; exact hR.flowOverride A T L, fun I t hI => ?_, by rw [hPar]; exact hR.ndParent,
-        by rw [hCap]; exact hR.ndCap, by rw [hAgInstr]; exact hR.ndInstr,
-        by rw [hTaintEq]; exact hR.ndTaint, hInflNd hR.ndInflight,
-        by rw [hGhEq]; exact hR.ndGhInvoked,
-        by rw [hGhRecv]; exact hR.ndGhReceived, by rw [hOv]; exact hR.ndOverride,
-        by rw [hFlowOv]; exact hR.ndFlowOverride,
-        hBudNd hR.ndBudget, hWf'⟩
-      · -- taint (unchanged on endorsed; the abstract disjunct collapses)
-        show (a.taint_levels ag L ∨ (ag = agent ∧ ¬ _ ∧ _)) ↔ vmsMemLast st'.taint_levels ag (confC L)
-        rw [hTaintEq, hR.taint ag L]
-        exact ⟨fun h => h.resolve_right (fun ⟨_, hn, _⟩ => hn hAbs), Or.inl⟩
-      · -- in_flight (removal)
-        show (a.in_flight ag I ∧ ¬ (ag = agent ∧ I = inv)) ↔ vmsMemLast st'.in_flight ag I
-        rw [hInFlightW ag I, hR.inflight ag I]
-      · -- gh_taint_invoked (unchanged)
-        show (a.gh_taint_invoked ag L ∨ (ag = agent ∧ ¬ _ ∧ _)) ↔ vmsMemLast st'.gh_taint_invoked ag (confC L)
-        rw [hGhEq, hR.ghInvoked ag L]
-        exact ⟨fun h => h.resolve_right (fun ⟨_, hn, _⟩ => hn hAbs), Or.inl⟩
-      · -- budget (guarded; weighted debit on agent)
-        intro hactiveG
-        show ((G = agent ∧ ((_ ∧ _) ∨ (¬ _ ∧ a.agent_budget agent L))) ∨ (G ≠ agent ∧ a.agent_budget G L))
-          ↔ (budgetReadC st'.agent_budget G).val = L
-        rw [hBudW G]
-        by_cases hG : G = agent
-        · subst G; rw [if_pos rfl]
-          constructor
-          · rintro (⟨_, ⟨_, hc⟩ | ⟨hn, _⟩⟩ | ⟨hne, _⟩)
-            · exact (hChain L hactiveG).mp hc
-            · exact absurd hAbs hn
-            · exact absurd rfl hne
-          · intro hread; exact Or.inl ⟨rfl, Or.inl ⟨hAbs, (hChain L hactiveG).mpr hread⟩⟩
-        · rw [if_neg hG]
-          have hGact : a.agent_active G := hactiveG
-          constructor
-          · rintro (⟨hag, _⟩ | ⟨_, hbud⟩)
-            · exact absurd hag hG
-            · exact (hR.budget G L hGact).mp hbud
-          · intro hread; exact Or.inr ⟨hG, (hR.budget G L hGact).mpr hread⟩
-      · have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
-        exact hR.invTool I t (heq ▸ hI)
-    · -- unendorsed path
-      have hNotAbs : ¬ (a.tool_output_bounded (a.invocation_tool inv) ∧
-          a.output_conforms agent (a.invocation_tool inv) ∧
-          a.affordable agent (Tzimtzum.declass_weight (a.tool_conf_floor (a.invocation_tool inv))) ∧
-          ¬ a.taint_levels agent (a.tool_conf_floor (a.invocation_tool inv))) := fun h => hNotCe (hCeIff.mpr h)
-      have hcfl : a.tool_conf_floor (a.invocation_tool inv) = confA tmeta.conf_floor := by
-        rw [htoolA]; exact hcfloorA
-      refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, fun x => by rw [hAct]; exact hR.active x,
-        fun t => by rw [hToolReg]; exact hR.tool_reg t, fun C P => by rw [hPar]; exact hR.parent C P,
-        fun N C => by rw [hCap]; exact hR.cap N C, fun ag ins => by rw [hAgInstr]; exact hR.instr ag ins,
-        fun ag L => ?_, fun ag I => ?_, fun ag L => ?_,
-        fun ag L => by rw [hGhRecv]; exact hR.ghReceived ag L,
-        fun ag t L => by rw [hOv]; exact hR.override ag t L, fun G L => ?_, hR.toolCap, hR.toolEgress,
-        hR.toolFloor, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer, hR.flowAllows,
-        hR.flowInspects, fun A T L => by rw [hFlowOv]; exact hR.flowOverride A T L, fun I t hI => ?_, by rw [hPar]; exact hR.ndParent,
-        by rw [hCap]; exact hR.ndCap, by rw [hAgInstr]; exact hR.ndInstr, hTaintNd hR.ndTaint,
-        hInflNd hR.ndInflight, hGhNd hR.ndGhInvoked, by rw [hGhRecv]; exact hR.ndGhReceived,
-        by rw [hOv]; exact hR.ndOverride, by rw [hFlowOv]; exact hR.ndFlowOverride,
-        by rw [hBudEq]; exact hR.ndBudget, hWf'⟩
-      · -- taint (insert tool's conf_floor on agent)
-        show (a.taint_levels ag L ∨ (ag = agent ∧ ¬ _ ∧ a.tool_conf_floor (a.invocation_tool inv) = L))
-          ↔ vmsMemLast st'.taint_levels ag (confC L)
-        rw [hTaintW ag (confC L), hR.taint ag L, hcfl]
-        apply or_congr_right
-        constructor
-        · rintro ⟨hag, _, hL⟩; exact ⟨hag, by rw [← hL, confC_confA]⟩
-        · rintro ⟨hag, hL⟩; exact ⟨hag, hcfl ▸ hNotAbs, by rw [← hL, confA_confC]⟩
-      · -- in_flight (removal)
-        show (a.in_flight ag I ∧ ¬ (ag = agent ∧ I = inv)) ↔ vmsMemLast st'.in_flight ag I
-        rw [hInFlightW ag I, hR.inflight ag I]
-      · -- gh_taint_invoked (insert)
-        show (a.gh_taint_invoked ag L ∨ (ag = agent ∧ ¬ _ ∧ a.tool_conf_floor (a.invocation_tool inv) = L))
-          ↔ vmsMemLast st'.gh_taint_invoked ag (confC L)
-        rw [hGhW ag (confC L), hR.ghInvoked ag L, hcfl]
-        apply or_congr_right
-        constructor
-        · rintro ⟨hag, _, hL⟩; exact ⟨hag, by rw [← hL, confC_confA]⟩
-        · rintro ⟨hag, hL⟩; exact ⟨hag, hcfl ▸ hNotAbs, by rw [← hL, confA_confC]⟩
-      · -- budget (guarded; unchanged)
-        intro hactiveG
-        show ((G = agent ∧ ((_ ∧ _) ∨ (¬ _ ∧ a.agent_budget agent L))) ∨ (G ≠ agent ∧ a.agent_budget G L))
-          ↔ (budgetReadC st'.agent_budget G).val = L
-        rw [hBudEq]
-        constructor
-        · rintro (⟨hag, ⟨habs, _⟩ | ⟨_, hb⟩⟩ | ⟨_, hbud⟩)
-          · exact absurd habs hNotAbs
-          · rw [hag] at hactiveG ⊢; exact (hR.budget agent L hactiveG).mp hb
-          · exact (hR.budget G L hactiveG).mp hbud
-        · intro hread
-          by_cases hG : G = agent
-          · exact Or.inl ⟨hG, Or.inr ⟨hNotAbs, (hR.budget agent L (hG ▸ hactiveG)).mpr (hG ▸ hread)⟩⟩
-          · exact Or.inr ⟨hG, (hR.budget G L hactiveG).mpr hread⟩
-      · have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
-        exact hR.invTool I t (heq ▸ hI)
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov,
+      fun x => by rw [hAct]; exact hR.active x,
+      fun t => by rw [hToolReg]; exact hR.tool_reg t,
+      fun C P => by rw [hPar]; exact hR.parent C P,
+      fun N C => by rw [hCap]; exact hR.cap N C,
+      fun ag ins => by rw [hAgInstr]; exact hR.instr ag ins,
+      fun ag L => by rw [hTaintEq]; exact hR.taint ag L,
+      fun ag L => by rw [hIntegEq]; exact hR.integ ag L,
+      fun ag I => ?_, fun ag t L => by rw [hOv]; exact hR.override ag t L, fun G => ?_,
+      fun I => by rw [hInvU]; exact hR.invUsed I,
+      fun I hU E => by rw [hInvE]; exact hR.invEgress I hU E,
+      hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor, hR.toolIntegInspectFloor,
+      hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
+      hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor,
+      fun A T L => by rw [hFlowOv]; exact hR.flowOverride A T L,
+      fun I t hI => ?_,
+      by rw [hPar]; exact hR.ndParent, by rw [hCap]; exact hR.ndCap,
+      by rw [hAgInstr]; exact hR.ndInstr, by rw [hTaintEq]; exact hR.ndTaint,
+      by rw [hIntegEq]; exact hR.ndInteg, hInflNd hR.ndInflight,
+      by rw [hOv]; exact hR.ndOverride, by rw [hFlowOv]; exact hR.ndFlowOverride,
+      hBudNd hR.ndBudget, hWf'⟩
+    · -- in_flight (point-clear)
+      show (a.in_flight ag I ∧ ¬ (ag = agent ∧ I = inv)) ↔ vmsMemLast st'.in_flight ag I
+      rw [hInFlightW ag I, hR.inflight ag I]
+    · -- budget (weighted self-debit; unconditional equation)
+      show (if G = agent then a.agent_budget agent - Tzimtzum.crossing_weight a agent inv
+          else a.agent_budget G) = (budgetReadC st'.agent_budget G).val
+      rw [hBudW G]
+      by_cases hG : G = agent
+      · rw [if_pos hG, if_pos hG, hR.budget agent, hCW]
+      · rw [if_neg hG, if_neg hG, hR.budget G]
+    · -- invTool (framed)
+      have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
+      exact hR.invTool I t (heq ▸ hI)
+
+/-- The unendorsed branch of the kernel's `invoke_complete` refines `invoke_complete_unendorsed`
+    (design §5.4): the event's `endorsed = false` selects the branch; both taint dimensions
+    degrade, no debit. -/
+theorem invoke_complete_unendorsed_preservesR {F : Type} (cfInst : traits.ConformanceOracle F)
+    (st : state.KernelState) (bg : background.BackgroundTheory) (conformance : F)
+    (a : AbsState) (agent : types.AgentId) (inv : types.InvocationId)
+    (cfOf : types.ToolId → Bool)
+    (hcf : ∀ t s, cfInst.conforms conformance agent t inv s bg = .ok (cfOf t))
+    (hcfA : ∀ t, cfOf t = true ↔ a.invocation_conforms inv)
+    (hR : R st bg a)
+    (hcapBudget : st.agent_budget.entries.val.length < Usize.max)
+    (hcapTaintE : st.taint_levels.entries.val.length < Usize.max)
+    (hcapTaintS : ∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max)
+    (hcapIntegE : st.integ_levels.entries.val.length < Usize.max)
+    (hcapIntegS : ∀ p ∈ st.integ_levels.entries.val, p.2.items.val.length < Usize.max)
+    (st' : state.KernelState)
+    (hok : transitions.invoke_complete cfInst st bg conformance agent inv
+      = .ok (.Ok (st', event.KernelAction.InvokeComplete agent inv false))) :
+    ∃ a', (Tzimtzum.invoke_complete_unendorsed agent inv).guard a ∧
+          (Tzimtzum.invoke_complete_unendorsed agent inv).next a a' ∧ R st' bg a' := by
+  obtain ⟨hInFlight, hActive, tool, tmeta, htool, htmeta, hInFlightW, hInflNd, hAct, hPar, hCap,
+      hInvT, hInvU, hInvE, hToolReg, hAgInstr, hOv, hFlowOv, hBranch⟩ :=
+    invoke_complete_inv_full cfInst st bg conformance agent inv cfOf hcf hR.wfInflight hcapBudget
+      hcapTaintE hcapTaintS hcapIntegE hcapIntegS st' _ hok
+  rcases hBranch with ⟨hEvEq, _, _, _, _, _⟩ |
+    ⟨_, hNotCo, hBudEq, hTaintW, hTaintNd, hIntegW, hIntegNd⟩
+  case inl =>
+    -- The event says `endorsed = false`; the endorsed branch is impossible.
+    simp at hEvEq
+  have hNotCoA : ¬ Tzimtzum.crossing_ok a agent inv := fun hc =>
+    hNotCo ((crossingOk_abs_iff st bg a agent inv tool tmeta (cfOf tool) hR htool htmeta
+      (hcfA tool)).mpr hc)
+  have htoolA : a.invocation_tool inv = tool := hR.invTool inv tool htool
+  have hcfl : a.tool_conf_floor (a.invocation_tool inv) = confA tmeta.conf_floor := by
+    rw [htoolA]; exact hR.toolFloor tool tmeta htmeta
+  have hointg : a.tool_output_integ (a.invocation_tool inv) = integA tmeta.output_integ := by
+    rw [htoolA]; exact hR.toolOutputInteg tool tmeta htmeta
+  have hWf' : ∀ ag I, vmsMemLast st'.in_flight ag I →
+      ∃ t tmeta, invToolC st' I = some t ∧ toolMetaC bg t = some tmeta := by
+    intro ag I hI
+    have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
+    rw [heq]
+    exact hR.wfInflight ag I ((hInFlightW ag I).mp hI).1
+  refine ⟨{ a with
+      in_flight := fun A I => a.in_flight A I ∧ ¬ (A = agent ∧ I = inv),
+      taint_levels := fun A L => a.taint_levels A L ∨
+        (A = agent ∧ a.tool_conf_floor (a.invocation_tool inv) = L),
+      integ_levels := fun A L => a.integ_levels A L ∨
+        (A = agent ∧ L = a.tool_output_integ (a.invocation_tool inv)) }, ?_, ?_, ?_⟩
+  · -- guard
+    exact ⟨(hR.inflight agent inv).mpr hInFlight, (hR.active agent).mpr hActive, hNotCoA⟩
+  · -- next
+    simp [Tzimtzum.invoke_complete_unendorsed]
+  · -- R st' bg a'
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov,
+      fun x => by rw [hAct]; exact hR.active x,
+      fun t => by rw [hToolReg]; exact hR.tool_reg t,
+      fun C P => by rw [hPar]; exact hR.parent C P,
+      fun N C => by rw [hCap]; exact hR.cap N C,
+      fun ag ins => by rw [hAgInstr]; exact hR.instr ag ins,
+      fun ag L => ?_, fun ag L => ?_,
+      fun ag I => ?_, fun ag t L => by rw [hOv]; exact hR.override ag t L,
+      fun G => by rw [hBudEq]; exact hR.budget G,
+      fun I => by rw [hInvU]; exact hR.invUsed I,
+      fun I hU E => by rw [hInvE]; exact hR.invEgress I hU E,
+      hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor, hR.toolIntegInspectFloor,
+      hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
+      hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor,
+      fun A T L => by rw [hFlowOv]; exact hR.flowOverride A T L,
+      fun I t hI => ?_,
+      by rw [hPar]; exact hR.ndParent, by rw [hCap]; exact hR.ndCap,
+      by rw [hAgInstr]; exact hR.ndInstr, hTaintNd hR.ndTaint, hIntegNd hR.ndInteg,
+      hInflNd hR.ndInflight, by rw [hOv]; exact hR.ndOverride,
+      by rw [hFlowOv]; exact hR.ndFlowOverride,
+      by rw [hBudEq]; exact hR.ndBudget, hWf'⟩
+    · -- taint (insert the tool's conf floor on agent)
+      show (a.taint_levels ag L ∨ (ag = agent ∧ a.tool_conf_floor (a.invocation_tool inv) = L))
+        ↔ vmsMemLast st'.taint_levels ag (confC L)
+      rw [hTaintW ag (confC L), hR.taint ag L, hcfl]
+      apply or_congr_right
+      constructor
+      · rintro ⟨hag, hL⟩; exact ⟨hag, by rw [← hL, confC_confA]⟩
+      · rintro ⟨hag, hL⟩; exact ⟨hag, by rw [← hL, confA_confC]⟩
+    · -- integ (insert the tool's output integrity on agent)
+      show (a.integ_levels ag L ∨ (ag = agent ∧ L = a.tool_output_integ (a.invocation_tool inv)))
+        ↔ vmsMemLast st'.integ_levels ag (integC L)
+      rw [hIntegW ag (integC L), hR.integ ag L, hointg]
+      apply or_congr_right
+      constructor
+      · rintro ⟨hag, hL⟩; exact ⟨hag, by rw [hL, integC_integA]⟩
+      · rintro ⟨hag, hL⟩; exact ⟨hag, by rw [← hL, integA_integC]⟩
+    · -- in_flight (point-clear)
+      show (a.in_flight ag I ∧ ¬ (ag = agent ∧ I = inv)) ↔ vmsMemLast st'.in_flight ag I
+      rw [hInFlightW ag I, hR.inflight ag I]
+    · -- invTool (framed)
+      have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
+      exact hR.invTool I t (heq ▸ hI)
 
 end ArgusLean.Refinement
