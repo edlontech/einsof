@@ -399,13 +399,6 @@ fn sentinel_elevate_taint_basic() {
             .unwrap()
             .contains(&ConfLevel::Sensitive)
     );
-    assert!(
-        k.state()
-            .gh_taint_invoked
-            .get(&AgentId::new("a1"))
-            .unwrap()
-            .contains(&ConfLevel::Sensitive)
-    );
 }
 
 #[test]

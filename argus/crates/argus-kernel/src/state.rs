@@ -12,8 +12,6 @@ pub struct KernelState {
     pub in_flight: VecMap<AgentId, VecSet<InvocationId>>,
     pub invocation_tool: VecMap<InvocationId, ToolId>,
     pub tool_registered: VecSet<ToolId>,
-    pub gh_taint_invoked: VecMap<AgentId, VecSet<ConfLevel>>,
-    pub gh_taint_received: VecMap<AgentId, VecSet<ConfLevel>>,
     pub agent_instruction: VecMap<AgentId, VecSet<InstructionId>>,
     /// Single-use flow_override consumption (MF-3). Records the `(tool, level)` override
     /// grants an agent has already spent, so each immutable grant rescues at most one
@@ -54,8 +52,6 @@ impl KernelState {
             in_flight: VecMap::new(),
             invocation_tool: VecMap::new(),
             tool_registered: VecSet::new(),
-            gh_taint_invoked: VecMap::new(),
-            gh_taint_received: VecMap::new(),
             agent_instruction: VecMap::new(),
             override_used: VecMap::new(),
             flow_override: VecMap::new(),

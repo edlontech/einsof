@@ -56,8 +56,6 @@ fn flow_decision(
 fn clear_agent_state(st: &mut KernelState, agent: &AgentId) {
     st.taint_levels.remove(agent);
     st.in_flight.remove(agent);
-    st.gh_taint_invoked.remove(agent);
-    st.gh_taint_received.remove(agent);
     st.agent_instruction.remove(agent);
     st.override_used.remove(agent);
     st.flow_override.remove(agent);
@@ -430,7 +428,6 @@ pub fn invoke_complete<F: ConformanceOracle>(
                 st.debit_budget(&agent, weight);
             } else {
                 st.taint_levels.insert_into(agent.clone(), conf_floor);
-                st.gh_taint_invoked.insert_into(agent.clone(), conf_floor);
             }
         }
     }
@@ -524,7 +521,6 @@ pub fn return_unendorsed<C: ContentGateOracle>(
 
     if !child_taint.is_empty() {
         st.taint_levels.extend_into(parent.clone(), &child_taint);
-        st.gh_taint_received.extend_into(parent.clone(), &child_taint);
     }
 
     if !acc.to_consume.is_empty() {
@@ -580,7 +576,6 @@ pub fn sentinel_elevate_taint<C: ContentGateOracle>(
     }
 
     st.taint_levels.insert_into(agent.clone(), level);
-    st.gh_taint_invoked.insert_into(agent.clone(), level);
 
     Ok((st, KernelAction::SentinelElevateTaint { agent, level }))
 }
@@ -1046,13 +1041,6 @@ mod tests {
                 .unwrap()
                 .contains(&ConfLevel::Sensitive)
         );
-        assert!(
-            new_state
-                .gh_taint_invoked
-                .get(&agent)
-                .unwrap()
-                .contains(&ConfLevel::Sensitive)
-        );
         assert_eq!(action, KernelAction::InvokeComplete { agent, inv });
     }
 
@@ -1377,13 +1365,6 @@ mod tests {
         assert!(
             new_state
                 .taint_levels
-                .get(&AgentId::root())
-                .unwrap()
-                .contains(&ConfLevel::Sensitive)
-        );
-        assert!(
-            new_state
-                .gh_taint_received
                 .get(&AgentId::root())
                 .unwrap()
                 .contains(&ConfLevel::Sensitive)
