@@ -1,283 +1,224 @@
-import ArgusLean.Refinement.Unified.Bridges
+import ArgusLean.Refinement.Unified.Preservation.InvokeStart
 
 /-! # Layer 1 — `return_unendorsed` preserves the unified `R`
 
-Proved by **reuse** of `return_unendorsed_refines`: `Rretu` carries no budget clause and already reads
-every field through `R`'s canonical views (`vmsMemLast` for the propagated `taint_levels` /
-`gh_taint_received`, the get-style `vmLastEntry` parent edge), so it projects cleanly from `R` and its
-output covers 11 of the unified conjuncts verbatim — no taint/gh view bridge is needed (unlike
-`sentinel_elevate_taint`). The remaining conjuncts (the untouched fields + the three written maps' nodup
-posts + the full metadata `wfInflight`) transport via the abstract frames (`hnext`), the concrete frames
-+ nodup posts (`return_unendorsed_inv_full`), and `R.wfInflight`. The content gate is the one opaque
-oracle (`cgOf`/`hcg`/`hcgA`, from `CgAgree` in the bundle). -/
+V3 rewrite (design §5.6 row, task 11): the parent inherits the child's conf taint set AND (new)
+its integ set. The conf inheritance is flow-gated per (child level × parent in-flight invocation ×
+that invocation's ATTESTED egress) — the gate now reads `invocation_egress` (per-invocation
+verdicts) instead of the V2 static tool egress — with the vouch keyed on the in-flight invocation
+(`invocation_gate_passes I`) and the usual single-use override arm. The integ inheritance is gated
+against every parent in-flight tool's OWN integrity floor (graduated, vouchable, NO override arm).
+Override consumption is EAGER (design §5.3): an armed `(parent, tool(I), L)` is marked used
+whenever the gate examined it — no denial conjunct, mirroring `invoke_start`'s loops 6/7.
+
+Structure: two gate loop pairs (outer over the child's set × inner over the parent's flights),
+one consumption loop pair, then the two set inheritances (`extend_into`, skipped when the child's
+set is empty) and the conditional `override_used` extension. Imports the `InvokeStart` module for
+`not_egressDenied_disj` (the shared gate-disjunction splitter). -/
 
 namespace ArgusLean.Refinement
 
 open Aeneas Aeneas.Std Result ControlFlow argus_kernel
 open Aeneas.Std.WP
-set_option Aeneas.Deprecated.progressWarning false
 
 set_option maxHeartbeats 4000000
 
-/-! ## The in-flight loop (inner, per-level) -/
+/-- `le_integ` with the abstracted concrete level on the LEFT is the kernel's rank compare —
+    the mirrored companion of `le_integ_integLeC` (also used, file-locally, by `ReturnEndorsed`). -/
+private theorem le_integ_integLeC' (c : types.IntegLevel) (L : Tzimtzum.IntegLevel) :
+    Tzimtzum.le_integ (integA c) L ↔ integLeC c (integC L) = true := by
+  cases c <;> cases L <;> simp [Tzimtzum.le_integ, Tzimtzum.integRank, integA, integC, integLeC]
 
-/-- Generalised spec for `return_unendorsed_loop0_loop0`, the per-level inner loop. Identical in shape
-    to `sentinelLoop_spec` minus the `missing_binding` flag: after scanning the prefix `[0, fi)` of
-    `invs` the running accumulator's `denied`/`to_consume` are exactly the reference `accStart` extended
-    by the per-invocation contributions over that prefix; `to_consume` stays `Nodup` and short of
-    `Usize.max`. An unbound invocation (`invToolC = none`) contributes nothing (the kernel returns the
-    accumulator unchanged) — consistent with `invDenied`/`invConsumed` being vacuous there. The agent
-    is `parent`; the per-tool oracle values `cgOf`/`ovOf`/`ocOf` carry their `= .ok` agreements. -/
-theorem returnUnendInner_spec {C : Type} (cgInst : traits.ContentGateOracle C)
+/-! ## Conf gate: inner loop (per child taint level, over the parent's flights) -/
+
+/-- `return_unendorsed_loop0_loop0` folds `gate_egress` at the fixed child `level`, one parent
+    in-flight invocation at a time (looking up its bound tool and stored attested egress);
+    unbound invocations leave `denied` unchanged. Mirror of `invokeStartLoop3_spec`. -/
+theorem returnUnendConfInner_spec {C : Type} (cgInst : traits.ContentGateOracle C)
     (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
     (parent : types.AgentId) (level : types.ConfLevel)
-    (cgOf ovOf ocOf : types.ToolId → Bool)
-    (hcg : ∀ t, cgInst.passes content_gate parent t st bg = .ok (cgOf t))
+    (cgOf : types.ToolId → types.InvocationId → Bool)
+    (hcg : ∀ t I, cgInst.passes content_gate parent t I st bg = .ok (cgOf t I))
+    (ovOf ocOf : types.ToolId → Bool)
     (hov : ∀ t, state.KernelState.has_flow_override st parent t level = .ok (ovOf t))
     (hoc : ∀ t, state.KernelState.override_consumed st parent t level = .ok (ocOf t))
-    (invs : collections.VecSet types.InvocationId)
-    (accStart : transitions.GateAccum)
-    (hcapS : accStart.to_consume.items.val.length + invs.items.val.length ≤ Usize.max)
-    (acc : transitions.GateAccum) (fi : Usize)
-    (hfi : fi.val ≤ invs.items.val.length)
-    (hnd : acc.to_consume.items.val.Nodup)
-    (hlen : acc.to_consume.items.val.length ≤ accStart.to_consume.items.val.length + fi.val)
-    (hden : acc.denied = true ↔ accStart.denied = true ∨
-      ∃ inv ∈ invs.items.val.take fi.val, invDenied st bg level cgOf ovOf ocOf inv)
-    (hcon : ∀ k, vsMem acc.to_consume k ↔ vsMem accStart.to_consume k ∨
-      ∃ inv ∈ invs.items.val.take fi.val, invConsumed st bg level ovOf ocOf inv k) :
+    (parent_flights : collections.VecSet types.InvocationId) (denied0 denied : Bool) (fi : Usize)
+    (hfi : fi.val ≤ parent_flights.items.val.length)
+    (hden : denied = true ↔ denied0 = true ∨
+      ∃ flight_inv ∈ parent_flights.items.val.take fi.val, ∃ t, invToolC st flight_inv = some t ∧
+        ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+          egressDenied (flowModeC bg level E) (cgOf t flight_inv) (ovOf t) (ocOf t)) :
     transitions.return_unendorsed_loop0_loop0 cgInst st.agent_active st.agent_parent st.agent_cap
-      st.taint_levels st.in_flight st.invocation_tool st.tool_registered st.gh_taint_invoked
-      st.gh_taint_received st.agent_instruction st.override_used st.flow_override st.agent_budget
-      bg content_gate parent acc invs level fi ⦃ res =>
-      (res.denied = true ↔ accStart.denied = true ∨
-        ∃ inv ∈ invs.items.val, invDenied st bg level cgOf ovOf ocOf inv) ∧
-      (∀ k, vsMem res.to_consume k ↔ vsMem accStart.to_consume k ∨
-        ∃ inv ∈ invs.items.val, invConsumed st bg level ovOf ocOf inv k) ∧
-      res.to_consume.items.val.Nodup ∧
-      res.to_consume.items.val.length ≤
-        accStart.to_consume.items.val.length + invs.items.val.length ⦄ := by
+      st.taint_levels st.integ_levels st.in_flight st.invocation_tool st.invocation_used
+      st.invocation_egress st.tool_registered st.agent_instruction st.override_used
+      st.flow_override st.agent_budget bg content_gate parent denied parent_flights level fi
+      ⦃ res =>
+      res = true ↔ denied0 = true ∨
+        ∃ flight_inv ∈ parent_flights.items.val, ∃ t, invToolC st flight_inv = some t ∧
+          ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+            egressDenied (flowModeC bg level E) (cgOf t flight_inv) (ovOf t) (ocOf t) ⦄ := by
   unfold transitions.return_unendorsed_loop0_loop0
+  have hst : ((⟨st.agent_active, st.agent_parent, st.agent_cap, st.taint_levels, st.integ_levels,
+      st.in_flight, st.invocation_tool, st.invocation_used, st.invocation_egress,
+      st.tool_registered, st.agent_instruction, st.override_used, st.flow_override,
+      st.agent_budget⟩ : state.KernelState)) = st := by cases st; rfl
   apply loop.spec_decr_nat
-    (measure := fun p => invs.items.val.length - p.2.val)
-    (inv := fun p => p.2.val ≤ invs.items.val.length ∧ p.1.to_consume.items.val.Nodup ∧
-      p.1.to_consume.items.val.length ≤ accStart.to_consume.items.val.length + p.2.val ∧
-      (p.1.denied = true ↔ accStart.denied = true ∨
-        ∃ inv ∈ invs.items.val.take p.2.val, invDenied st bg level cgOf ovOf ocOf inv) ∧
-      (∀ k, vsMem p.1.to_consume k ↔ vsMem accStart.to_consume k ∨
-        ∃ inv ∈ invs.items.val.take p.2.val, invConsumed st bg level ovOf ocOf inv k))
-  · rintro ⟨accL, iL⟩ ⟨hile, hndL, hlenL, hdenL, hconL⟩
-    dsimp only at hile hndL hlenL hdenL hconL ⊢
+    (measure := fun p => parent_flights.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ parent_flights.items.val.length ∧
+      (p.1 = true ↔ denied0 = true ∨
+        ∃ flight_inv ∈ parent_flights.items.val.take p.2.val, ∃ t,
+          invToolC st flight_inv = some t ∧
+          ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+            egressDenied (flowModeC bg level E) (cgOf t flight_inv) (ovOf t) (ocOf t)))
+  · rintro ⟨deniedL, fiL⟩ ⟨hile, hdenL⟩
+    dsimp only at hile hdenL ⊢
     simp only [transitions.return_unendorsed_loop0_loop0.body, collections.VecSet.len,
       collections.VecSet.at, bind_tc_ok]
     split
     case isTrue h =>
-      have hlt : iL.val < invs.items.val.length := by scalar_tac
-      step as ⟨inv, hinv⟩
+      have hlt : fiL.val < parent_flights.items.val.length := by scalar_tac
+      step as ⟨flight_inv, hflight_inv⟩
+      obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+        (vecMapGetCloned_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
+          types.ToolId.Insts.CoreCloneClone toolId_clone_spec st.invocation_tool flight_inv)
+      rw [hoEq]; simp only [bind_tc_ok]
+      have hi2 : ∀ (i2 : Usize), i2.val = fiL.val + 1 →
+          parent_flights.items.val.take i2.val = parent_flights.items.val.take (fiL.val + 1) :=
+        fun i2 h2 => by rw [h2]
       have hext : ∀ (P : types.InvocationId → Prop),
-          (∃ x ∈ invs.items.val.take (iL.val + 1), P x) ↔
-          (∃ x ∈ invs.items.val.take iL.val, P x) ∨ P inv := by
+          (∃ x ∈ parent_flights.items.val.take (fiL.val + 1), P x) ↔
+          (∃ x ∈ parent_flights.items.val.take fiL.val, P x) ∨ P flight_inv := by
         intro P
         simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
         constructor
         · rintro ⟨x, hx | hx, hPx⟩
           · exact Or.inl ⟨x, hx, hPx⟩
-          · subst hx; rw [hinv]; exact Or.inr hPx
+          · subst hx; rw [hflight_inv]; exact Or.inr hPx
         · rintro (⟨x, hx, hPx⟩ | hPi)
           · exact ⟨x, Or.inl hx, hPx⟩
-          · exact ⟨inv, Or.inr hinv, hPi⟩
-      have hi2 : ∀ (i2 : Usize), i2.val = iL.val + 1 →
-          invs.items.val.take i2.val = invs.items.val.take (iL.val + 1) := fun i2 h2 => by rw [h2]
-      obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
-        (vecMapGetCloned_spec types.InvocationId.Insts.CoreCloneClone
-          types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
-          types.ToolId.Insts.CoreCloneClone toolId_clone_spec st.invocation_tool inv)
-      rw [hoEq]; simp only [bind_tc_ok]
-      have hoInv : o = invToolC st inv := by rw [ho]; rfl
+          · exact ⟨flight_inv, Or.inr hflight_inv, hPi⟩
       cases hocase : o with
       | none =>
-        rw [hocase] at hoInv
-        have hmiss : invToolC st inv = none := hoInv.symm
-        have hndd : ¬ invDenied st bg level cgOf ovOf ocOf inv := not_invDenied_missing hmiss
+        have hnone : invToolC st flight_inv = none := by unfold invToolC; rw [← ho]; exact hocase
+        have hnf : ¬ ∃ t, invToolC st flight_inv = some t ∧
+            ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+              egressDenied (flowModeC bg level E) (cgOf t flight_inv) (ovOf t) (ocOf t) := by
+          rintro ⟨t, ht, _⟩; rw [hnone] at ht; simp at ht
         simp only [bind_tc_ok]
         step*
-        refine ⟨by scalar_tac, hndL, by scalar_tac, ?_, ?_, by scalar_tac⟩
-        · rw [hi2 _ fi1_post, hext (invDenied st bg level cgOf ovOf ocOf), hdenL]
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [hi2 _ fi1_post, hext, hdenL]
+        constructor
+        · rintro (hA | hB)
+          · exact Or.inl hA
+          · exact Or.inr (Or.inl hB)
+        · rintro (hA | hB | hC)
+          · exact Or.inl hA
+          · exact Or.inr hB
+          · exact absurd hC hnf
+      | some flight_tool_id =>
+        have hsome : invToolC st flight_inv = some flight_tool_id := by
+          unfold invToolC; rw [← ho]; exact hocase
+        obtain ⟨flight_egress, hfeEq, hfeMem⟩ := spec_imp_exists
+          (getSetOrEmpty_spec types.InvocationId.Insts.CoreCloneClone
+            types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
+            types.EgressKind.Insts.CoreCloneClone types.EgressKind.Insts.CoreCmpPartialEqEgressKind
+            egressKind_clone_spec st.invocation_egress flight_inv)
+        rw [hfeEq]; simp only [bind_tc_ok]
+        rw [hst]
+        obtain ⟨d2, hd2Eq, hd2Iff⟩ := spec_imp_exists
+          (gateEgress_spec cgInst bg content_gate parent flight_tool_id flight_inv st level
+            flight_egress (cgOf flight_tool_id flight_inv) (ovOf flight_tool_id)
+            (ocOf flight_tool_id) (hcg flight_tool_id flight_inv) (hov flight_tool_id)
+            (hoc flight_tool_id) (flowModeC bg level) (flowMode_eq bg level) deniedL)
+        rw [hd2Eq]; simp only [bind_tc_ok]
+        have hexPack : (∃ E ∈ flight_egress.items.val,
+            egressDenied (flowModeC bg level E) (cgOf flight_tool_id flight_inv)
+              (ovOf flight_tool_id) (ocOf flight_tool_id)) ↔
+            (∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+              egressDenied (flowModeC bg level E) (cgOf flight_tool_id flight_inv)
+                (ovOf flight_tool_id) (ocOf flight_tool_id)) := by
           constructor
-          · rintro (hA | hB)
-            · exact Or.inl hA
-            · exact Or.inr (Or.inl hB)
-          · rintro (hA | hB | hC)
-            · exact Or.inl hA
-            · exact Or.inr hB
-            · exact absurd hC hndd
-        · intro k
-          have hncc : ¬ invConsumed st bg level ovOf ocOf inv k := not_invConsumed_missing hmiss
-          rw [hi2 _ fi1_post, hext (fun i => invConsumed st bg level ovOf ocOf i k), hconL k]
-          constructor
-          · rintro (hA | hB)
-            · exact Or.inl hA
-            · exact Or.inr (Or.inl hB)
-          · rintro (hA | hB | hC)
-            · exact Or.inl hA
-            · exact Or.inr hB
-            · exact absurd hC hncc
-      | some tool =>
-        rw [hocase] at hoInv
-        have hsome : invToolC st inv = some tool := hoInv.symm
-        simp only []
-        obtain ⟨tmeta, hmetaEq, hmeta⟩ := spec_imp_exists (toolMetadata_spec bg tool)
-        rw [hmetaEq]; simp only [bind_tc_ok]
-        have hcapAcc : accL.to_consume.items.val.length < Usize.max := by
-          have := hlenL; have := hlt; have := hcapS; omega
-        have hst : ((⟨st.agent_active, st.agent_parent, st.agent_cap, st.taint_levels,
-            st.in_flight, st.invocation_tool, st.tool_registered, st.gh_taint_invoked,
-            st.gh_taint_received, st.agent_instruction, st.override_used, st.flow_override,
-            st.agent_budget⟩ : state.KernelState)) = st := by cases st; rfl
-        have htail : ∀ (eg : collections.VecSet types.EgressKind),
-            eg.items.val = egItems bg tool →
-            transitions.gate_egress cgInst bg content_gate parent tool st level eg accL ⦃ acc2 =>
-              acc2.to_consume.items.val.Nodup ∧
-              acc2.to_consume.items.val.length ≤
-                accStart.to_consume.items.val.length + (iL.val + 1) ∧
-              (acc2.denied = true ↔ accStart.denied = true ∨
-                ∃ inv ∈ invs.items.val.take (iL.val + 1),
-                  invDenied st bg level cgOf ovOf ocOf inv) ∧
-              (∀ k, vsMem acc2.to_consume k ↔ vsMem accStart.to_consume k ∨
-                ∃ inv ∈ invs.items.val.take (iL.val + 1),
-                  invConsumed st bg level ovOf ocOf inv k) ⦄ := by
-          intro eg hegItems
-          obtain ⟨acc2, hacc2Eq, hDenied, hConsume, hNd2⟩ := spec_imp_exists
-            (gateEgress_spec cgInst bg content_gate parent tool st level eg
-              (cgOf tool) (ovOf tool) (ocOf tool) (hcg tool) (hov tool) (hoc tool)
-              (flowModeC bg level) (flowMode_eq bg level) accL hcapAcc hndL)
-          rw [hacc2Eq]; simp only [spec_ok]
-          have hInvDen : invDenied st bg level cgOf ovOf ocOf inv ↔
-              ∃ E ∈ eg.items.val,
-                egressDenied (flowModeC bg level E) (cgOf tool) (ovOf tool) (ocOf tool) := by
-            rw [invDenied, hegItems]
-            constructor
-            · rintro ⟨tool', htool', hE⟩; rw [hsome, Option.some_inj] at htool'; subst htool'; exact hE
-            · intro hE; exact ⟨tool, hsome, hE⟩
-          have hInvCon : ∀ k, invConsumed st bg level ovOf ocOf inv k ↔
-              (k = gateConsumeKey tool level ∧ ∃ E ∈ eg.items.val,
-                egressConsumed (flowModeC bg level E) (ovOf tool) (ocOf tool)) := by
-            intro k; rw [invConsumed, hegItems]
-            constructor
-            · rintro ⟨tool', htool', hk, hE⟩
-              rw [hsome, Option.some_inj] at htool'; subst htool'; exact ⟨hk, hE⟩
-            · rintro ⟨hk, hE⟩; exact ⟨tool, hsome, hk, hE⟩
-          refine ⟨hNd2, ?_, ?_, ?_⟩
-          · have hsub : acc2.to_consume.items.val ⊆
-                accL.to_consume.items.val ++ [gateConsumeKey tool level] := by
-              intro x hx
-              rcases (hConsume x).mp hx with hxL | ⟨hxk, _⟩
-              · exact List.mem_append_left _ hxL
-              · exact List.mem_append_right _ (by rw [hxk]; exact List.mem_singleton.mpr rfl)
-            have hle := (List.Nodup.subperm hNd2 hsub).length_le
-            rw [List.length_append, List.length_singleton] at hle
-            omega
-          · rw [hDenied, hext (invDenied st bg level cgOf ovOf ocOf), hdenL, hInvDen, or_assoc]
-          · intro k
-            rw [hConsume k, hext (fun i => invConsumed st bg level ovOf ocOf i k), hconL k,
-              hInvCon k, or_assoc]
-        cases htm : tmeta with
-        | none =>
-          simp only [collections.VecSet.new, bind_tc_ok]
-          rw [hst]
-          obtain ⟨acc2, hacc2Eq, hNd2, hlen2, hDen2, hCon2⟩ := spec_imp_exists
-            (htail ⟨alloc.vec.Vec.new types.EgressKind⟩ (by simp [egItems, ← hmeta, htm]))
-          rw [hacc2Eq]; simp only [bind_tc_ok]; step*
-          exact ⟨by scalar_tac, hNd2,
-            by rw [show fi1.val = iL.val + 1 from fi1_post]; exact hlen2,
-            by rw [hi2 _ fi1_post]; exact hDen2,
-            by intro k; rw [hi2 _ fi1_post]; exact hCon2 k, by scalar_tac⟩
-        | some m =>
-          simp only []
-          rw [vecSetClone_spec types.EgressKind.Insts.CoreCloneClone egressKind_clone_spec m.egress]
-          simp only [bind_tc_ok]
-          rw [hst]
-          obtain ⟨acc2, hacc2Eq, hNd2, hlen2, hDen2, hCon2⟩ := spec_imp_exists
-            (htail m.egress (by simp [egItems, ← hmeta, htm]))
-          rw [hacc2Eq]; simp only [bind_tc_ok]; step*
-          exact ⟨by scalar_tac, hNd2,
-            by rw [show fi1.val = iL.val + 1 from fi1_post]; exact hlen2,
-            by rw [hi2 _ fi1_post]; exact hDen2,
-            by intro k; rw [hi2 _ fi1_post]; exact hCon2 k, by scalar_tac⟩
+          · rintro ⟨E, hE, hden⟩; exact ⟨E, (hfeMem E).mp hE, hden⟩
+          · rintro ⟨E, hE, hden⟩; exact ⟨E, (hfeMem E).mpr hE, hden⟩
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [hi2 _ fi1_post, hext, hd2Iff, hexPack, hdenL]
+        constructor
+        · rintro ((hA1 | hA2) | hC)
+          · exact Or.inl hA1
+          · exact Or.inr (Or.inl hA2)
+          · exact Or.inr (Or.inr ⟨flight_tool_id, hsome, hC⟩)
+        · rintro (hA | hB | ⟨t, ht, hE⟩)
+          · exact Or.inl (Or.inl hA)
+          · exact Or.inl (Or.inr hB)
+          · rw [hsome, Option.some_inj] at ht; subst ht; exact Or.inr hE
     case isFalse h =>
-      have heq' : iL.val = invs.items.val.length := by scalar_tac
-      rw [heq'] at hlenL
-      simp only [spec_ok, heq', List.take_length] at hdenL hconL ⊢
-      exact ⟨hdenL, hconL, hndL, hlenL⟩
-  · exact ⟨hfi, hnd, hlen, hden, hcon⟩
+      have heq' : fiL.val = parent_flights.items.val.length := by scalar_tac
+      simp only [spec_ok, heq', List.take_length] at hdenL ⊢
+      exact hdenL
+  · exact ⟨hfi, hden⟩
 
-/-! ## The outer loop (over child taint levels)
+/-! ## Conf gate: outer loop (over the child's taint levels) -/
 
-`return_unendorsed_loop0` folds the inner loop over `child_taint`'s levels, threading the accumulator.
-The final `denied`/`to_consume` accumulate the per-invocation contributions over **all** `(level, inv)`
-pairs (`level ∈ child_taint`, `inv ∈ parent_flights`), with the level-indexed oracles `ovC bg parent
-level` / `ocC st parent level`. The capacity bound is the product `|child_taint| * |parent_flights|`
-(each level adds at most `|parent_flights|` keys); `cgOf` is level-independent. -/
-
-theorem returnUnendOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
+/-- `return_unendorsed_loop0` folds the inner gate loop over every child taint level. -/
+theorem returnUnendConfOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
     (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
     (parent : types.AgentId)
-    (cgOf : types.ToolId → Bool)
-    (hcg : ∀ t, cgInst.passes content_gate parent t st bg = .ok (cgOf t))
+    (cgOf : types.ToolId → types.InvocationId → Bool)
+    (hcg : ∀ t I, cgInst.passes content_gate parent t I st bg = .ok (cgOf t I))
+    (ovOf ocOf : types.ConfLevel → types.ToolId → Bool)
+    (hov : ∀ L t, state.KernelState.has_flow_override st parent t L = .ok (ovOf L t))
+    (hoc : ∀ L t, state.KernelState.override_consumed st parent t L = .ok (ocOf L t))
     (child_taint : collections.VecSet types.ConfLevel)
     (parent_flights : collections.VecSet types.InvocationId)
-    (accStart : transitions.GateAccum)
-    (hcap : accStart.to_consume.items.val.length
-        + child_taint.items.val.length * parent_flights.items.val.length ≤ Usize.max)
-    (acc : transitions.GateAccum) (li : Usize)
+    (denied0 denied : Bool) (li : Usize)
     (hli : li.val ≤ child_taint.items.val.length)
-    (hnd : acc.to_consume.items.val.Nodup)
-    (hlen : acc.to_consume.items.val.length
-        ≤ accStart.to_consume.items.val.length + li.val * parent_flights.items.val.length)
-    (hden : acc.denied = true ↔ accStart.denied = true ∨
-      ∃ level ∈ child_taint.items.val.take li.val, ∃ inv ∈ parent_flights.items.val,
-        invDenied st bg level cgOf (ovC st parent level) (ocC st parent level) inv)
-    (hcon : ∀ k, vsMem acc.to_consume k ↔ vsMem accStart.to_consume k ∨
-      ∃ level ∈ child_taint.items.val.take li.val, ∃ inv ∈ parent_flights.items.val,
-        invConsumed st bg level (ovC st parent level) (ocC st parent level) inv k) :
+    (hden : denied = true ↔ denied0 = true ∨
+      ∃ L ∈ child_taint.items.val.take li.val,
+        ∃ flight_inv ∈ parent_flights.items.val, ∃ t, invToolC st flight_inv = some t ∧
+          ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+            egressDenied (flowModeC bg L E) (cgOf t flight_inv) (ovOf L t) (ocOf L t)) :
     transitions.return_unendorsed_loop0 cgInst st.agent_active st.agent_parent st.agent_cap
-      st.taint_levels st.in_flight st.invocation_tool st.tool_registered st.gh_taint_invoked
-      st.gh_taint_received st.agent_instruction st.override_used st.flow_override st.agent_budget
-      bg content_gate parent child_taint acc parent_flights li ⦃ res =>
-      (res.denied = true ↔ accStart.denied = true ∨
-        ∃ level ∈ child_taint.items.val, ∃ inv ∈ parent_flights.items.val,
-          invDenied st bg level cgOf (ovC st parent level) (ocC st parent level) inv) ∧
-      (∀ k, vsMem res.to_consume k ↔ vsMem accStart.to_consume k ∨
-        ∃ level ∈ child_taint.items.val, ∃ inv ∈ parent_flights.items.val,
-          invConsumed st bg level (ovC st parent level) (ocC st parent level) inv k) ∧
-      res.to_consume.items.val.Nodup ∧
-      res.to_consume.items.val.length ≤
-        accStart.to_consume.items.val.length
-          + child_taint.items.val.length * parent_flights.items.val.length ⦄ := by
+      st.taint_levels st.integ_levels st.in_flight st.invocation_tool st.invocation_used
+      st.invocation_egress st.tool_registered st.agent_instruction st.override_used
+      st.flow_override st.agent_budget bg content_gate parent child_taint denied parent_flights li
+      ⦃ res =>
+      res = true ↔ denied0 = true ∨
+        ∃ L ∈ child_taint.items.val,
+          ∃ flight_inv ∈ parent_flights.items.val, ∃ t, invToolC st flight_inv = some t ∧
+            ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+              egressDenied (flowModeC bg L E) (cgOf t flight_inv) (ovOf L t) (ocOf L t) ⦄ := by
   unfold transitions.return_unendorsed_loop0
   apply loop.spec_decr_nat
     (measure := fun p => child_taint.items.val.length - p.2.val)
-    (inv := fun p => p.2.val ≤ child_taint.items.val.length ∧ p.1.to_consume.items.val.Nodup ∧
-      p.1.to_consume.items.val.length ≤
-        accStart.to_consume.items.val.length + p.2.val * parent_flights.items.val.length ∧
-      (p.1.denied = true ↔ accStart.denied = true ∨
-        ∃ level ∈ child_taint.items.val.take p.2.val, ∃ inv ∈ parent_flights.items.val,
-          invDenied st bg level cgOf (ovC st parent level) (ocC st parent level) inv) ∧
-      (∀ k, vsMem p.1.to_consume k ↔ vsMem accStart.to_consume k ∨
-        ∃ level ∈ child_taint.items.val.take p.2.val, ∃ inv ∈ parent_flights.items.val,
-          invConsumed st bg level (ovC st parent level) (ocC st parent level) inv k))
-  · rintro ⟨accL, iL⟩ ⟨hile, hndL, hlenL, hdenL, hconL⟩
-    dsimp only at hile hndL hlenL hdenL hconL ⊢
+    (inv := fun p => p.2.val ≤ child_taint.items.val.length ∧
+      (p.1 = true ↔ denied0 = true ∨
+        ∃ L ∈ child_taint.items.val.take p.2.val,
+          ∃ flight_inv ∈ parent_flights.items.val, ∃ t, invToolC st flight_inv = some t ∧
+            ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+              egressDenied (flowModeC bg L E) (cgOf t flight_inv) (ovOf L t) (ocOf L t)))
+  · rintro ⟨deniedL, liL⟩ ⟨hile, hdenL⟩
+    dsimp only at hile hdenL ⊢
     simp only [transitions.return_unendorsed_loop0.body, collections.VecSet.len,
       collections.VecSet.at, bind_tc_ok]
     split
     case isTrue h =>
-      have hlt : iL.val < child_taint.items.val.length := by scalar_tac
+      have hlt : liL.val < child_taint.items.val.length := by scalar_tac
       step as ⟨level, hlevel⟩
+      obtain ⟨d2, hd2Eq, hd2Iff⟩ := spec_imp_exists
+        (returnUnendConfInner_spec cgInst st bg content_gate parent level cgOf hcg
+          (ovOf level) (ocOf level) (hov level) (hoc level) parent_flights deniedL deniedL
+          0#usize (by simp) (by simp))
+      rw [hd2Eq]; simp only [bind_tc_ok]
+      have hi2 : ∀ (i2 : Usize), i2.val = liL.val + 1 →
+          child_taint.items.val.take i2.val = child_taint.items.val.take (liL.val + 1) :=
+        fun i2 h2 => by rw [h2]
       have hext : ∀ (P : types.ConfLevel → Prop),
-          (∃ x ∈ child_taint.items.val.take (iL.val + 1), P x) ↔
-          (∃ x ∈ child_taint.items.val.take iL.val, P x) ∨ P level := by
+          (∃ x ∈ child_taint.items.val.take (liL.val + 1), P x) ↔
+          (∃ x ∈ child_taint.items.val.take liL.val, P x) ∨ P level := by
         intro P
         simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
           List.mem_append, List.mem_singleton]
@@ -288,146 +229,564 @@ theorem returnUnendOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
         · rintro (⟨x, hx, hPx⟩ | hPi)
           · exact ⟨x, Or.inl hx, hPx⟩
           · exact ⟨level, Or.inr hlevel, hPi⟩
-      have hi2 : ∀ (i2 : Usize), i2.val = iL.val + 1 →
-          child_taint.items.val.take i2.val = child_taint.items.val.take (iL.val + 1) :=
-        fun i2 h2 => by rw [h2]
-      -- the inner loop at this level, started from the current outer accumulator
-      have hcapInner : accL.to_consume.items.val.length + parent_flights.items.val.length ≤
-          Usize.max := by
-        have hmul : (iL.val + 1) * parent_flights.items.val.length ≤
-            child_taint.items.val.length * parent_flights.items.val.length :=
-          Nat.mul_le_mul_right parent_flights.items.val.length (by omega)
-        have hexp : (iL.val + 1) * parent_flights.items.val.length =
-            iL.val * parent_flights.items.val.length + parent_flights.items.val.length := by ring
-        omega
-      obtain ⟨acc1, hacc1Eq, hDen1, hCon1, hNd1, hLen1⟩ := spec_imp_exists
-        (returnUnendInner_spec cgInst st bg content_gate parent level cgOf
-          (ovC st parent level) (ocC st parent level) hcg
-          (fun t => ovC_eq st parent level t) (fun t => ocC_eq st parent level t)
-          parent_flights accL hcapInner accL 0#usize (by simp) hndL (by simp) (by simp) (by simp))
-      rw [hacc1Eq]; simp only [bind_tc_ok]
       step*
-      refine ⟨by scalar_tac, hNd1, ?_, ?_, ?_, by scalar_tac⟩
-      · -- length: accL + pf ≤ accStart + (iL+1)*pf
-        rw [show li1.val = iL.val + 1 from li1_post]
-        have hexp : (iL.val + 1) * parent_flights.items.val.length =
-            iL.val * parent_flights.items.val.length + parent_flights.items.val.length := by ring
-        omega
-      · -- denied
-        rw [hi2 _ li1_post, hext (fun lev => ∃ inv ∈ parent_flights.items.val,
-          invDenied st bg lev cgOf (ovC st parent lev) (ocC st parent lev) inv), hDen1, hdenL,
-          or_assoc]
-      · -- consume
-        intro k
-        rw [hi2 _ li1_post, hCon1 k, hconL k,
-          hext (fun lev => ∃ inv ∈ parent_flights.items.val,
-            invConsumed st bg lev (ovC st parent lev) (ocC st parent lev) inv k), or_assoc]
+      refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+      rw [hi2 _ li1_post, hext, hd2Iff, hdenL]
+      constructor
+      · rintro ((hA | hB) | hC)
+        · exact Or.inl hA
+        · exact Or.inr (Or.inl hB)
+        · exact Or.inr (Or.inr hC)
+      · rintro (hA | hB | hC)
+        · exact Or.inl (Or.inl hA)
+        · exact Or.inl (Or.inr hB)
+        · exact Or.inr hC
     case isFalse h =>
-      have heq' : iL.val = child_taint.items.val.length := by scalar_tac
-      rw [heq'] at hlenL
-      simp only [spec_ok, heq', List.take_length] at hdenL hconL ⊢
-      exact ⟨hdenL, hconL, hndL, hlenL⟩
-  · exact ⟨hli, hnd, hlen, hden, hcon⟩
+      have heq' : liL.val = child_taint.items.val.length := by scalar_tac
+      simp only [spec_ok, heq', List.take_length] at hdenL ⊢
+      exact hdenL
+  · exact ⟨hli, hden⟩
 
-/-! ## Length-aware `get_set_or_empty`
+/-! ## Integ gate: inner loop (per child integ level, over the parent's flights) -/
 
-`get_set_or_empty self key` returns the live (last) `key`-keyed set; its membership is `vmsMemLast`
-and its length the closed form `vmSetLen` (`0` when the key is absent). The length-aware refinement of
-`getSetOrEmpty_spec`, used to phrase the loop / `extend_into` capacity bounds over `st`. (Generalises
-`getSetOrEmptyInFlight_spec` to any `K`/`T`; used for both `child_taint` and `parent_flights`.) -/
-
-/-! ## State relation `Rretu`
-
-The oracle-agreement relation for `return_unendorsed`. All four mutable fields it touches live in the
-**last-match** `vmsMemLast` world: `in_flight` (the `set_nonempty` child gate + the `get_set_or_empty`
-parent-flights read), `taint_levels` (the `get_set_or_empty` child read + the `extend_into` parent
-write), `gh_taint_received` (the `extend_into` parent write), `override_used` (the `override_consumed`
-read + the `extend_into` parent write). `agent_parent` is the get-style edge read (`vmLastEntry`, like
-the tree actions); `agent_active` is `vsMem`. The immutable flow oracles pin as in `Rsent`
-(`tool_egress`→`egItems`, `flow_allows`/`flow_inspects`→`flowModeC`, `flow_override`→override-entry
-membership, `invocation_tool` one-directional). `content_gate_passes` is the one opaque oracle. The
-last conjunct is the **well-formedness** invariant that every in-flight invocation is bound to a tool
-(maintained by `invoke_start`) — it rules out the kernel's silent skip of an unbound invocation, which
-the abstract guard (quantifying over the total `invocation_tool`) cannot see. -/
-def Rretu (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState) : Prop :=
-  (∀ x, a.agent_active x ↔ vsMem st.agent_active x) ∧
-  (∀ C P, a.agent_parent C P ↔ vmLastEntry st.agent_parent.entries.val C = some (C, P)) ∧
-  (∀ ag I, a.in_flight ag I ↔ vmsMemLast st.in_flight ag I) ∧
-  (∀ ag L, a.taint_levels ag L ↔ vmsMemLast st.taint_levels ag (confC L)) ∧
-  (∀ ag L, a.gh_taint_received ag L ↔ vmsMemLast st.gh_taint_received ag (confC L)) ∧
-  (∀ ag t L, a.override_used ag t L ↔
-    vmsMemLast st.override_used ag { tool := t, level := confC L }) ∧
-  (∀ T E, a.tool_egress T E ↔ E ∈ egItems bg T) ∧
-  (∀ L E, a.flow_allows L E ↔ ceilAdmitsC bg.allow_ceiling (confC L) E = true) ∧
-  (∀ L E, a.flow_inspects L E ↔ ceilAdmitsC bg.inspect_ceiling (confC L) E = true) ∧
-  (∀ A T L, a.flow_override A T L ↔
-    vmsMemLast st.flow_override A { tool := T, level := confC L }) ∧
-  (∀ I t, invToolC st I = some t → a.invocation_tool I = t) ∧
-  (∀ ag I, vmsMemLast st.in_flight ag I → invToolC st I ≠ none)
-
-/-! ## Inversion -/
-
-/-- Inversion lemma for a successful `return_unendorsed` step. Peels the parent-edge gate (`VecMap.get`
-    + `Option.ne`, like `return_endorsed`/`grant_capability`), the two active gates, the `set_nonempty`
-    child-in-flight gate, reads `child`'s taint (`child_taint`) and `parent`'s in-flight invocations
-    (`parent_flights`) via `get_set_or_empty`, runs the double loop (`returnUnendOuter_spec`), discharges
-    the `denied` error gate, and reads off the three writes uniformly across the `is_empty child_taint`
-    / `is_empty to_consume` branches (`extend_into` of `child_taint` into `taint_levels`/
-    `gh_taint_received`; of `to_consume` into `override_used`). The content gate is the supplied oracle
-    `cgOf`; `has_flow_override`/`override_consumed` are the proven `ovC`/`ocC` reductions. -/
-theorem return_unendorsed_ok_inv {C : Type} (cgInst : traits.ContentGateOracle C)
+/-- `return_unendorsed_loop1_loop0` folds `integ_decision` at the fixed child `level`, one parent
+    in-flight invocation at a time (each flight's OWN floor/inspect-floor); unbound invocations or
+    missing metadata leave `integ_denied` unchanged. Mirror of `invokeStartLoop5_spec`. -/
+theorem returnUnendIntegInner_spec {C : Type} (cgInst : traits.ContentGateOracle C)
     (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
-    (child parent : types.AgentId)
-    (cgOf : types.ToolId → Bool)
-    (hcg : ∀ t, cgInst.passes content_gate parent t st bg = .ok (cgOf t))
-    (hcapLoop : vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
+    (parent : types.AgentId) (level : types.IntegLevel)
+    (cgOf : types.ToolId → types.InvocationId → Bool)
+    (hcg : ∀ t I, cgInst.passes content_gate parent t I st bg = .ok (cgOf t I))
+    (parent_flights : collections.VecSet types.InvocationId) (denied0 denied : Bool) (fi : Usize)
+    (hfi : fi.val ≤ parent_flights.items.val.length)
+    (hden : denied = true ↔ denied0 = true ∨
+      ∃ flight_inv ∈ parent_flights.items.val.take fi.val, ∃ t tmeta,
+        invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+        ¬ (integLeC tmeta.integ_floor level = true
+            ∨ (integLeC tmeta.integ_inspect_floor level = true ∧ cgOf t flight_inv = true))) :
+    transitions.return_unendorsed_loop1_loop0 cgInst st.agent_active st.agent_parent st.agent_cap
+      st.taint_levels st.integ_levels st.in_flight st.invocation_tool st.invocation_used
+      st.invocation_egress st.tool_registered st.agent_instruction st.override_used
+      st.flow_override st.agent_budget bg content_gate parent parent_flights denied level fi
+      ⦃ res =>
+      res = true ↔ denied0 = true ∨
+        ∃ flight_inv ∈ parent_flights.items.val, ∃ t tmeta,
+          invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+          ¬ (integLeC tmeta.integ_floor level = true
+              ∨ (integLeC tmeta.integ_inspect_floor level = true ∧ cgOf t flight_inv = true)) ⦄ := by
+  unfold transitions.return_unendorsed_loop1_loop0
+  have hst : ((⟨st.agent_active, st.agent_parent, st.agent_cap, st.taint_levels, st.integ_levels,
+      st.in_flight, st.invocation_tool, st.invocation_used, st.invocation_egress,
+      st.tool_registered, st.agent_instruction, st.override_used, st.flow_override,
+      st.agent_budget⟩ : state.KernelState)) = st := by cases st; rfl
+  apply loop.spec_decr_nat
+    (measure := fun p => parent_flights.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ parent_flights.items.val.length ∧
+      (p.1 = true ↔ denied0 = true ∨
+        ∃ flight_inv ∈ parent_flights.items.val.take p.2.val, ∃ t tmeta,
+          invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+          ¬ (integLeC tmeta.integ_floor level = true
+              ∨ (integLeC tmeta.integ_inspect_floor level = true ∧ cgOf t flight_inv = true))))
+  · rintro ⟨deniedL, fiL⟩ ⟨hile, hdenL⟩
+    dsimp only at hile hdenL ⊢
+    simp only [transitions.return_unendorsed_loop1_loop0.body, collections.VecSet.len,
+      collections.VecSet.at, bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : fiL.val < parent_flights.items.val.length := by scalar_tac
+      step as ⟨flight_inv, hflight_inv⟩
+      obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+        (vecMapGetCloned_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
+          types.ToolId.Insts.CoreCloneClone toolId_clone_spec st.invocation_tool flight_inv)
+      rw [hoEq]; simp only [bind_tc_ok]
+      have hi2 : ∀ (i2 : Usize), i2.val = fiL.val + 1 →
+          parent_flights.items.val.take i2.val = parent_flights.items.val.take (fiL.val + 1) :=
+        fun i2 h2 => by rw [h2]
+      have hext : ∀ (P : types.InvocationId → Prop),
+          (∃ x ∈ parent_flights.items.val.take (fiL.val + 1), P x) ↔
+          (∃ x ∈ parent_flights.items.val.take fiL.val, P x) ∨ P flight_inv := by
+        intro P
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
+          List.mem_append, List.mem_singleton]
+        constructor
+        · rintro ⟨x, hx | hx, hPx⟩
+          · exact Or.inl ⟨x, hx, hPx⟩
+          · subst hx; rw [hflight_inv]; exact Or.inr hPx
+        · rintro (⟨x, hx, hPx⟩ | hPi)
+          · exact ⟨x, Or.inl hx, hPx⟩
+          · exact ⟨flight_inv, Or.inr hflight_inv, hPi⟩
+      cases hocase : o with
+      | none =>
+        have hnone : invToolC st flight_inv = none := by unfold invToolC; rw [← ho]; exact hocase
+        have hnf : ¬ ∃ t tmeta, invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+            ¬ (integLeC tmeta.integ_floor level = true
+                ∨ (integLeC tmeta.integ_inspect_floor level = true ∧ cgOf t flight_inv = true)) := by
+          rintro ⟨t, tmeta, ht, _⟩; rw [hnone] at ht; simp at ht
+        simp only [bind_tc_ok]
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [hi2 _ fi1_post, hext, hdenL]
+        constructor
+        · rintro (hA | hB)
+          · exact Or.inl hA
+          · exact Or.inr (Or.inl hB)
+        · rintro (hA | hB | hC)
+          · exact Or.inl hA
+          · exact Or.inr hB
+          · exact absurd hC hnf
+      | some flight_tool_id =>
+        have hsomeInv : invToolC st flight_inv = some flight_tool_id := by
+          unfold invToolC; rw [← ho]; exact hocase
+        simp only []
+        obtain ⟨o1, ho1Eq, ho1⟩ := spec_imp_exists (toolMetadata_spec bg flight_tool_id)
+        rw [ho1Eq]; simp only [bind_tc_ok]
+        cases hmcase : o1 with
+        | none =>
+          have hnm : toolMetaC bg flight_tool_id = none := by rw [← ho1]; exact hmcase
+          have hnf : ¬ ∃ t tmeta, invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+              ¬ (integLeC tmeta.integ_floor level = true
+                  ∨ (integLeC tmeta.integ_inspect_floor level = true
+                      ∧ cgOf t flight_inv = true)) := by
+            rintro ⟨t, tmeta, ht, hm, _⟩
+            rw [hsomeInv, Option.some_inj] at ht; subst ht; rw [hnm] at hm; simp at hm
+          simp only [bind_tc_ok]
+          step*
+          refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+          rw [hi2 _ fi1_post, hext, hdenL]
+          constructor
+          · rintro (hA | hB)
+            · exact Or.inl hA
+            · exact Or.inr (Or.inl hB)
+          · rintro (hA | hB | hC)
+            · exact Or.inl hA
+            · exact Or.inr hB
+            · exact absurd hC hnf
+        | some flight_meta =>
+          have hm : toolMetaC bg flight_tool_id = some flight_meta := by rw [← ho1]; exact hmcase
+          simp only []
+          rw [hst]
+          obtain ⟨id, hidEq, hidAllow, hidDeny⟩ := spec_imp_exists
+            (integDecision_spec cgInst content_gate parent flight_tool_id flight_inv st bg
+              flight_meta.integ_floor flight_meta.integ_inspect_floor level
+              (cgOf flight_tool_id flight_inv) (hcg flight_tool_id flight_inv))
+          rw [hidEq]
+          have hPcur : (∃ t tmeta, invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+                ¬ (integLeC tmeta.integ_floor level = true
+                    ∨ (integLeC tmeta.integ_inspect_floor level = true
+                        ∧ cgOf t flight_inv = true))) ↔
+              ¬ (integLeC flight_meta.integ_floor level = true
+                  ∨ (integLeC flight_meta.integ_inspect_floor level = true
+                      ∧ cgOf flight_tool_id flight_inv = true)) := by
+            constructor
+            · rintro ⟨t, tmeta, ht, hmm, hc⟩
+              rw [hsomeInv, Option.some_inj] at ht; subst ht
+              rw [hm, Option.some_inj] at hmm; subst hmm; exact hc
+            · intro hc; exact ⟨flight_tool_id, flight_meta, hsomeInv, hm, hc⟩
+          cases id with
+          | Allowed =>
+            have hnd : ¬ ¬ (integLeC flight_meta.integ_floor level = true
+                ∨ (integLeC flight_meta.integ_inspect_floor level = true
+                    ∧ cgOf flight_tool_id flight_inv = true)) := fun hc => hc (hidAllow.mp rfl)
+            simp only [bind_tc_ok]
+            step*
+            refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+            rw [hi2 _ fi1_post, hext, hPcur, hdenL]
+            constructor
+            · rintro (hA | hB)
+              · exact Or.inl hA
+              · exact Or.inr (Or.inl hB)
+            · rintro (hA | hB | hC)
+              · exact Or.inl hA
+              · exact Or.inr hB
+              · exact absurd hC hnd
+          | Denied =>
+            have hd : ¬ (integLeC flight_meta.integ_floor level = true
+                ∨ (integLeC flight_meta.integ_inspect_floor level = true
+                    ∧ cgOf flight_tool_id flight_inv = true)) := hidDeny.mp rfl
+            simp only [bind_tc_ok]
+            step*
+            refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+            rw [hi2 _ fi1_post, hext]
+            exact ⟨fun _ => Or.inr (Or.inr (hPcur.mpr hd)), fun _ => trivial⟩
+    case isFalse h =>
+      have heq' : fiL.val = parent_flights.items.val.length := by scalar_tac
+      simp only [spec_ok, heq', List.take_length] at hdenL ⊢
+      exact hdenL
+  · exact ⟨hfi, hden⟩
+
+/-! ## Integ gate: outer loop (over the child's integ levels) -/
+
+/-- `return_unendorsed_loop1` folds the inner integ gate loop over every child integ level. -/
+theorem returnUnendIntegOuter_spec {C : Type} (cgInst : traits.ContentGateOracle C)
+    (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
+    (parent : types.AgentId)
+    (cgOf : types.ToolId → types.InvocationId → Bool)
+    (hcg : ∀ t I, cgInst.passes content_gate parent t I st bg = .ok (cgOf t I))
+    (parent_flights : collections.VecSet types.InvocationId)
+    (child_integ : collections.VecSet types.IntegLevel)
+    (denied0 denied : Bool) (igi : Usize)
+    (higi : igi.val ≤ child_integ.items.val.length)
+    (hden : denied = true ↔ denied0 = true ∨
+      ∃ L ∈ child_integ.items.val.take igi.val,
+        ∃ flight_inv ∈ parent_flights.items.val, ∃ t tmeta,
+          invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+          ¬ (integLeC tmeta.integ_floor L = true
+              ∨ (integLeC tmeta.integ_inspect_floor L = true ∧ cgOf t flight_inv = true))) :
+    transitions.return_unendorsed_loop1 cgInst st.agent_active st.agent_parent st.agent_cap
+      st.taint_levels st.integ_levels st.in_flight st.invocation_tool st.invocation_used
+      st.invocation_egress st.tool_registered st.agent_instruction st.override_used
+      st.flow_override st.agent_budget bg content_gate parent parent_flights child_integ denied
+      igi ⦃ res =>
+      res = true ↔ denied0 = true ∨
+        ∃ L ∈ child_integ.items.val,
+          ∃ flight_inv ∈ parent_flights.items.val, ∃ t tmeta,
+            invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+            ¬ (integLeC tmeta.integ_floor L = true
+                ∨ (integLeC tmeta.integ_inspect_floor L = true ∧ cgOf t flight_inv = true)) ⦄ := by
+  unfold transitions.return_unendorsed_loop1
+  apply loop.spec_decr_nat
+    (measure := fun p => child_integ.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ child_integ.items.val.length ∧
+      (p.1 = true ↔ denied0 = true ∨
+        ∃ L ∈ child_integ.items.val.take p.2.val,
+          ∃ flight_inv ∈ parent_flights.items.val, ∃ t tmeta,
+            invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+            ¬ (integLeC tmeta.integ_floor L = true
+                ∨ (integLeC tmeta.integ_inspect_floor L = true ∧ cgOf t flight_inv = true))))
+  · rintro ⟨deniedL, igiL⟩ ⟨hile, hdenL⟩
+    dsimp only at hile hdenL ⊢
+    simp only [transitions.return_unendorsed_loop1.body, collections.VecSet.len,
+      collections.VecSet.at, bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : igiL.val < child_integ.items.val.length := by scalar_tac
+      step as ⟨level, hlevel⟩
+      obtain ⟨d2, hd2Eq, hd2Iff⟩ := spec_imp_exists
+        (returnUnendIntegInner_spec cgInst st bg content_gate parent level cgOf hcg
+          parent_flights deniedL deniedL 0#usize (by simp) (by simp))
+      rw [hd2Eq]; simp only [bind_tc_ok]
+      have hi2 : ∀ (i2 : Usize), i2.val = igiL.val + 1 →
+          child_integ.items.val.take i2.val = child_integ.items.val.take (igiL.val + 1) :=
+        fun i2 h2 => by rw [h2]
+      have hext : ∀ (P : types.IntegLevel → Prop),
+          (∃ x ∈ child_integ.items.val.take (igiL.val + 1), P x) ↔
+          (∃ x ∈ child_integ.items.val.take igiL.val, P x) ∨ P level := by
+        intro P
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
+          List.mem_append, List.mem_singleton]
+        constructor
+        · rintro ⟨x, hx | hx, hPx⟩
+          · exact Or.inl ⟨x, hx, hPx⟩
+          · subst hx; rw [hlevel]; exact Or.inr hPx
+        · rintro (⟨x, hx, hPx⟩ | hPi)
+          · exact ⟨x, Or.inl hx, hPx⟩
+          · exact ⟨level, Or.inr hlevel, hPi⟩
+      step*
+      refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+      rw [hi2 _ igi1_post, hext, hd2Iff, hdenL]
+      constructor
+      · rintro ((hA | hB) | hC)
+        · exact Or.inl hA
+        · exact Or.inr (Or.inl hB)
+        · exact Or.inr (Or.inr hC)
+      · rintro (hA | hB | hC)
+        · exact Or.inl (Or.inl hA)
+        · exact Or.inl (Or.inr hB)
+        · exact Or.inr hC
+    case isFalse h =>
+      have heq' : igiL.val = child_integ.items.val.length := by scalar_tac
+      simp only [spec_ok, heq', List.take_length] at hdenL ⊢
+      exact hdenL
+  · exact ⟨higi, hden⟩
+
+/-! ## Eager consumption: inner loop (per child taint level, over the parent's flights) -/
+
+/-- `return_unendorsed_loop2_loop0` inserts `{flight_tool_id, level}` for every parent in-flight
+    invocation whose bound tool has an armed override at the fixed child `level` — unconditional
+    (eager consumption, no denial conjunct), mirroring `invokeStartLoop7_spec`. Stated over an
+    arbitrary state `st2` because the kernel threads the ALREADY-UPDATED taint/integ maps through
+    the loop's state fields (the loop only reads `invocation_tool` and `flow_override`). -/
+theorem returnUnendConsInner_spec
+    (st2 : state.KernelState) (parent : types.AgentId) (level : types.ConfLevel)
+    (parent_flights : collections.VecSet types.InvocationId)
+    (to_consume0 to_consume : collections.VecSet types.OverrideKey) (fi : Usize)
+    (hfi : fi.val ≤ parent_flights.items.val.length)
+    (hcap : to_consume0.items.val.length + parent_flights.items.val.length ≤ Usize.max)
+    (hlen : to_consume.items.val.length ≤ to_consume0.items.val.length + fi.val)
+    (hmem : ∀ k, vsMem to_consume k ↔ vsMem to_consume0 k ∨
+      ∃ flight_inv ∈ parent_flights.items.val.take fi.val, ∃ t,
+        invToolC st2 flight_inv = some t ∧
+        k = ({ tool := t, level := level } : types.OverrideKey) ∧
+        vmsMemLast st2.flow_override parent { tool := t, level := level }) :
+    transitions.return_unendorsed_loop2_loop0 st2.agent_active st2.agent_parent st2.agent_cap
+      st2.taint_levels st2.integ_levels st2.in_flight st2.invocation_tool st2.invocation_used
+      st2.invocation_egress st2.tool_registered st2.agent_instruction st2.override_used
+      st2.flow_override st2.agent_budget parent parent_flights to_consume level fi ⦃ res =>
+      (∀ k, vsMem res k ↔ vsMem to_consume0 k ∨
+        ∃ flight_inv ∈ parent_flights.items.val, ∃ t,
+          invToolC st2 flight_inv = some t ∧
+          k = ({ tool := t, level := level } : types.OverrideKey) ∧
+          vmsMemLast st2.flow_override parent { tool := t, level := level }) ∧
+      res.items.val.length ≤ to_consume0.items.val.length + parent_flights.items.val.length ⦄ := by
+  unfold transitions.return_unendorsed_loop2_loop0
+  have hst : ((⟨st2.agent_active, st2.agent_parent, st2.agent_cap, st2.taint_levels,
+      st2.integ_levels, st2.in_flight, st2.invocation_tool, st2.invocation_used,
+      st2.invocation_egress, st2.tool_registered, st2.agent_instruction, st2.override_used,
+      st2.flow_override, st2.agent_budget⟩ : state.KernelState)) = st2 := by cases st2; rfl
+  apply loop.spec_decr_nat
+    (measure := fun p => parent_flights.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ parent_flights.items.val.length ∧
+      p.1.items.val.length ≤ to_consume0.items.val.length + p.2.val ∧
+      (∀ k, vsMem p.1 k ↔ vsMem to_consume0 k ∨
+        ∃ flight_inv ∈ parent_flights.items.val.take p.2.val, ∃ t,
+          invToolC st2 flight_inv = some t ∧
+          k = ({ tool := t, level := level } : types.OverrideKey) ∧
+          vmsMemLast st2.flow_override parent { tool := t, level := level }))
+  · rintro ⟨tcL, fiL⟩ ⟨hile, hlenL, hmemL⟩
+    dsimp only at hile hlenL hmemL ⊢
+    simp only [transitions.return_unendorsed_loop2_loop0.body, collections.VecSet.len,
+      collections.VecSet.at, bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : fiL.val < parent_flights.items.val.length := by scalar_tac
+      step as ⟨flight_inv, hflight_inv⟩
+      obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+        (vecMapGetCloned_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
+          types.ToolId.Insts.CoreCloneClone toolId_clone_spec st2.invocation_tool flight_inv)
+      rw [hoEq]; simp only [bind_tc_ok]
+      have hi2 : ∀ (i2 : Usize), i2.val = fiL.val + 1 →
+          parent_flights.items.val.take i2.val = parent_flights.items.val.take (fiL.val + 1) :=
+        fun i2 h2 => by rw [h2]
+      have hext : ∀ (P : types.InvocationId → Prop),
+          (∃ x ∈ parent_flights.items.val.take (fiL.val + 1), P x) ↔
+          (∃ x ∈ parent_flights.items.val.take fiL.val, P x) ∨ P flight_inv := by
+        intro P
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
+          List.mem_append, List.mem_singleton]
+        constructor
+        · rintro ⟨x, hx | hx, hPx⟩
+          · exact Or.inl ⟨x, hx, hPx⟩
+          · subst hx; rw [hflight_inv]; exact Or.inr hPx
+        · rintro (⟨x, hx, hPx⟩ | hPi)
+          · exact ⟨x, Or.inl hx, hPx⟩
+          · exact ⟨flight_inv, Or.inr hflight_inv, hPi⟩
+      cases hocase : o with
+      | none =>
+        have hnone : invToolC st2 flight_inv = none := by unfold invToolC; rw [← ho]; exact hocase
+        have hnf : ∀ k, ¬ ∃ t, invToolC st2 flight_inv = some t ∧
+            k = ({ tool := t, level := level } : types.OverrideKey) ∧
+            vmsMemLast st2.flow_override parent { tool := t, level := level } := by
+          rintro k ⟨t, ht, _⟩; rw [hnone] at ht; simp at ht
+        simp only [bind_tc_ok]
+        step*
+        refine ⟨by scalar_tac, by scalar_tac, ?_, by scalar_tac⟩
+        intro k
+        rw [hi2 _ fi1_post, hext, hmemL k]
+        constructor
+        · rintro (hA | hB)
+          · exact Or.inl hA
+          · exact Or.inr (Or.inl hB)
+        · rintro (hA | hB | hC)
+          · exact Or.inl hA
+          · exact Or.inr hB
+          · exact absurd hC (hnf k)
+      | some flight_tool_id =>
+        have hsome : invToolC st2 flight_inv = some flight_tool_id := by
+          unfold invToolC; rw [← ho]; exact hocase
+        simp only []
+        rw [hst]
+        obtain ⟨b, hbEq, hbIff⟩ := spec_imp_exists
+          (hasFlowOverride_spec st2 parent flight_tool_id level)
+        rw [hbEq]; simp only [bind_tc_ok]
+        cases hbc : b with
+        | true =>
+          have hin : vmsMemLast st2.flow_override parent
+              { tool := flight_tool_id, level := level } := hbIff.mp hbc
+          simp only [reduceIte]
+          have hcapIns : tcL.items.val.length < Usize.max := by
+            have := hlenL; have := hlt; have := hcap; omega
+          obtain ⟨tc1, htc1Eq, htc1Mem, htc1Len⟩ := spec_imp_exists
+            (vecSetInsertLen_spec types.OverrideKey.Insts.CoreCloneClone
+              types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey overrideKey_eq_spec tcL
+              { tool := flight_tool_id, level := level } hcapIns)
+          rw [htc1Eq]; simp only [bind_tc_ok]
+          step*
+          refine ⟨by scalar_tac, by omega, ?_, by scalar_tac⟩
+          intro k
+          rw [htc1Mem k, hi2 _ fi1_post, hext, hmemL k]
+          constructor
+          · rintro ((hA | hB) | hC)
+            · exact Or.inl hA
+            · exact Or.inr (Or.inl hB)
+            · exact Or.inr (Or.inr ⟨flight_tool_id, hsome, hC, hin⟩)
+          · rintro (hA | hB | ⟨t, ht, hk, hov⟩)
+            · exact Or.inl (Or.inl hA)
+            · exact Or.inl (Or.inr hB)
+            · rw [hsome, Option.some_inj] at ht; subst ht
+              exact Or.inr hk
+        | false =>
+          have hnin : ¬ vmsMemLast st2.flow_override parent
+              { tool := flight_tool_id, level := level } := by
+            intro hc; have := hbIff.mpr hc; rw [hbc] at this; simp at this
+          simp only [Bool.false_eq_true, reduceIte]
+          step*
+          refine ⟨by scalar_tac, by scalar_tac, ?_, by scalar_tac⟩
+          intro k
+          rw [hi2 _ fi1_post, hext, hmemL k]
+          constructor
+          · rintro (hA | hB)
+            · exact Or.inl hA
+            · exact Or.inr (Or.inl hB)
+          · rintro (hA | hB | ⟨t, ht, hk, hov⟩)
+            · exact Or.inl hA
+            · exact Or.inr hB
+            · rw [hsome, Option.some_inj] at ht; subst ht
+              exact absurd hov (hk ▸ hnin)
+    case isFalse h =>
+      have heq' : fiL.val = parent_flights.items.val.length := by scalar_tac
+      rw [heq'] at hlenL
+      simp only [spec_ok, heq', List.take_length] at hmemL ⊢
+      exact ⟨hmemL, hlenL⟩
+  · exact ⟨hfi, hlen, hmem⟩
+
+/-! ## Eager consumption: outer loop (over the child's taint levels) -/
+
+/-- `return_unendorsed_loop2` folds the inner consumption loop over every child taint level. -/
+theorem returnUnendConsOuter_spec
+    (st2 : state.KernelState) (parent : types.AgentId)
+    (child_taint : collections.VecSet types.ConfLevel)
+    (parent_flights : collections.VecSet types.InvocationId)
+    (to_consume0 to_consume : collections.VecSet types.OverrideKey) (ci : Usize)
+    (hci : ci.val ≤ child_taint.items.val.length)
+    (hcap : to_consume0.items.val.length
+      + child_taint.items.val.length * parent_flights.items.val.length ≤ Usize.max)
+    (hlen : to_consume.items.val.length
+      ≤ to_consume0.items.val.length + ci.val * parent_flights.items.val.length)
+    (hmem : ∀ k, vsMem to_consume k ↔ vsMem to_consume0 k ∨
+      ∃ L ∈ child_taint.items.val.take ci.val,
+        ∃ flight_inv ∈ parent_flights.items.val, ∃ t,
+          invToolC st2 flight_inv = some t ∧
+          k = ({ tool := t, level := L } : types.OverrideKey) ∧
+          vmsMemLast st2.flow_override parent { tool := t, level := L }) :
+    transitions.return_unendorsed_loop2 st2.agent_active st2.agent_parent st2.agent_cap
+      st2.taint_levels st2.integ_levels st2.in_flight st2.invocation_tool st2.invocation_used
+      st2.invocation_egress st2.tool_registered st2.agent_instruction st2.override_used
+      st2.flow_override st2.agent_budget parent child_taint parent_flights to_consume ci ⦃ res =>
+      (∀ k, vsMem res k ↔ vsMem to_consume0 k ∨
+        ∃ L ∈ child_taint.items.val,
+          ∃ flight_inv ∈ parent_flights.items.val, ∃ t,
+            invToolC st2 flight_inv = some t ∧
+            k = ({ tool := t, level := L } : types.OverrideKey) ∧
+            vmsMemLast st2.flow_override parent { tool := t, level := L }) ∧
+      res.items.val.length ≤ to_consume0.items.val.length
+        + child_taint.items.val.length * parent_flights.items.val.length ⦄ := by
+  unfold transitions.return_unendorsed_loop2
+  apply loop.spec_decr_nat
+    (measure := fun p => child_taint.items.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ child_taint.items.val.length ∧
+      p.1.items.val.length ≤ to_consume0.items.val.length
+        + p.2.val * parent_flights.items.val.length ∧
+      (∀ k, vsMem p.1 k ↔ vsMem to_consume0 k ∨
+        ∃ L ∈ child_taint.items.val.take p.2.val,
+          ∃ flight_inv ∈ parent_flights.items.val, ∃ t,
+            invToolC st2 flight_inv = some t ∧
+            k = ({ tool := t, level := L } : types.OverrideKey) ∧
+            vmsMemLast st2.flow_override parent { tool := t, level := L }))
+  · rintro ⟨tcL, ciL⟩ ⟨hile, hlenL, hmemL⟩
+    dsimp only at hile hlenL hmemL ⊢
+    simp only [transitions.return_unendorsed_loop2.body, collections.VecSet.len,
+      collections.VecSet.at, bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : ciL.val < child_taint.items.val.length := by scalar_tac
+      step as ⟨level, hlevel⟩
+      obtain ⟨tc1, htc1Eq, htc1Mem, htc1Len⟩ := spec_imp_exists
+        (returnUnendConsInner_spec st2 parent level parent_flights tcL tcL 0#usize (by simp)
+          (by nlinarith [hlenL, hlt, hcap]) (by simp) (by simp))
+      rw [htc1Eq]; simp only [bind_tc_ok]
+      have hi2 : ∀ (i2 : Usize), i2.val = ciL.val + 1 →
+          child_taint.items.val.take i2.val = child_taint.items.val.take (ciL.val + 1) :=
+        fun i2 h2 => by rw [h2]
+      have hext : ∀ (P : types.ConfLevel → Prop),
+          (∃ x ∈ child_taint.items.val.take (ciL.val + 1), P x) ↔
+          (∃ x ∈ child_taint.items.val.take ciL.val, P x) ∨ P level := by
+        intro P
+        simp only [List.take_add_one, List.getElem?_eq_getElem hlt, Option.toList_some,
+          List.mem_append, List.mem_singleton]
+        constructor
+        · rintro ⟨x, hx | hx, hPx⟩
+          · exact Or.inl ⟨x, hx, hPx⟩
+          · subst hx; rw [hlevel]; exact Or.inr hPx
+        · rintro (⟨x, hx, hPx⟩ | hPi)
+          · exact ⟨x, Or.inl hx, hPx⟩
+          · exact ⟨level, Or.inr hlevel, hPi⟩
+      step*
+      refine ⟨by scalar_tac, by nlinarith [htc1Len, hlenL], ?_, by scalar_tac⟩
+      intro k
+      rw [htc1Mem k, hi2 _ ci1_post, hext, hmemL k]
+      constructor
+      · rintro ((hA | hB) | hC)
+        · exact Or.inl hA
+        · exact Or.inr (Or.inl hB)
+        · exact Or.inr (Or.inr hC)
+      · rintro (hA | hB | hC)
+        · exact Or.inl (Or.inl hA)
+        · exact Or.inl (Or.inr hB)
+        · exact Or.inr hC
+    case isFalse h =>
+      have heq' : ciL.val = child_taint.items.val.length := by scalar_tac
+      rw [heq'] at hlenL
+      simp only [spec_ok, heq', List.take_length] at hmemL ⊢
+      exact ⟨hmemL, hlenL⟩
+  · exact ⟨hci, hlen, hmem⟩
+
+set_option maxHeartbeats 8000000
+
+/-- `return_unendorsed` preserves the unified `R`. The content-gate agreement enters as `hCg`
+    (per-invocation `CgAgree`); `hFlightUsed` (the `in_flight_implies_used` strengthening
+    invariant) routes the parent's in-flight egress reads through `R`'s used-only
+    `RinvocationEgress`, exactly as in `invoke_start_preservesR`. -/
+theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOracle C)
+    (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
+    (a : AbsState) (child parent : types.AgentId)
+    (hR : R st bg a)
+    (hCg : CgAgree cgInst content_gate st bg a)
+    (hFlightUsed : ∀ ag I, a.in_flight ag I → a.invocation_used I)
     (hcapTaintE : st.taint_levels.entries.val.length < Usize.max)
-    (hcapTaintJoint : ∀ p ∈ st.taint_levels.entries.val,
+    (hcapTaintJ : ∀ p ∈ st.taint_levels.entries.val,
       p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapTaintChild : vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapGhrE : st.gh_taint_received.entries.val.length < Usize.max)
-    (hcapGhrJoint : ∀ p ∈ st.gh_taint_received.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
+    (hcapTaintO : vmSetLen st.taint_levels child ≤ Usize.max)
+    (hcapIntegE : st.integ_levels.entries.val.length < Usize.max)
+    (hcapIntegJ : ∀ p ∈ st.integ_levels.entries.val,
+      p.2.items.val.length + vmSetLen st.integ_levels child ≤ Usize.max)
+    (hcapIntegO : vmSetLen st.integ_levels child ≤ Usize.max)
     (hcapOvE : st.override_used.entries.val.length < Usize.max)
-    (hcapOvJoint : ∀ p ∈ st.override_used.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
+    (hcapOvJ : ∀ p ∈ st.override_used.entries.val,
+      p.2.items.val.length
+        + vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
+    (hcapCons : vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
     (st' : state.KernelState) (ev : event.KernelAction)
     (hok : transitions.return_unendorsed cgInst st bg content_gate child parent
       = .ok (.Ok (st', ev))) :
-    vmLastEntry st.agent_parent.entries.val child = some (child, parent) ∧
-    vsMem st.agent_active child ∧
-    vsMem st.agent_active parent ∧
-    (∀ inv, ¬ vmsMemLast st.in_flight child inv) ∧
-    (∀ level inv tool E, vmsMemLast st.taint_levels child level →
-      vmsMemLast st.in_flight parent inv → invToolC st inv = some tool → E ∈ egItems bg tool →
-      ¬ egressDenied (flowModeC bg level E) (cgOf tool)
-        (ovC st parent level tool) (ocC st parent level tool)) ∧
-    st'.agent_active = st.agent_active ∧ st'.agent_parent = st.agent_parent ∧
-    st'.agent_cap = st.agent_cap ∧ st'.in_flight = st.in_flight ∧
-    st'.invocation_tool = st.invocation_tool ∧ st'.tool_registered = st.tool_registered ∧
-    st'.gh_taint_invoked = st.gh_taint_invoked ∧ st'.agent_instruction = st.agent_instruction ∧
-    st'.agent_budget = st.agent_budget ∧ st'.flow_override = st.flow_override ∧
-    (∀ ag v, vmsMemLast st'.taint_levels ag v ↔
-      vmsMemLast st.taint_levels ag v ∨ (ag = parent ∧ vmsMemLast st.taint_levels child v)) ∧
-    (∀ ag v, vmsMemLast st'.gh_taint_received ag v ↔
-      vmsMemLast st.gh_taint_received ag v ∨ (ag = parent ∧ vmsMemLast st.taint_levels child v)) ∧
-    (∀ ag key, vmsMemLast st'.override_used ag key ↔ vmsMemLast st.override_used ag key ∨
-      (ag = parent ∧ ∃ level, vmsMemLast st.taint_levels child level ∧
-        ∃ inv, vmsMemLast st.in_flight parent inv ∧
-          invConsumed st bg level (ovC st parent level) (ocC st parent level) inv key)) := by
+    ∃ a', (Tzimtzum.return_unendorsed child parent).guard a ∧
+          (Tzimtzum.return_unendorsed child parent).next a a' ∧ R st' bg a' := by
   simp only [transitions.return_unendorsed] at hok
-  -- Gate 1: the parent edge `child → parent`.
+  -- Gate 1: parenthood.
   obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
     (vecMapGet_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
       types.AgentId.Insts.CoreCloneClone st.agent_parent child)
-  rw [hoEq] at hok; simp only [bind_tc_ok] at hok
+  rw [hoEq] at hok
+  simp only [bind_tc_ok] at hok
   obtain ⟨b, hbEq, hbIff⟩ :
       ∃ bb, core.option.Option.Insts.CoreCmpPartialEqOption.ne
         (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o (some parent) =
         .ok bb ∧ (bb = true ↔ o ≠ some parent) :=
     ⟨_, optionAgentId_ne_spec o (some parent), by simp⟩
-  rw [hbEq] at hok; simp only [bind_tc_ok] at hok
+  rw [hbEq] at hok
+  simp only [bind_tc_ok] at hok
   have hb : b = false := by cases b with | false => rfl | true => simp at hok
   simp only [hb, reduceIte, Bool.false_eq_true] at hok
   have hoP : o = some parent := by
@@ -442,647 +801,436 @@ theorem return_unendorsed_ok_inv {C : Type} (cgInst : traits.ContentGateOracle C
       rw [hL, Option.map_some] at hoP'
       obtain ⟨x, y⟩ := p
       simp only [Option.some_inj] at hoP'
-      simp_all
-  -- Gate 2: child active.
-  obtain ⟨b1, hb1Eq, hb1Iff⟩ := spec_imp_exists
-    (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
+      rw [show x = child from hp1, hoP']
+  -- Gates 2/3: both active.
+  obtain ⟨b1, hb1Eq, hb1Iff⟩ :=
+    spec_imp_exists (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active child)
-  rw [hb1Eq] at hok; simp only [bind_tc_ok] at hok
+  rw [hb1Eq] at hok
+  simp only [bind_tc_ok] at hok
   have hb1 : b1 = true := by cases b1 with | true => rfl | false => simp at hok
   simp only [hb1, reduceIte] at hok
-  -- Gate 3: parent active.
-  obtain ⟨b2, hb2Eq, hb2Iff⟩ := spec_imp_exists
-    (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
+  obtain ⟨b2, hb2Eq, hb2Iff⟩ :=
+    spec_imp_exists (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active parent)
-  rw [hb2Eq] at hok; simp only [bind_tc_ok] at hok
+  rw [hb2Eq] at hok
+  simp only [bind_tc_ok] at hok
   have hb2 : b2 = true := by cases b2 with | true => rfl | false => simp at hok
   simp only [hb2, reduceIte] at hok
-  -- Gate 4: child has no in-flight invocation.
+  -- Gate 4: child has nothing in flight.
   obtain ⟨b3, hb3Eq, hb3Iff⟩ := spec_imp_exists
     (vecMapKVecSetSetNonempty_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
       types.InvocationId.Insts.CoreCloneClone types.InvocationId.Insts.CoreCmpPartialEqInvocationId
       invocationId_clone_spec st.in_flight child)
-  rw [hb3Eq] at hok; simp only [bind_tc_ok] at hok
+  rw [hb3Eq] at hok
+  simp only [bind_tc_ok] at hok
   have hb3 : b3 = false := by cases b3 with | false => rfl | true => simp at hok
   simp only [hb3, reduceIte, Bool.false_eq_true] at hok
   have hNoFlight : ∀ inv, ¬ vmsMemLast st.in_flight child inv := by
-    intro inv hc; have : b3 = true := hb3Iff.mpr ⟨inv, hc⟩; rw [hb3] at this; simp at this
-  -- `child_taint`, the empty override set, `parent_flights`.
-  obtain ⟨ct, hctEq, hctMem, hctLen⟩ := spec_imp_exists
+    intro inv hc
+    have : b3 = true := hb3Iff.mpr ⟨inv, hc⟩
+    rw [hb3] at this; simp at this
+  -- The child's taint set + the parent's flights.
+  obtain ⟨child_taint, hctEq, hctMem, hctLen⟩ := spec_imp_exists
     (getSetOrEmptyLen_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
       types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
       confLevel_clone_spec st.taint_levels child)
   rw [hctEq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨vs, hvsEq, hvsNil⟩ : ∃ vs, collections.VecSet.new types.OverrideKey.Insts.CoreCloneClone
-      types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey = Result.ok vs ∧ vs.items.val = [] :=
-    ⟨_, rfl, rfl⟩
-  rw [hvsEq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨pf, hpfEq, hpfMem, hpfLen⟩ := spec_imp_exists
+  obtain ⟨parent_flights, hpfEq, hpfMem, hpfLen⟩ := spec_imp_exists
     (getSetOrEmptyLen_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
       types.InvocationId.Insts.CoreCloneClone types.InvocationId.Insts.CoreCmpPartialEqInvocationId
       invocationId_clone_spec st.in_flight parent)
   rw [hpfEq] at hok; simp only [bind_tc_ok] at hok
-  -- The double loop.
-  obtain ⟨acc, hloopEq, hDen, hCon, _hNd, hLen⟩ := spec_imp_exists
-    (returnUnendOuter_spec cgInst st bg content_gate parent cgOf hcg ct pf
-      { denied := false, to_consume := vs }
-      (by show vs.items.val.length + ct.items.val.length * pf.items.val.length ≤ Usize.max
-          rw [hvsNil, hctLen, hpfLen]; simpa using hcapLoop)
-      { denied := false, to_consume := vs } 0#usize
-      (by simp) (by show vs.items.val.Nodup; rw [hvsNil]; exact List.nodup_nil)
-      (by simp) (by simp) (by simp))
-  rw [hloopEq] at hok; simp only [bind_tc_ok] at hok
-  have hDenF : acc.denied = false := by
-    cases hd : acc.denied with | false => rfl | true => simp [hd] at hok
-  simp only [hDenF, reduceIte, Bool.false_eq_true] at hok
-  have hAccLen : acc.to_consume.items.val.length ≤
-      vmSetLen st.taint_levels child * vmSetLen st.in_flight parent := by
-    have h := hLen; rw [hvsNil, hctLen, hpfLen] at h; simpa using h
-  have hNotDenied : ∀ level inv tool E, vmsMemLast st.taint_levels child level →
-      vmsMemLast st.in_flight parent inv → invToolC st inv = some tool → E ∈ egItems bg tool →
-      ¬ egressDenied (flowModeC bg level E) (cgOf tool)
-        (ovC st parent level tool) (ocC st parent level tool) := by
-    intro level inv tool E hlevel hinv htool hE hden'
-    have hd : acc.denied = true := by
-      rw [hDen]; right
-      exact ⟨level, (hctMem level).mpr hlevel, inv, (hpfMem inv).mpr hinv, tool, htool, E, hE, hden'⟩
-    rw [hDenF] at hd; simp at hd
-  have hAcc : ∀ key, vsMem acc.to_consume key ↔ ∃ level, vmsMemLast st.taint_levels child level ∧
-      ∃ inv, vmsMemLast st.in_flight parent inv ∧
-        invConsumed st bg level (ovC st parent level) (ocC st parent level) inv key := by
-    intro key
-    rw [hCon key]
-    constructor
-    · rintro (h | ⟨level, hlevel, inv, hinv, hcons⟩)
-      · simp [vsMem, hvsNil] at h
-      · exact ⟨level, (hctMem level).mp hlevel, inv, (hpfMem inv).mp hinv, hcons⟩
-    · rintro ⟨level, hlevel, inv, hinv, hcons⟩
-      exact Or.inr ⟨level, (hctMem level).mpr hlevel, inv, (hpfMem inv).mpr hinv, hcons⟩
-  -- `is_empty child_taint`: the (vm, vm1) writes, uniform across the branches.
+  -- The conf gate loop.
+  obtain ⟨denied, hdEq, hdIff⟩ := spec_imp_exists
+    (returnUnendConfOuter_spec cgInst st bg content_gate parent
+      (fun t I => Classical.choose (hCg parent t I))
+      (fun t I => (Classical.choose_spec (hCg parent t I)).1)
+      (fun L t => ovC st parent L t) (fun L t => ocC st parent L t)
+      (fun L t => ovC_eq st parent L t) (fun L t => ocC_eq st parent L t)
+      child_taint parent_flights false false 0#usize (by simp) (by simp))
+  rw [hdEq] at hok; simp only [bind_tc_ok] at hok
+  have hd : denied = false := by cases denied with | false => rfl | true => simp at hok
+  simp only [hd, reduceIte, Bool.false_eq_true] at hok
+  -- The child's integ set + the integ gate loop.
+  obtain ⟨child_integ, hciEq, hciMem, hciLen⟩ := spec_imp_exists
+    (getSetOrEmptyLen_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      types.IntegLevel.Insts.CoreCloneClone types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+      integLevel_clone_spec st.integ_levels child)
+  rw [hciEq] at hok; simp only [bind_tc_ok] at hok
+  obtain ⟨integ_denied, hidEq, hidIff⟩ := spec_imp_exists
+    (returnUnendIntegOuter_spec cgInst st bg content_gate parent
+      (fun t I => Classical.choose (hCg parent t I))
+      (fun t I => (Classical.choose_spec (hCg parent t I)).1)
+      parent_flights child_integ false false 0#usize (by simp) (by simp))
+  rw [hidEq] at hok; simp only [bind_tc_ok] at hok
+  have hid : integ_denied = false := by
+    cases integ_denied with | false => rfl | true => simp at hok
+  simp only [hid, reduceIte, Bool.false_eq_true] at hok
+  -- The taint inheritance (skipped when the child's set is empty).
   obtain ⟨b4, hb4Eq, hb4Iff⟩ := spec_imp_exists
     (vecSetIsEmpty_spec types.ConfLevel.Insts.CoreCloneClone
-      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel ct)
+      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel child_taint)
   rw [hb4Eq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨vm, vm1, hvmEq, hvmMem, hvm1Mem⟩ : ∃ vm vm1,
-      (if b4 = true then Result.ok (st.taint_levels, st.gh_taint_received)
-       else (do
-         let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
-         let vm2 ← collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
-           types.AgentId.Insts.CoreCmpPartialEqAgentId types.ConfLevel.Insts.CoreCloneClone
-           types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.taint_levels ai ct
-         let vm3 ← collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
-           types.AgentId.Insts.CoreCmpPartialEqAgentId types.ConfLevel.Insts.CoreCloneClone
-           types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.gh_taint_received ai ct
-         ok (vm2, vm3))) = Result.ok (vm, vm1) ∧
-      (∀ ag v, vmsMemLast vm ag v ↔ vmsMemLast st.taint_levels ag v ∨ (ag = parent ∧ vsMem ct v)) ∧
-      (∀ ag v, vmsMemLast vm1 ag v ↔
-        vmsMemLast st.gh_taint_received ag v ∨ (ag = parent ∧ vsMem ct v)) := by
-    cases hb4 : b4 with
+  obtain ⟨vmT, hvmTEq, hvmTMem, hvmTNd⟩ :
+      ∃ vmT, (if b4 = true then Result.ok st.taint_levels else (do
+          let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
+          collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
+            types.AgentId.Insts.CoreCmpPartialEqAgentId types.ConfLevel.Insts.CoreCloneClone
+            types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.taint_levels ai child_taint))
+          = Result.ok vmT ∧
+        (∀ k v, vmsMemLast vmT k v ↔
+          vmsMemLast st.taint_levels k v ∨ (k = parent ∧ vsMem child_taint v)) ∧
+        (vmNodupKeys st.taint_levels → vmNodupKeys vmT) := by
+    cases hb4c : b4 with
     | true =>
-      have hempty : ct.items.val = [] := hb4Iff.mp hb4
-      refine ⟨st.taint_levels, st.gh_taint_received, by rw [if_pos rfl], fun ag v => ?_, fun ag v => ?_⟩
-      · have : ¬ vsMem ct v := by simp [vsMem, hempty]
-        simp [this]
-      · have : ¬ vsMem ct v := by simp [vsMem, hempty]
-        simp [this]
+      refine ⟨st.taint_levels, by simp, fun k v => ?_, id⟩
+      have hEmpty : child_taint.items.val = [] := hb4Iff.mp hb4c
+      simp [vsMem, hEmpty]
     | false =>
+      simp only [Bool.false_eq_true, reduceIte, agentId_clone_spec, bind_tc_ok]
+      obtain ⟨vmT, hvmTEq, hvmTMem⟩ := spec_imp_exists
+        (extendInto_spec types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+          types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
+          confLevel_eq_spec confLevel_clone_spec st.taint_levels parent child_taint hcapTaintE
+          (by intro p hp; have := hcapTaintJ p hp; rw [hctLen]; omega)
+          (by rw [hctLen]; exact hcapTaintO))
+      obtain ⟨vmTNd, hvmTNdEq, hvmTNdNd⟩ := spec_imp_exists
+        (extendInto_nodup types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+          types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
+          confLevel_eq_spec confLevel_clone_spec st.taint_levels parent child_taint hcapTaintE
+          (by intro p hp; have := hcapTaintJ p hp; rw [hctLen]; omega)
+          (by rw [hctLen]; exact hcapTaintO))
+      have hvv : vmTNd = vmT := Result.ok.inj (hvmTNdEq.symm.trans hvmTEq)
+      exact ⟨vmT, hvmTEq, hvmTMem, hvv ▸ hvmTNdNd⟩
+  rw [hvmTEq] at hok; simp only [bind_tc_ok] at hok
+  -- The integ inheritance (skipped when the child's set is empty).
+  obtain ⟨b5, hb5Eq, hb5Iff⟩ := spec_imp_exists
+    (vecSetIsEmpty_spec types.IntegLevel.Insts.CoreCloneClone
+      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel child_integ)
+  rw [hb5Eq] at hok; simp only [bind_tc_ok] at hok
+  obtain ⟨vmI, hvmIEq, hvmIMem, hvmINd⟩ :
+      ∃ vmI, (if b5 = true then Result.ok st.integ_levels else (do
+          let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
+          collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
+            types.AgentId.Insts.CoreCmpPartialEqAgentId types.IntegLevel.Insts.CoreCloneClone
+            types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel st.integ_levels ai child_integ))
+          = Result.ok vmI ∧
+        (∀ k v, vmsMemLast vmI k v ↔
+          vmsMemLast st.integ_levels k v ∨ (k = parent ∧ vsMem child_integ v)) ∧
+        (vmNodupKeys st.integ_levels → vmNodupKeys vmI) := by
+    cases hb5c : b5 with
+    | true =>
+      refine ⟨st.integ_levels, by simp, fun k v => ?_, id⟩
+      have hEmpty : child_integ.items.val = [] := hb5Iff.mp hb5c
+      simp [vsMem, hEmpty]
+    | false =>
+      simp only [Bool.false_eq_true, reduceIte, agentId_clone_spec, bind_tc_ok]
+      obtain ⟨vmI, hvmIEq, hvmIMem⟩ := spec_imp_exists
+        (extendInto_spec types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+          types.IntegLevel.Insts.CoreCloneClone types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+          integLevel_eq_spec integLevel_clone_spec st.integ_levels parent child_integ hcapIntegE
+          (by intro p hp; have := hcapIntegJ p hp; rw [hciLen]; omega)
+          (by rw [hciLen]; exact hcapIntegO))
+      obtain ⟨vmINd, hvmINdEq, hvmINdNd⟩ := spec_imp_exists
+        (extendInto_nodup types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+          types.IntegLevel.Insts.CoreCloneClone types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+          integLevel_eq_spec integLevel_clone_spec st.integ_levels parent child_integ hcapIntegE
+          (by intro p hp; have := hcapIntegJ p hp; rw [hciLen]; omega)
+          (by rw [hciLen]; exact hcapIntegO))
+      have hvv : vmINd = vmI := Result.ok.inj (hvmINdEq.symm.trans hvmIEq)
+      exact ⟨vmI, hvmIEq, hvmIMem, hvv ▸ hvmINdNd⟩
+  rw [hvmIEq] at hok; simp only [bind_tc_ok] at hok
+  -- The eager consumption loop over the intermediate state.
+  obtain ⟨tc0, htc0Eq, htc0Nil⟩ : ∃ tc0, collections.VecSet.new
+      types.OverrideKey.Insts.CoreCloneClone types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
+      = Result.ok tc0 ∧ tc0.items.val = [] := ⟨_, rfl, rfl⟩
+  rw [htc0Eq] at hok; simp only [bind_tc_ok] at hok
+  have htc0Len : tc0.items.val.length = 0 := by rw [htc0Nil]; rfl
+  have hst2InvTool : ({ st with taint_levels := vmT, integ_levels := vmI }
+      : state.KernelState).invocation_tool = st.invocation_tool := rfl
+  have hst2FlowOv : ({ st with taint_levels := vmT, integ_levels := vmI }
+      : state.KernelState).flow_override = st.flow_override := rfl
+  obtain ⟨tc1, htc1Eq, htc1Mem, htc1Len⟩ := spec_imp_exists
+    (returnUnendConsOuter_spec { st with taint_levels := vmT, integ_levels := vmI } parent
+      child_taint parent_flights tc0 tc0 0#usize (by simp)
+      (by rw [htc0Len, hctLen, hpfLen]; simpa using hcapCons) (by simp) (by simp))
+  rw [htc1Eq] at hok; simp only [bind_tc_ok] at hok
+  -- The conditional override_used write.
+  obtain ⟨b6, hb6Eq, hb6Iff⟩ := spec_imp_exists
+    (vecSetIsEmpty_spec types.OverrideKey.Insts.CoreCloneClone
+      types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey tc1)
+  rw [hb6Eq] at hok; simp only [bind_tc_ok] at hok
+  obtain ⟨hFrames, hOvMem, hOvNd⟩ :
+      (st'.taint_levels = vmT ∧ st'.integ_levels = vmI ∧ st'.agent_active = st.agent_active ∧
+        st'.agent_parent = st.agent_parent ∧ st'.agent_cap = st.agent_cap ∧
+        st'.in_flight = st.in_flight ∧ st'.invocation_tool = st.invocation_tool ∧
+        st'.invocation_used = st.invocation_used ∧
+        st'.invocation_egress = st.invocation_egress ∧
+        st'.tool_registered = st.tool_registered ∧
+        st'.agent_instruction = st.agent_instruction ∧
+        st'.flow_override = st.flow_override ∧ st'.agent_budget = st.agent_budget) ∧
+      (∀ k v, vmsMemLast st'.override_used k v ↔
+        vmsMemLast st.override_used k v ∨ (k = parent ∧ vsMem tc1 v)) ∧
+      (vmNodupKeys st.override_used → vmNodupKeys st'.override_used) := by
+    cases hb6c : b6 with
+    | true =>
+      simp only [hb6c, reduceIte, Result.ok.injEq, core.result.Result.Ok.injEq,
+        Prod.mk.injEq] at hok
+      obtain ⟨hSt, _⟩ := hok
+      subst hSt
+      have hEmpty : tc1.items.val = [] := hb6Iff.mp hb6c
+      exact ⟨⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩,
+        fun k v => by simp [vsMem, hEmpty], id⟩
+    | false =>
+      simp only [hb6c, Bool.false_eq_true, reduceIte, agentId_clone_spec, bind_tc_ok] at hok
       obtain ⟨vm2, hvm2Eq, hvm2Mem⟩ := spec_imp_exists
         (extendInto_spec types.AgentId.Insts.CoreCloneClone
           types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-          types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-          confLevel_eq_spec confLevel_clone_spec st.taint_levels parent ct hcapTaintE
-          (by intro p hp; rw [hctLen]; exact hcapTaintJoint p hp)
-          (by rw [hctLen]; exact hcapTaintChild))
-      obtain ⟨vm3, hvm3Eq, hvm3Mem⟩ := spec_imp_exists
-        (extendInto_spec types.AgentId.Insts.CoreCloneClone
+          types.OverrideKey.Insts.CoreCloneClone
+          types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey overrideKey_eq_spec
+          overrideKey_clone_spec st.override_used parent tc1 hcapOvE
+          (by intro p hp
+              have h1 := hcapOvJ p hp
+              have h2 := htc1Len
+              rw [htc0Len, hctLen, hpfLen] at h2
+              omega)
+          (by have h2 := htc1Len; rw [htc0Len, hctLen, hpfLen] at h2; omega))
+      obtain ⟨vm2Nd, hvm2NdEq, hvm2NdNd⟩ := spec_imp_exists
+        (extendInto_nodup types.AgentId.Insts.CoreCloneClone
           types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-          types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-          confLevel_eq_spec confLevel_clone_spec st.gh_taint_received parent ct hcapGhrE
-          (by intro p hp; rw [hctLen]; exact hcapGhrJoint p hp)
-          (by rw [hctLen]; exact hcapTaintChild))
-      refine ⟨vm2, vm3, ?_, hvm2Mem, hvm3Mem⟩
-      simp only [Bool.false_eq_true, reduceIte, agentId_clone_spec, bind_tc_ok, hvm2Eq, hvm3Eq]
-  rw [hvmEq] at hok
-  -- full `simp` is required to collapse the tuple-bind pattern-`let (vm, vm1) := (vm, vm1)` (it
-  -- threads the bind and substitutes `vm`/`vm1` into the records; `simp only`/`dsimp` won't).
-  simp only [bind_tc_ok] at hok
-  simp at hok
-  -- `is_empty to_consume`: the override write, uniform across the branches.
-  obtain ⟨b5, hb5Eq, hb5Iff⟩ := spec_imp_exists
-    (vecSetIsEmpty_spec types.OverrideKey.Insts.CoreCloneClone
-      types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey acc.to_consume)
-  rw [hb5Eq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨ou, houEq, houMem⟩ : ∃ ou,
-      (if b5 = true then
-        Result.ok (core.result.Result.Ok
-          (({ st with taint_levels := vm, gh_taint_received := vm1 } : state.KernelState),
-           event.KernelAction.ReturnUnendorsed child parent))
-       else (do
-         let vm2 ← collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
-           types.AgentId.Insts.CoreCmpPartialEqAgentId types.OverrideKey.Insts.CoreCloneClone
-           types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey st.override_used parent acc.to_consume
-         ok (core.result.Result.Ok
-           (({ st with taint_levels := vm, gh_taint_received := vm1, override_used := vm2 }
-              : state.KernelState),
-            event.KernelAction.ReturnUnendorsed child parent)))) =
-      Result.ok (core.result.Result.Ok
-        (({ st with taint_levels := vm, gh_taint_received := vm1, override_used := ou }
-           : state.KernelState),
-         event.KernelAction.ReturnUnendorsed child parent)) ∧
-      (∀ ag key, vmsMemLast ou ag key ↔ vmsMemLast st.override_used ag key ∨
-        (ag = parent ∧ vsMem acc.to_consume key)) := by
-    cases hb5 : b5 with
-    | true =>
-      have hempty : acc.to_consume.items.val = [] := hb5Iff.mp hb5
-      refine ⟨st.override_used, by rw [if_pos rfl], fun ag key => ?_⟩
-      have : ¬ vsMem acc.to_consume key := by simp [vsMem, hempty]
-      simp [this]
-    | false =>
-      have hcapJ : ∀ p ∈ st.override_used.entries.val,
-          p.2.items.val.length + acc.to_consume.items.val.length ≤ Usize.max := by
-        intro p hp; have := hcapOvJoint p hp; omega
-      obtain ⟨vm', hvm'Eq, hvm'Mem⟩ := spec_imp_exists
-        (extendInto_spec types.AgentId.Insts.CoreCloneClone
-          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-          types.OverrideKey.Insts.CoreCloneClone types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-          overrideKey_eq_spec overrideKey_clone_spec st.override_used parent acc.to_consume
-          hcapOvE hcapJ (le_trans hAccLen hcapLoop))
-      refine ⟨vm', ?_, hvm'Mem⟩
-      simp only [Bool.false_eq_true, reduceIte, bind_tc_ok, hvm'Eq]
-  rw [houEq] at hok
-  simp only [Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
-  obtain ⟨hStateEq, _⟩ := hok
-  subst hStateEq
-  refine ⟨hlast, hb1Iff.mp hb1, hb2Iff.mp hb2, hNoFlight, hNotDenied,
-    rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
-  · intro ag v
-    show vmsMemLast vm ag v ↔ _
-    rw [hvmMem ag v]
-    apply or_congr_right; apply and_congr_right'; rw [hctMem v]
-  · intro ag v
-    show vmsMemLast vm1 ag v ↔ _
-    rw [hvm1Mem ag v]
-    apply or_congr_right; apply and_congr_right'; rw [hctMem v]
-  · intro ag key
-    show vmsMemLast ou ag key ↔ _
-    rw [houMem ag key, hAcc key]
-
-/-! ## Forward simulation -/
-
-/-- Forward simulation: a successful `return_unendorsed` step is matched by the abstract action,
-    preserving `Rretu`. The witness propagates `child`'s taint set to `parent` (in `taint_levels`/
-    `gh_taint_received`) and adds the single-use consumed overrides. The abstract flow guard — quantified
-    over `child`'s taint levels `L`, `parent`'s in-flight `I`, and the bound tool's egresses `E` — is
-    established from the concrete `denied = false` via the per-egress `not_egressDenied_disj`; the
-    single-use `override_used` correspondence is the `egressConsumed_iff_abstractDenied` collapse, valid
-    under the guard. The well-formedness invariant (`Rretu`'s last conjunct) supplies the bound tool for
-    each in-flight invocation, which the kernel silently skips but the abstract guard needs. The content
-    gate is the one opaque oracle (`hcg` totality + `hcgA` agreement). -/
-theorem return_unendorsed_refines {C : Type} (cgInst : traits.ContentGateOracle C)
-    (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
-    (a : AbsState) (child parent : types.AgentId)
-    (cgOf : types.ToolId → Bool)
-    (hcg : ∀ t, cgInst.passes content_gate parent t st bg = .ok (cgOf t))
-    (hcgA : ∀ t, cgOf t = true ↔ a.content_gate_passes parent t)
-    (hR : Rretu st bg a)
-    (hcapLoop : vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
-    (hcapTaintE : st.taint_levels.entries.val.length < Usize.max)
-    (hcapTaintJoint : ∀ p ∈ st.taint_levels.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapTaintChild : vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapGhrE : st.gh_taint_received.entries.val.length < Usize.max)
-    (hcapGhrJoint : ∀ p ∈ st.gh_taint_received.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapOvE : st.override_used.entries.val.length < Usize.max)
-    (hcapOvJoint : ∀ p ∈ st.override_used.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
-    (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.return_unendorsed cgInst st bg content_gate child parent
-      = .ok (.Ok (st', ev))) :
-    ∃ a', (Tzimtzum.return_unendorsed child parent).guard a ∧
-          (Tzimtzum.return_unendorsed child parent).next a a' ∧ Rretu st' bg a' := by
-  obtain ⟨hRact, hRparent, hRinfl, hRtaint, hRghr, hRov, hReg, hRallow, hRinsp, hRovr, hRinvtool,
-      hRwf⟩ := hR
-  obtain ⟨hParentEdge, hChildActive, hParentActive, hNoFlight, hNotDenied, hAct, hPar, hCap, hFl,
-      hInvT, hToolReg, hGhInv, hAgInstr, hBudget, hFlowOv, hTaintW, hGhrW, hOvW⟩ :=
-    return_unendorsed_ok_inv cgInst st bg content_gate child parent cgOf hcg hcapLoop
-      hcapTaintE hcapTaintJoint hcapTaintChild hcapGhrE hcapGhrJoint hcapOvE hcapOvJoint st' ev hok
-  -- success ⇒ every in-flight invocation of `parent` is bound to its abstract tool
-  have hbind : ∀ inv, vmsMemLast st.in_flight parent inv →
-      invToolC st inv = some (a.invocation_tool inv) := by
-    intro inv hmem
-    cases hc : invToolC st inv with
-    | none => exact absurd hc (hRwf parent inv hmem)
-    | some t => rw [hRinvtool inv t hc]
-  have hovIff : ∀ L t, ovC st parent (confC L) t = true ↔
-      vmsMemLast st.flow_override parent { tool := t, level := confC L } := by
-    intro L t
-    obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (hasFlowOverride_spec st parent t (confC L))
-    rw [ovC_eq st parent (confC L) t, Result.ok.injEq] at hb
-    rw [hb]; exact hbiff
-  have hocIff : ∀ L t, ocC st parent (confC L) t = true ↔
-      vmsMemLast st.override_used parent { tool := t, level := confC L } := by
-    intro L t
-    obtain ⟨b, hb, hbiff⟩ := spec_imp_exists (overrideConsumed_spec st parent t (confC L))
-    rw [ocC_eq st parent (confC L) t, Result.ok.injEq] at hb
-    rw [hb]; exact hbiff
-  -- band tests in `flowModeC` terms. `flow_allows ↔ flowModeC = Allow` STILL holds; `flow_inspects ↔
-  -- flowModeC = Inspect` does NOT (inspect band may overlap allow band) — only band membership
-  -- survives, and we route the denial form through `hDenForm` (both directions hold).
-  have hAllowIff : ∀ L E, a.flow_allows L E ↔ flowModeC bg (confC L) E = background.FlowMode.Allow := by
-    intro L E; rw [hRallow L E, flowModeC_allow_iff]
-  have hInspBand : ∀ L E, a.flow_inspects L E ↔ ceilAdmitsC bg.inspect_ceiling (confC L) E = true := by
-    intro L E; rw [hRinsp L E]
-  have hDenForm : ∀ (L : Tzimtzum.ConfLevel) (E : types.EgressKind) (cg : Bool),
-      ((flowModeC bg (confC L) E ≠ background.FlowMode.Allow ∧
-        ¬ (flowModeC bg (confC L) E = background.FlowMode.Inspect ∧ cg = true))
-      ↔ (¬ a.flow_allows L E ∧
-          ¬ (a.flow_inspects L E ∧ cg = true))) := by
-    intro L E cg
-    rw [hAllowIff L E, hInspBand L E]
-    constructor
-    · rintro ⟨hne, hni⟩
-      refine ⟨hne, ?_⟩
-      rintro ⟨hib, hcg⟩
-      have hab : ceilAdmitsC bg.allow_ceiling (confC L) E = false := by
-        by_contra hc
-        exact hne ((flowModeC_allow_iff bg (confC L) E).mpr (by simp_all))
-      exact hni ⟨(flowModeC_inspect_iff bg (confC L) E).mpr ⟨hab, hib⟩, hcg⟩
-    · rintro ⟨hna, hni⟩
-      refine ⟨hna, ?_⟩
-      rintro ⟨hi, hcg⟩
-      exact hni ⟨((flowModeC_inspect_iff bg (confC L) E).mp hi).2, hcg⟩
-  -- per-tool guard from the concrete `not denied`, packaged for the matched in-flight tool
-  have hguardOf : ∀ L inv, vmsMemLast st.taint_levels child (confC L) →
-      vmsMemLast st.in_flight parent inv →
-      ∀ E ∈ egItems bg (a.invocation_tool inv),
-        ¬ egressDenied (flowModeC bg (confC L) E) (cgOf (a.invocation_tool inv))
-          (ovC st parent (confC L) (a.invocation_tool inv))
-          (ocC st parent (confC L) (a.invocation_tool inv)) := by
-    intro L inv hlevel hmem E hE
-    exact hNotDenied (confC L) inv (a.invocation_tool inv) E hlevel hmem (hbind inv hmem) hE
-  -- the single-use consume / abstract-denied equivalence, specialised to a matched in-flight tool
-  have hConsEquiv : ∀ L inv, vmsMemLast st.taint_levels child (confC L) →
-      vmsMemLast st.in_flight parent inv →
-      ((∃ E ∈ egItems bg (a.invocation_tool inv),
-          egressConsumed (flowModeC bg (confC L) E) (ovC st parent (confC L) (a.invocation_tool inv))
-            (ocC st parent (confC L) (a.invocation_tool inv))) ↔
-       (a.flow_override parent (a.invocation_tool inv) L ∧
-        ∃ E, a.tool_egress (a.invocation_tool inv) E ∧ ¬ a.flow_allows L E ∧
-          ¬ (a.flow_inspects L E ∧ a.content_gate_passes parent (a.invocation_tool inv)))) := by
-    intro L inv hlevel hmem
-    rw [egressConsumed_iff_abstractDenied (egItems bg (a.invocation_tool inv)) (flowModeC bg (confC L))
-      (cgOf (a.invocation_tool inv)) (ovC st parent (confC L) (a.invocation_tool inv))
-      (ocC st parent (confC L) (a.invocation_tool inv)) (hguardOf L inv hlevel hmem)]
-    apply and_congr
-    · rw [hovIff L (a.invocation_tool inv), hRovr parent (a.invocation_tool inv) L]
-    · constructor
-      · rintro ⟨E, hE, hden⟩
-        refine ⟨E, (hReg (a.invocation_tool inv) E).mpr hE, ?_⟩
-        have := (hDenForm L E (cgOf (a.invocation_tool inv))).mp hden
-        rwa [hcgA (a.invocation_tool inv)] at this
-      · rintro ⟨E, hEg, hden⟩
-        refine ⟨E, (hReg (a.invocation_tool inv) E).mp hEg, ?_⟩
-        rw [← hcgA (a.invocation_tool inv)] at hden
-        exact (hDenForm L E (cgOf (a.invocation_tool inv))).mpr hden
-  -- the abstract flow guard
-  have hguard : ∀ L I E,
-      a.taint_levels child L ∧ a.in_flight parent I ∧ a.tool_egress (a.invocation_tool I) E →
-      a.flow_allows L E
-      ∨ (a.flow_inspects L E ∧ a.content_gate_passes parent (a.invocation_tool I))
-      ∨ (a.flow_override parent (a.invocation_tool I) L
-          ∧ ¬ a.override_used parent (a.invocation_tool I) L) := by
-    rintro L I E ⟨hLtaint, hIfl, hEg⟩
-    have hmem : vmsMemLast st.in_flight parent I := (hRinfl parent I).mp hIfl
-    have hlevel : vmsMemLast st.taint_levels child (confC L) := (hRtaint child L).mp hLtaint
-    have hEItem : E ∈ egItems bg (a.invocation_tool I) := (hReg (a.invocation_tool I) E).mp hEg
-    have hnd := hNotDenied (confC L) I (a.invocation_tool I) E hlevel hmem (hbind I hmem) hEItem
-    rcases not_egressDenied_disj (flowModeC bg (confC L) E) (cgOf (a.invocation_tool I))
-      (ovC st parent (confC L) (a.invocation_tool I)) (ocC st parent (confC L) (a.invocation_tool I))
-      hnd with hA | ⟨hI, hcgv⟩ | ⟨hovv, hocv⟩
-    · exact Or.inl ((hAllowIff L E).mpr hA)
-    · exact Or.inr (Or.inl ⟨(hInspBand L E).mpr ((flowModeC_inspect_iff bg (confC L) E).mp hI).2,
-        (hcgA (a.invocation_tool I)).mp hcgv⟩)
-    · refine Or.inr (Or.inr ⟨?_, ?_⟩)
-      · rw [hRovr parent (a.invocation_tool I) L]; exact (hovIff L (a.invocation_tool I)).mp hovv
-      · rw [hRov parent (a.invocation_tool I) L]
-        intro hc
-        have := (hocIff L (a.invocation_tool I)).mpr hc
-        rw [hocv] at this; simp at this
+          types.OverrideKey.Insts.CoreCloneClone
+          types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey overrideKey_eq_spec
+          overrideKey_clone_spec st.override_used parent tc1 hcapOvE
+          (by intro p hp
+              have h1 := hcapOvJ p hp
+              have h2 := htc1Len
+              rw [htc0Len, hctLen, hpfLen] at h2
+              omega)
+          (by have h2 := htc1Len; rw [htc0Len, hctLen, hpfLen] at h2; omega))
+      have hvv : vm2Nd = vm2 := Result.ok.inj (hvm2NdEq.symm.trans hvm2Eq)
+      rw [hvm2Eq] at hok
+      simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
+      obtain ⟨hSt, _⟩ := hok
+      subst hSt
+      exact ⟨⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩,
+        fun k v => hvm2Mem k v, fun h => hvv ▸ hvm2NdNd h⟩
+  obtain ⟨hTaintEq, hIntegEq, hAct, hPar, hCap, hInfl, hInvT, hInvU, hInvE, hToolReg, hAgInstr,
+      hFlowOv, hBud⟩ := hFrames
+  -- Abstract bridges.
+  have hbind : ∀ I, vmsMemLast st.in_flight parent I →
+      invToolC st I = some (a.invocation_tool I) := by
+    intro I hI
+    obtain ⟨t, tm, ht, _⟩ := hR.wfInflight parent I hI
+    rw [hR.invTool I t ht]; exact ht
+  have ovC_iff : ∀ L t, ovC st parent L t = true ↔
+      vmsMemLast st.flow_override parent { tool := t, level := L } := fun L t => by
+    obtain ⟨bb, hbb, hbbIff⟩ := spec_imp_exists (hasFlowOverride_spec st parent t L)
+    rw [ovC_eq st parent L t, Result.ok.injEq] at hbb
+    rw [hbb]; exact hbbIff
+  have ocC_iff : ∀ L t, ocC st parent L t = true ↔
+      vmsMemLast st.override_used parent { tool := t, level := L } := fun L t => by
+    obtain ⟨bb, hbb, hbbIff⟩ := spec_imp_exists (overrideConsumed_spec st parent t L)
+    rw [ocC_eq st parent L t, Result.ok.injEq] at hbb
+    rw [hbb]; exact hbbIff
+  have hcgv : ∀ t I, Classical.choose (hCg parent t I) = true ↔ a.invocation_gate_passes I :=
+    fun t I => (Classical.choose_spec (hCg parent t I)).2
+  -- The conf gate guard.
+  have hNoDen : ¬ ∃ L ∈ child_taint.items.val,
+      ∃ flight_inv ∈ parent_flights.items.val, ∃ t, invToolC st flight_inv = some t ∧
+        ∃ E, vmsMemLast st.invocation_egress flight_inv E ∧
+          egressDenied (flowModeC bg L E) (Classical.choose (hCg parent t flight_inv))
+            (ovC st parent L t) (ocC st parent L t) := by
+    intro hc
+    have := hdIff.mpr (Or.inr hc)
+    rw [hd] at this; simp at this
+  have hguardConf : ∀ L I E,
+      a.taint_levels child L ∧ a.in_flight parent I ∧ a.invocation_egress I E →
+        a.flow_allows L E
+        ∨ (a.flow_inspects L E ∧ a.invocation_gate_passes I)
+        ∨ (a.flow_override parent (a.invocation_tool I) L
+            ∧ ¬ a.override_used parent (a.invocation_tool I) L) := by
+    rintro L I E ⟨hT, hIfl, hegr⟩
+    have hmem := (hR.inflight parent I).mp hIfl
+    have hmemFl : I ∈ parent_flights.items.val := (hpfMem I).mpr hmem
+    have hLmem : confC L ∈ child_taint.items.val :=
+      (hctMem (confC L)).mpr ((hR.taint child L).mp hT)
+    have hUsedI : a.invocation_used I := hFlightUsed parent I hIfl
+    have hE : vmsMemLast st.invocation_egress I E := (hR.invEgress I hUsedI E).mp hegr
+    obtain ⟨t, tm, htTool, _⟩ := hR.wfInflight parent I hmem
+    have htI : a.invocation_tool I = t := by
+      have h := htTool
+      rw [hbind I hmem] at h; exact Option.some.inj h
+    have hnd : ¬ egressDenied (flowModeC bg (confC L) E)
+        (Classical.choose (hCg parent t I)) (ovC st parent (confC L) t)
+        (ocC st parent (confC L) t) :=
+      fun hc => hNoDen ⟨confC L, hLmem, I, hmemFl, t, htTool, E, hE, hc⟩
+    rcases not_egressDenied_disj _ _ _ _ hnd with hA | ⟨hIns, hcgvv⟩ | ⟨hovv, hocv⟩
+    · exact Or.inl ((hR.flowAllows L E).mpr ((flowModeC_allow_iff bg (confC L) E).mp hA))
+    · exact Or.inr (Or.inl ⟨(hR.flowInspects L E).mpr
+        ((flowModeC_inspect_iff bg (confC L) E).mp hIns).2, (hcgv t I).mp hcgvv⟩)
+    · rw [htI]
+      refine Or.inr (Or.inr ⟨(hR.flowOverride parent t L).mpr ((ovC_iff (confC L) t).mp hovv), ?_⟩)
+      rw [hR.override parent t L]
+      intro hc
+      have := (ocC_iff (confC L) t).mpr hc
+      rw [hocv] at this; simp at this
+  -- The integ gate guard.
+  have hNoInteg : ¬ ∃ L ∈ child_integ.items.val,
+      ∃ flight_inv ∈ parent_flights.items.val, ∃ t tmeta,
+        invToolC st flight_inv = some t ∧ toolMetaC bg t = some tmeta ∧
+        ¬ (integLeC tmeta.integ_floor L = true
+            ∨ (integLeC tmeta.integ_inspect_floor L = true
+                ∧ Classical.choose (hCg parent t flight_inv) = true)) := by
+    intro hc
+    have := hidIff.mpr (Or.inr hc)
+    rw [hid] at this; simp at this
+  have hguardInteg : ∀ L I,
+      a.integ_levels child L ∧ a.in_flight parent I →
+        a.integ_allows L (a.invocation_tool I)
+        ∨ (a.integ_inspects L (a.invocation_tool I) ∧ a.invocation_gate_passes I) := by
+    rintro L I ⟨hT, hIfl⟩
+    have hmem := (hR.inflight parent I).mp hIfl
+    have hmemFl : I ∈ parent_flights.items.val := (hpfMem I).mpr hmem
+    have hLmem : integC L ∈ child_integ.items.val :=
+      (hciMem (integC L)).mpr ((hR.integ child L).mp hT)
+    obtain ⟨t, tm, htTool, htmMeta⟩ := hR.wfInflight parent I hmem
+    have htI : a.invocation_tool I = t := by
+      have h := htTool
+      rw [hbind I hmem] at h; exact Option.some.inj h
+    have hnd : integLeC tm.integ_floor (integC L) = true
+        ∨ (integLeC tm.integ_inspect_floor (integC L) = true
+            ∧ Classical.choose (hCg parent t I) = true) := by
+      by_contra hc
+      exact hNoInteg ⟨integC L, hLmem, I, hmemFl, t, tm, htTool, htmMeta, hc⟩
+    rw [htI]
+    have hFloorEqT : a.tool_integ_floor t = integA tm.integ_floor := hR.toolIntegFloor t tm htmMeta
+    have hInspEqT : a.tool_integ_inspect_floor t = integA tm.integ_inspect_floor :=
+      hR.toolIntegInspectFloor t tm htmMeta
+    rcases hnd with hA | ⟨hI', hcgvv⟩
+    · exact Or.inl (by
+        show Tzimtzum.le_integ (a.tool_integ_floor t) L
+        rw [hFloorEqT, le_integ_integLeC']; exact hA)
+    · exact Or.inr ⟨(by
+        show Tzimtzum.le_integ (a.tool_integ_inspect_floor t) L
+        rw [hInspEqT, le_integ_integLeC']; exact hI'), (hcgv t I).mp hcgvv⟩
+  -- The abstract successor.
   refine ⟨{ a with
-    taint_levels := fun A L => a.taint_levels A L ∨ (A = parent ∧ a.taint_levels child L),
-    gh_taint_received := fun A L => a.gh_taint_received A L ∨ (A = parent ∧ a.taint_levels child L),
-    override_used := fun A T L => a.override_used A T L ∨
-      (A = parent ∧ a.taint_levels child L ∧ ∃ I, a.in_flight parent I ∧ T = a.invocation_tool I ∧
-        a.flow_override parent (a.invocation_tool I) L ∧
-        ∃ E, a.tool_egress (a.invocation_tool I) E ∧ ¬ a.flow_allows L E ∧
-          ¬ (a.flow_inspects L E ∧ a.content_gate_passes parent (a.invocation_tool I))) },
-    ?_, ?_, ?_⟩
+      taint_levels := fun A L => a.taint_levels A L ∨ (A = parent ∧ a.taint_levels child L),
+      integ_levels := fun A L => a.integ_levels A L ∨ (A = parent ∧ a.integ_levels child L),
+      override_used := fun A T L =>
+        a.override_used A T L
+        ∨ (A = parent ∧ a.taint_levels child L
+            ∧ (∃ I, a.in_flight parent I ∧ T = a.invocation_tool I
+               ∧ a.flow_override parent (a.invocation_tool I) L)) }, ?_, ?_, ?_⟩
   · -- guard
-    exact ⟨(hRparent child parent).mpr hParentEdge, (hRact child).mpr hChildActive,
-      (hRact parent).mpr hParentActive, fun I hc => hNoFlight I ((hRinfl child I).mp hc), hguard⟩
+    exact ⟨(hR.parent child parent).mpr hlast, (hR.active child).mpr (hb1Iff.mp hb1),
+      (hR.active parent).mpr (hb2Iff.mp hb2),
+      fun I hc => hNoFlight I ((hR.inflight child I).mp hc), hguardConf, hguardInteg⟩
   · -- next
     simp [Tzimtzum.return_unendorsed]
-  · -- Rretu st' bg a'
-    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-    · intro x; rw [hAct]; exact hRact x
-    · intro C P; rw [hPar]; exact hRparent C P
-    · intro ag I; rw [hFl]; exact hRinfl ag I
-    · intro ag L
-      show (a.taint_levels ag L ∨ (ag = parent ∧ a.taint_levels child L)) ↔
-        vmsMemLast st'.taint_levels ag (confC L)
-      rw [hTaintW ag (confC L), hRtaint ag L, hRtaint child L]
-    · intro ag L
-      show (a.gh_taint_received ag L ∨ (ag = parent ∧ a.taint_levels child L)) ↔
-        vmsMemLast st'.gh_taint_received ag (confC L)
-      rw [hGhrW ag (confC L), hRghr ag L, hRtaint child L]
-    · intro ag t L
-      show (a.override_used ag t L ∨ (ag = parent ∧ a.taint_levels child L ∧ ∃ I,
-          a.in_flight parent I ∧ t = a.invocation_tool I ∧
-          a.flow_override parent (a.invocation_tool I) L ∧
-          ∃ E, a.tool_egress (a.invocation_tool I) E ∧ ¬ a.flow_allows L E ∧
-            ¬ (a.flow_inspects L E ∧ a.content_gate_passes parent (a.invocation_tool I))))
-        ↔ vmsMemLast st'.override_used ag { tool := t, level := confC L }
-      rw [hOvW ag { tool := t, level := confC L }, hRov ag t L]
+  · -- R st' bg a'
+    have hOverrideIff : ∀ ag t L,
+        (a.override_used ag t L
+          ∨ (ag = parent ∧ a.taint_levels child L
+              ∧ (∃ I, a.in_flight parent I ∧ t = a.invocation_tool I
+                 ∧ a.flow_override parent (a.invocation_tool I) L)))
+        ↔ vmsMemLast st'.override_used ag { tool := t, level := confC L } := by
+      intro ag t L
+      rw [hOvMem ag { tool := t, level := confC L }, ← hR.override ag t L]
       apply or_congr_right
-      apply and_congr_right
-      intro hag; subst ag
       constructor
-      · rintro ⟨hLtaint, I, hIfl, htI, hovr, hegr⟩
-        have hmem : vmsMemLast st.in_flight parent I := (hRinfl parent I).mp hIfl
-        have hlevel : vmsMemLast st.taint_levels child (confC L) := (hRtaint child L).mp hLtaint
-        refine ⟨confC L, hlevel, I, hmem, a.invocation_tool I, hbind I hmem, ?_, ?_⟩
-        · simp only [gateConsumeKey, types.OverrideKey.mk.injEq]; exact ⟨htI, trivial⟩
-        · exact (hConsEquiv L I hlevel hmem).mpr ⟨hovr, hegr⟩
-      · rintro ⟨level, hlevel, inv, hmem, tool', htool', hkey, hcons⟩
-        rw [hbind inv hmem, Option.some.injEq] at htool'
-        subst htool'
-        simp only [gateConsumeKey, types.OverrideKey.mk.injEq] at hkey
-        obtain ⟨hteq, hlvl⟩ := hkey
-        subst hlvl
-        exact ⟨(hRtaint child L).mpr hlevel, inv, (hRinfl parent inv).mpr hmem, hteq,
-          (hConsEquiv L inv hlevel hmem).mp hcons⟩
-    · exact hReg
-    · exact hRallow
-    · exact hRinsp
-    · intro A T L; rw [hFlowOv]; exact hRovr A T L
-    · intro I t hI
-      have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
-      exact hRinvtool I t (heq ▸ hI)
-    · intro ag I hI
-      have heq : invToolC st' I = invToolC st I := by unfold invToolC; rw [hInvT]
-      rw [heq]; exact hRwf ag I (by rw [← hFl]; exact hI)
-
-/-- Re-run of the `return_unendorsed` inversion exposing the concrete frames (every untouched map
-    unchanged) and the `vmNodupKeys` posts for the three written maps (`taint_levels` /
-    `gh_taint_received` via the `child_taint` extends, `override_used` via the `to_consume` extend). -/
-theorem return_unendorsed_inv_full {C : Type} (cgInst : traits.ContentGateOracle C)
-    (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
-    (child parent : types.AgentId)
-    (cgOf : types.ToolId → Bool)
-    (hcg : ∀ t, cgInst.passes content_gate parent t st bg = .ok (cgOf t))
-    (hcapLoop : vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
-    (hcapTaintE : st.taint_levels.entries.val.length < Usize.max)
-    (hcapTaintJoint : ∀ p ∈ st.taint_levels.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapTaintChild : vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapGhrE : st.gh_taint_received.entries.val.length < Usize.max)
-    (hcapGhrJoint : ∀ p ∈ st.gh_taint_received.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapOvE : st.override_used.entries.val.length < Usize.max)
-    (hcapOvJoint : ∀ p ∈ st.override_used.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
-    (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.return_unendorsed cgInst st bg content_gate child parent
-      = .ok (.Ok (st', ev))) :
-    st'.agent_active = st.agent_active ∧ st'.agent_parent = st.agent_parent ∧
-    st'.agent_cap = st.agent_cap ∧ st'.in_flight = st.in_flight ∧
-    st'.invocation_tool = st.invocation_tool ∧ st'.tool_registered = st.tool_registered ∧
-    st'.gh_taint_invoked = st.gh_taint_invoked ∧ st'.agent_instruction = st.agent_instruction ∧
-    st'.agent_budget = st.agent_budget ∧ st'.flow_override = st.flow_override ∧
-    (vmNodupKeys st.taint_levels → vmNodupKeys st'.taint_levels) ∧
-    (vmNodupKeys st.gh_taint_received → vmNodupKeys st'.gh_taint_received) ∧
-    (vmNodupKeys st.override_used → vmNodupKeys st'.override_used) := by
-  simp only [transitions.return_unendorsed] at hok
-  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
-    (vecMapGet_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.AgentId.Insts.CoreCloneClone st.agent_parent child)
-  rw [hoEq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨b, hbEq, hbIff⟩ :
-      ∃ bb, core.option.Option.Insts.CoreCmpPartialEqOption.ne
-        (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o (some parent) =
-        .ok bb ∧ (bb = true ↔ o ≠ some parent) :=
-    ⟨_, optionAgentId_ne_spec o (some parent), by simp⟩
-  rw [hbEq] at hok; simp only [bind_tc_ok] at hok
-  have hb : b = false := by cases b with | false => rfl | true => simp at hok
-  simp only [hb, reduceIte, Bool.false_eq_true] at hok
-  obtain ⟨b1, hb1Eq, hb1Iff⟩ := spec_imp_exists
-    (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active child)
-  rw [hb1Eq] at hok; simp only [bind_tc_ok] at hok
-  have hb1 : b1 = true := by cases b1 with | true => rfl | false => simp at hok
-  simp only [hb1, reduceIte] at hok
-  obtain ⟨b2, hb2Eq, hb2Iff⟩ := spec_imp_exists
-    (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active parent)
-  rw [hb2Eq] at hok; simp only [bind_tc_ok] at hok
-  have hb2 : b2 = true := by cases b2 with | true => rfl | false => simp at hok
-  simp only [hb2, reduceIte] at hok
-  obtain ⟨b3, hb3Eq, hb3Iff⟩ := spec_imp_exists
-    (vecMapKVecSetSetNonempty_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.InvocationId.Insts.CoreCloneClone types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-      invocationId_clone_spec st.in_flight child)
-  rw [hb3Eq] at hok; simp only [bind_tc_ok] at hok
-  have hb3 : b3 = false := by cases b3 with | false => rfl | true => simp at hok
-  simp only [hb3, reduceIte, Bool.false_eq_true] at hok
-  obtain ⟨ct, hctEq, _hctMem, hctLen⟩ := spec_imp_exists
-    (getSetOrEmptyLen_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-      confLevel_clone_spec st.taint_levels child)
-  rw [hctEq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨vs, hvsEq, hvsNil⟩ : ∃ vs, collections.VecSet.new types.OverrideKey.Insts.CoreCloneClone
-      types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey = Result.ok vs ∧ vs.items.val = [] :=
-    ⟨_, rfl, rfl⟩
-  rw [hvsEq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨pf, hpfEq, _hpfMem, hpfLen⟩ := spec_imp_exists
-    (getSetOrEmptyLen_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.InvocationId.Insts.CoreCloneClone types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-      invocationId_clone_spec st.in_flight parent)
-  rw [hpfEq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨acc, hloopEq, _hDen, _hCon, _hNd, hLen⟩ := spec_imp_exists
-    (returnUnendOuter_spec cgInst st bg content_gate parent cgOf hcg ct pf
-      { denied := false, to_consume := vs }
-      (by show vs.items.val.length + ct.items.val.length * pf.items.val.length ≤ Usize.max
-          rw [hvsNil, hctLen, hpfLen]; simpa using hcapLoop)
-      { denied := false, to_consume := vs } 0#usize
-      (by simp) (by show vs.items.val.Nodup; rw [hvsNil]; exact List.nodup_nil)
-      (by simp) (by simp) (by simp))
-  rw [hloopEq] at hok; simp only [bind_tc_ok] at hok
-  have hDenF : acc.denied = false := by
-    cases hd : acc.denied with | false => rfl | true => simp [hd] at hok
-  simp only [hDenF, reduceIte, Bool.false_eq_true] at hok
-  have hAccLen : acc.to_consume.items.val.length ≤
-      vmSetLen st.taint_levels child * vmSetLen st.in_flight parent := by
-    have h := hLen; rw [hvsNil, hctLen, hpfLen] at h; simpa using h
-  obtain ⟨b4, hb4Eq, _hb4Iff⟩ := spec_imp_exists
-    (vecSetIsEmpty_spec types.ConfLevel.Insts.CoreCloneClone
-      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel ct)
-  rw [hb4Eq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨vm, vm1, hvmEq, hvmNd, hvm1Nd⟩ : ∃ vm vm1,
-      (if b4 = true then Result.ok (st.taint_levels, st.gh_taint_received)
-       else (do
-         let ai ← types.AgentId.Insts.CoreCloneClone.clone parent
-         let vm2 ← collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
-           types.AgentId.Insts.CoreCmpPartialEqAgentId types.ConfLevel.Insts.CoreCloneClone
-           types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.taint_levels ai ct
-         let vm3 ← collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
-           types.AgentId.Insts.CoreCmpPartialEqAgentId types.ConfLevel.Insts.CoreCloneClone
-           types.ConfLevel.Insts.CoreCmpPartialEqConfLevel st.gh_taint_received ai ct
-         ok (vm2, vm3))) = Result.ok (vm, vm1) ∧
-      (vmNodupKeys st.taint_levels → vmNodupKeys vm) ∧
-      (vmNodupKeys st.gh_taint_received → vmNodupKeys vm1) := by
-    cases hb4 : b4 with
-    | true => exact ⟨st.taint_levels, st.gh_taint_received, by rw [if_pos rfl], id, id⟩
-    | false =>
-      obtain ⟨vm2, hvm2Eq, hvm2Nd⟩ := spec_imp_exists
-        (extendInto_nodup types.AgentId.Insts.CoreCloneClone
-          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-          types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-          confLevel_eq_spec confLevel_clone_spec st.taint_levels parent ct hcapTaintE
-          (by intro p hp; rw [hctLen]; exact hcapTaintJoint p hp)
-          (by rw [hctLen]; exact hcapTaintChild))
-      obtain ⟨vm3, hvm3Eq, hvm3Nd⟩ := spec_imp_exists
-        (extendInto_nodup types.AgentId.Insts.CoreCloneClone
-          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-          types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-          confLevel_eq_spec confLevel_clone_spec st.gh_taint_received parent ct hcapGhrE
-          (by intro p hp; rw [hctLen]; exact hcapGhrJoint p hp)
-          (by rw [hctLen]; exact hcapTaintChild))
-      refine ⟨vm2, vm3, ?_, hvm2Nd, hvm3Nd⟩
-      simp only [Bool.false_eq_true, reduceIte, agentId_clone_spec, bind_tc_ok, hvm2Eq, hvm3Eq]
-  rw [hvmEq] at hok
-  simp only [bind_tc_ok] at hok
-  simp at hok
-  obtain ⟨b5, hb5Eq, _hb5Iff⟩ := spec_imp_exists
-    (vecSetIsEmpty_spec types.OverrideKey.Insts.CoreCloneClone
-      types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey acc.to_consume)
-  rw [hb5Eq] at hok; simp only [bind_tc_ok] at hok
-  obtain ⟨ou, houEq, houNd⟩ : ∃ ou,
-      (if b5 = true then
-        Result.ok (core.result.Result.Ok
-          (({ st with taint_levels := vm, gh_taint_received := vm1 } : state.KernelState),
-           event.KernelAction.ReturnUnendorsed child parent))
-       else (do
-         let vm2 ← collections.VecMapKVecSet.extend_into types.AgentId.Insts.CoreCloneClone
-           types.AgentId.Insts.CoreCmpPartialEqAgentId types.OverrideKey.Insts.CoreCloneClone
-           types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey st.override_used parent acc.to_consume
-         ok (core.result.Result.Ok
-           (({ st with taint_levels := vm, gh_taint_received := vm1, override_used := vm2 }
-              : state.KernelState),
-            event.KernelAction.ReturnUnendorsed child parent)))) =
-      Result.ok (core.result.Result.Ok
-        (({ st with taint_levels := vm, gh_taint_received := vm1, override_used := ou }
-           : state.KernelState),
-         event.KernelAction.ReturnUnendorsed child parent)) ∧
-      (vmNodupKeys st.override_used → vmNodupKeys ou) := by
-    cases hb5 : b5 with
-    | true => exact ⟨st.override_used, by rw [if_pos rfl], id⟩
-    | false =>
-      have hcapJ : ∀ p ∈ st.override_used.entries.val,
-          p.2.items.val.length + acc.to_consume.items.val.length ≤ Usize.max := by
-        intro p hp; have := hcapOvJoint p hp; omega
-      obtain ⟨vm', hvm'Eq, hvm'Nd⟩ := spec_imp_exists
-        (extendInto_nodup types.AgentId.Insts.CoreCloneClone
-          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-          types.OverrideKey.Insts.CoreCloneClone types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
-          overrideKey_eq_spec overrideKey_clone_spec st.override_used parent acc.to_consume
-          hcapOvE hcapJ (le_trans hAccLen hcapLoop))
-      refine ⟨vm', ?_, hvm'Nd⟩
-      simp only [Bool.false_eq_true, reduceIte, bind_tc_ok, hvm'Eq]
-  rw [houEq] at hok
-  simp only [Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
-  obtain ⟨hStateEq, _⟩ := hok
-  subst hStateEq
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, hvmNd, hvm1Nd, houNd⟩
-
-/-- `return_unendorsed` preserves the unified `R`. -/
-theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOracle C)
-    (st : state.KernelState) (bg : background.BackgroundTheory) (content_gate : C)
-    (a : AbsState) (child parent : types.AgentId)
-    (cgOf : types.ToolId → Bool)
-    (hcg : ∀ t, cgInst.passes content_gate parent t st bg = .ok (cgOf t))
-    (hcgA : ∀ t, cgOf t = true ↔ a.content_gate_passes parent t)
-    (hR : R st bg a)
-    (hcapLoop : vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
-    (hcapTaintE : st.taint_levels.entries.val.length < Usize.max)
-    (hcapTaintJoint : ∀ p ∈ st.taint_levels.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapTaintChild : vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapGhrE : st.gh_taint_received.entries.val.length < Usize.max)
-    (hcapGhrJoint : ∀ p ∈ st.gh_taint_received.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max)
-    (hcapOvE : st.override_used.entries.val.length < Usize.max)
-    (hcapOvJoint : ∀ p ∈ st.override_used.entries.val,
-      p.2.items.val.length + vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
-    (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.return_unendorsed cgInst st bg content_gate child parent
-      = .ok (.Ok (st', ev))) :
-    ∃ a', (Tzimtzum.return_unendorsed child parent).guard a ∧
-          (Tzimtzum.return_unendorsed child parent).next a a' ∧ R st' bg a' := by
-  -- project `R → Rretu` (every view canonical; the binding-totality conjunct from `R.wfInflight`)
-  have hRretu : Rretu st bg a := ⟨hR.active, hR.parent, hR.inflight, hR.taint, hR.ghReceived,
-    hR.override, hR.toolEgress, hR.flowAllows, hR.flowInspects, hR.flowOverride, hR.invTool,
-    fun ag I hmem => by obtain ⟨t, _, ht, _⟩ := hR.wfInflight ag I hmem; rw [ht]; exact Option.some_ne_none t⟩
-  obtain ⟨a', hguard, hnext, hRretu'⟩ :=
-    return_unendorsed_refines cgInst st bg content_gate a child parent cgOf hcg hcgA hRretu
-      hcapLoop hcapTaintE hcapTaintJoint hcapTaintChild hcapGhrE hcapGhrJoint hcapOvE hcapOvJoint
-      st' ev hok
-  obtain ⟨hf_act, hf_par, hf_cap, hf_infl, hf_invt, hf_reg, hf_ghinv, hf_instr, hf_bud, hf_flowov,
-      hNdTaint, hNdGhr, hNdOver⟩ :=
-    return_unendorsed_inv_full cgInst st bg content_gate child parent cgOf hcg hcapLoop hcapTaintE
-      hcapTaintJoint hcapTaintChild hcapGhrE hcapGhrJoint hcapOvE hcapOvJoint st' ev hok
-  obtain ⟨hRact', hRparent', hRinfl', hRtaint', hRghr', hRov', hReg', hAllow', hInsp', hOvr',
-      hInvtool', _hRwf'⟩ := hRretu'
-  simp only [Tzimtzum.return_unendorsed] at hnext
-  obtain ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
-      ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_returnconf, ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root,
-      ha_capdecl, ha_caprefresh, ha_capgrantov⟩ := hnext
-  refine ⟨a', hguard, ?_, ?_⟩
-  · simp only [Tzimtzum.return_unendorsed]
-    exact ⟨ha_active, ha_parent, ha_cap, ha_instr, ha_taint, ha_bud, ha_infl, ha_reg, ha_ghinv,
-      ha_ghrec, ha_over, ha_flowov, ha_toolcap, ha_egress, ha_floor, ha_ob, ha_iss, ha_trust, ha_oc,
-      ha_returnconf, ha_instriss, ha_allowceil, ha_inspceil, ha_au, ha_cg, ha_invtool, ha_root,
-      ha_capdecl, ⟨ha_caprefresh, ha_capgrantov⟩⟩
-  · refine ⟨by rw [ha_root]; exact hR.root, by rw [ha_capdecl]; exact hR.cap_declass,
-      by rw [ha_caprefresh]; exact hR.cap_refresh, by rw [ha_capgrantov]; exact hR.cap_grantov,
-      hRact',
-      fun t => by rw [ha_reg, hf_reg]; exact hR.tool_reg t, hRparent',
-      fun N Cc => by rw [ha_cap, hf_cap]; exact hR.cap N Cc,
-      fun ag ins => by rw [ha_instr, hf_instr]; exact hR.instr ag ins, hRtaint', hRinfl',
-      fun ag L => by rw [ha_ghinv, hf_ghinv]; exact hR.ghInvoked ag L, hRghr', hRov',
-      fun G L hG => by rw [ha_bud, hf_bud]; rw [ha_active] at hG; exact hR.budget G L hG,
-      fun t tmeta Cc h => by rw [ha_toolcap]; exact hR.toolCap t tmeta Cc h, hReg',
-      fun t tmeta h => by rw [ha_floor]; exact hR.toolFloor t tmeta h,
-      fun t tmeta h => by rw [ha_ob]; exact hR.toolBounded t tmeta h,
-      fun t tmeta h => by rw [ha_iss]; exact hR.toolIssuer t tmeta h,
-      fun i => by rw [ha_trust]; exact hR.trustedIss i,
-      fun i issuer h => by rw [ha_instriss]; exact hR.instrIssuer i issuer h, hAllow', hInsp', hOvr',
-      hInvtool', by rw [hf_par]; exact hR.ndParent, by rw [hf_cap]; exact hR.ndCap,
-      by rw [hf_instr]; exact hR.ndInstr, hNdTaint hR.ndTaint, by rw [hf_infl]; exact hR.ndInflight,
-      by rw [hf_ghinv]; exact hR.ndGhInvoked, hNdGhr hR.ndGhReceived, hNdOver hR.ndOverride,
-      by rw [hf_flowov]; exact hR.ndFlowOverride,
-      by rw [hf_bud]; exact hR.ndBudget, fun ag I hmem => ?_⟩
-    -- wfInflight: in_flight + invocation_tool unchanged
-    have hmem' : vmsMemLast st.in_flight ag I := by rw [← hf_infl]; exact hmem
-    obtain ⟨t, tmeta, ht, htm⟩ := hR.wfInflight ag I hmem'
-    exact ⟨t, tmeta, by unfold invToolC; rw [hf_invt]; exact ht, htm⟩
+      · rintro ⟨hag, hT, I, hIfl, htT, hflov⟩
+        have hmem := (hR.inflight parent I).mp hIfl
+        have hmemFl : I ∈ parent_flights.items.val := (hpfMem I).mpr hmem
+        obtain ⟨t', tm', htTool', _⟩ := hR.wfInflight parent I hmem
+        have htI : a.invocation_tool I = t' := by
+          have h := htTool'
+          rw [hbind I hmem] at h; exact Option.some.inj h
+        refine ⟨hag, ?_⟩
+        rw [htc1Mem]
+        refine Or.inr ⟨confC L, (hctMem (confC L)).mpr ((hR.taint child L).mp hT),
+          I, hmemFl, t', ?_, by rw [htT, htI], ?_⟩
+        · rw [show invToolC { st with taint_levels := vmT, integ_levels := vmI } I
+              = invToolC st I from rfl]
+          exact htTool'
+        · show vmsMemLast ({ st with taint_levels := vmT, integ_levels := vmI }
+              : state.KernelState).flow_override parent { tool := t', level := confC L }
+          rw [htI] at hflov
+          exact (hR.flowOverride parent t' L).mp hflov
+      · rintro ⟨hag, hC⟩
+        rw [htc1Mem] at hC
+        rcases hC with hC0 | ⟨level, hlevel, flight_inv, hfl, t', htTool', hk, hov⟩
+        · exact absurd hC0 (by simp [vsMem, htc0Nil])
+        · rw [types.OverrideKey.mk.injEq] at hk
+          obtain ⟨htk, hLk⟩ := hk
+          rw [show invToolC { st with taint_levels := vmT, integ_levels := vmI } flight_inv
+              = invToolC st flight_inv from rfl] at htTool'
+          have hov' : vmsMemLast st.flow_override parent { tool := t', level := level } := hov
+          have hmemFl : vmsMemLast st.in_flight parent flight_inv := (hpfMem flight_inv).mp hfl
+          have hIfl : a.in_flight parent flight_inv := (hR.inflight parent flight_inv).mpr hmemFl
+          have htI : a.invocation_tool flight_inv = t' := by
+            have h := htTool'
+            rw [hbind flight_inv hmemFl] at h; exact Option.some.inj h
+          refine ⟨hag, (hR.taint child L).mpr (by rw [hLk]; exact (hctMem level).mp hlevel),
+            flight_inv, hIfl, by rw [htI]; exact htk, ?_⟩
+          rw [htI, hR.flowOverride parent t' L, hLk]
+          exact hov'
+    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov,
+      fun x => by rw [hAct]; exact hR.active x,
+      fun t => by rw [hToolReg]; exact hR.tool_reg t,
+      fun Ch P => by rw [hPar]; exact hR.parent Ch P,
+      fun N Cp => by rw [hCap]; exact hR.cap N Cp,
+      fun ag ins => by rw [hAgInstr]; exact hR.instr ag ins,
+      fun ag L => ?_, fun ag L => ?_,
+      fun ag I => by rw [hInfl]; exact hR.inflight ag I,
+      fun ag t L => hOverrideIff ag t L,
+      fun G => by rw [hBud]; exact hR.budget G,
+      fun I => by rw [hInvU]; exact hR.invUsed I,
+      fun I hU E => by rw [hInvE]; exact hR.invEgress I hU E,
+      hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor, hR.toolIntegInspectFloor,
+      hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss, hR.instrIssuer,
+      hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor,
+      fun A T L => by rw [hFlowOv]; exact hR.flowOverride A T L,
+      fun I t hI => hR.invTool I t (by rwa [show invToolC st' I = invToolC st I from by
+        unfold invToolC; rw [hInvT]] at hI),
+      by rw [hPar]; exact hR.ndParent, by rw [hCap]; exact hR.ndCap,
+      by rw [hAgInstr]; exact hR.ndInstr,
+      by rw [hTaintEq]; exact hvmTNd hR.ndTaint,
+      by rw [hIntegEq]; exact hvmINd hR.ndInteg,
+      by rw [hInfl]; exact hR.ndInflight, hOvNd hR.ndOverride,
+      by rw [hFlowOv]; exact hR.ndFlowOverride,
+      by rw [hBud]; exact hR.ndBudget, ?_⟩
+    · -- taint (parent inherits the child's set)
+      show (a.taint_levels ag L ∨ (ag = parent ∧ a.taint_levels child L))
+        ↔ vmsMemLast st'.taint_levels ag (confC L)
+      rw [hTaintEq, hvmTMem ag (confC L), hR.taint ag L]
+      apply or_congr_right
+      constructor
+      · rintro ⟨hag, hT⟩; exact ⟨hag, (hctMem (confC L)).mpr ((hR.taint child L).mp hT)⟩
+      · rintro ⟨hag, hT⟩; exact ⟨hag, (hR.taint child L).mpr ((hctMem (confC L)).mp hT)⟩
+    · -- integ (parent inherits the child's set)
+      show (a.integ_levels ag L ∨ (ag = parent ∧ a.integ_levels child L))
+        ↔ vmsMemLast st'.integ_levels ag (integC L)
+      rw [hIntegEq, hvmIMem ag (integC L), hR.integ ag L]
+      apply or_congr_right
+      constructor
+      · rintro ⟨hag, hT⟩; exact ⟨hag, (hciMem (integC L)).mpr ((hR.integ child L).mp hT)⟩
+      · rintro ⟨hag, hT⟩; exact ⟨hag, (hR.integ child L).mpr ((hciMem (integC L)).mp hT)⟩
+    · -- wfInflight (in_flight and invocation_tool both framed)
+      intro ag I hmemI
+      rw [hInfl] at hmemI
+      obtain ⟨t, tmeta, ht, htm⟩ := hR.wfInflight ag I hmemI
+      refine ⟨t, tmeta, ?_, htm⟩
+      rw [show invToolC st' I = invToolC st I from by unfold invToolC; rw [hInvT]]
+      exact ht
 
 end ArgusLean.Refinement
