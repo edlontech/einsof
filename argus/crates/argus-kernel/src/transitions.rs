@@ -646,7 +646,7 @@ pub fn grant_override(
 mod tests {
     use super::*;
     use crate::background::{BackgroundTheoryBuilder, ToolMetadata};
-    use crate::types::{BUDGET_CAPACITY, EgressKind, InstructionId, IssuerId};
+    use crate::types::{BUDGET_CAPACITY, EgressKind, InstructionId, IntegLevel, IssuerId};
 
     struct AllowAll;
     impl AuthorizerOracle for AllowAll {
@@ -704,6 +704,9 @@ mod tests {
             conf_floor: ConfLevel::Public,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         }
     }
 
@@ -725,6 +728,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         b.register_tool(
@@ -735,6 +741,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         b.register_tool(
@@ -745,6 +754,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
@@ -886,6 +898,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();
@@ -1115,6 +1130,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();
@@ -1160,6 +1178,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();
@@ -1250,6 +1271,9 @@ mod tests {
                 conf_floor,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         (st, b.build())
@@ -1500,6 +1524,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();
@@ -1712,6 +1739,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         // Public egress is ALLOW (self-flow check 2c passes)
@@ -1753,6 +1783,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         // Public egress is ALLOW (2c passes); Sensitive/NetworkExternal stays DENY (2a needs override).
@@ -1826,6 +1859,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         // Both relevant pairs ALLOW (ceiling at Sensitive) -> the override is never the operative justification.
@@ -1901,6 +1937,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         // Sensitive/NetworkExternal defaults to DENY; rescue only via the parent's override.
@@ -1950,6 +1989,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         // Raising taint to Sensitive makes (Sensitive, NetworkExternal)=DENY bite the in-flight
@@ -1996,6 +2038,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         builder.register_tool(
@@ -2006,6 +2051,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();
@@ -2098,6 +2146,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: true,
                 issuer: IssuerId::new("rogue"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         // "rogue" is NOT trusted (no trust_issuer call)
@@ -2218,6 +2269,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();

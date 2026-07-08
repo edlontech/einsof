@@ -59,8 +59,8 @@ mod tests {
     use super::*;
     use argus_kernel::{
         transitions, AgentId, BackgroundTheory, BackgroundTheoryBuilder, ConfLevel,
-        ContentGateOracle, EgressKind, InvocationId, IssuerId, KernelError, KernelState,
-        ToolId, ToolMetadata, VecSet,
+        ContentGateOracle, EgressKind, IntegLevel, InvocationId, IssuerId, KernelError,
+        KernelState, ToolId, ToolMetadata, VecSet,
     };
 
     struct ConstGate(bool);
@@ -87,6 +87,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         (st, b.build())

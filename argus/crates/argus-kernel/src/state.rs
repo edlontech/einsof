@@ -133,6 +133,7 @@ impl KernelState {
 mod tests {
     use super::*;
     use crate::background::{BackgroundTheoryBuilder, ToolMetadata};
+    use crate::types::IntegLevel;
     use crate::types::{EgressKind, IssuerId};
 
     #[test]
@@ -199,6 +200,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();
@@ -233,6 +237,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();

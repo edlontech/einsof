@@ -155,7 +155,7 @@ pub fn explain_invoke<A: AuthorizerOracle, C: ContentGateOracle>(
 mod tests {
     use super::*;
     use argus_kernel::{
-        AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind,
+        AgentId, BackgroundTheoryBuilder, CapKind, ConfLevel, EgressKind, IntegLevel,
         InvocationId, IssuerId, KernelError, KernelState, ToolId, ToolMetadata, VecSet,
     };
     use argus_kernel::{transitions, AuthorizerOracle, BackgroundTheory, ContentGateOracle};
@@ -184,6 +184,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);

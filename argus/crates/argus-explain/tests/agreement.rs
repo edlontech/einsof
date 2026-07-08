@@ -1,7 +1,7 @@
 use argus_explain::{explain_invoke, explain_return_unendorsed, explain_sentinel_elevate_taint};
 use argus_kernel::{
     transitions, AgentId, AuthorizerOracle, BackgroundTheory, BackgroundTheoryBuilder, CapKind,
-    ConfLevel, ContentGateOracle, EgressKind, InvocationId, IssuerId, KernelState,
+    ConfLevel, ContentGateOracle, EgressKind, IntegLevel, InvocationId, IssuerId, KernelState,
     OverrideKey, ToolId, ToolMetadata, VecSet,
 };
 use proptest::prelude::*;
@@ -75,6 +75,9 @@ prop_compose! {
                 conf_floor: floors[ti],
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             });
         }
         for (ei, e) in EGRESS.iter().enumerate() {

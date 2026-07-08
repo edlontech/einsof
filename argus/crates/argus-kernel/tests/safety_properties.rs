@@ -40,6 +40,9 @@ fn test_kernel() -> Kernel<AllowAll, PassAll, ConformsAll, NoopStore> {
             conf_floor: ConfLevel::Sensitive,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     b.register_tool(
@@ -50,6 +53,9 @@ fn test_kernel() -> Kernel<AllowAll, PassAll, ConformsAll, NoopStore> {
             conf_floor: ConfLevel::Public,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     b.register_tool(
@@ -60,6 +66,9 @@ fn test_kernel() -> Kernel<AllowAll, PassAll, ConformsAll, NoopStore> {
             conf_floor: ConfLevel::Sensitive,
             output_bounded: true,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
@@ -374,6 +383,9 @@ fn test_kernel_with_deny_flow() -> Kernel<AllowAll, PassAll, ConformsAll, NoopSt
             conf_floor: ConfLevel::Sensitive,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     b.register_tool(
@@ -384,6 +396,9 @@ fn test_kernel_with_deny_flow() -> Kernel<AllowAll, PassAll, ConformsAll, NoopSt
             conf_floor: ConfLevel::Public,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     b.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
@@ -510,6 +525,9 @@ fn registered_tools_have_trusted_issuer() {
             conf_floor: ConfLevel::Public,
             output_bounded: true,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     b.register_tool(
@@ -520,6 +538,9 @@ fn registered_tools_have_trusted_issuer() {
             conf_floor: ConfLevel::Public,
             output_bounded: true,
             issuer: IssuerId::new("rogue"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     let bg = b.build();
@@ -630,6 +651,9 @@ fn grant_override_preserves_single_use_across_rearm() {
             conf_floor: ConfLevel::Public,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         },
     );
     // Sensitive/NetworkExternal => DENY (no ALLOW ceiling).

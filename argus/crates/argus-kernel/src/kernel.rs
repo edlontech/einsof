@@ -230,7 +230,7 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
 mod tests {
     use super::*;
     use crate::background::{BackgroundTheory, BackgroundTheoryBuilder, ToolMetadata};
-    use crate::types::{ConfLevel, EgressKind, IssuerId};
+    use crate::types::{ConfLevel, EgressKind, IntegLevel, IssuerId};
     use std::cell::RefCell;
     use crate::collections::VecSet;
 
@@ -286,6 +286,9 @@ mod tests {
                 conf_floor: ConfLevel::Sensitive,
                 output_bounded: false,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         builder.set_egress_ceilings(EgressKind::NetworkExternal, Some(ConfLevel::Public), None);
@@ -357,6 +360,9 @@ mod tests {
                 conf_floor: ConfLevel::Public,
                 output_bounded: true,
                 issuer: IssuerId::new("trusted"),
+                integ_floor: IntegLevel::Untrusted,
+                integ_inspect_floor: IntegLevel::Untrusted,
+                output_integ: IntegLevel::Attested,
             },
         );
         let bg = builder.build();

@@ -1,6 +1,6 @@
 use crate::capability::CapKind;
 use crate::collections::{VecMap, VecSet};
-use crate::types::{ConfLevel, EgressKind, InstructionId, IssuerId, ToolId};
+use crate::types::{ConfLevel, EgressKind, InstructionId, IntegLevel, IssuerId, ToolId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolMetadata {
@@ -9,6 +9,15 @@ pub struct ToolMetadata {
     pub conf_floor: ConfLevel,
     pub output_bounded: bool,
     pub issuer: IssuerId,
+    /// Invoke requirement: ALLOW iff the agent's level clears this floor.
+    pub integ_floor: IntegLevel,
+    /// Vouchable inspect band above `integ_floor`; a band above the allow floor with no
+    /// room below it is an empty band -- coherent by construction.
+    pub integ_inspect_floor: IntegLevel,
+    /// The emission: what ingesting this tool's output does to the invoking agent's
+    /// integrity. Distinct from `integ_floor` -- e.g. `delete_repo` floor trusted /
+    /// emission attested; `web_fetch` floor untrusted / emission untrusted.
+    pub output_integ: IntegLevel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +42,8 @@ pub struct BackgroundTheory {
     inspect_ceiling: VecMap<EgressKind, ConfLevel>,
     trusted_issuers: VecSet<IssuerId>,
     instruction_issuer: VecMap<InstructionId, IssuerId>,
+    lever_integ_floor: IntegLevel,
+    lever_integ_inspect_floor: IntegLevel,
 }
 
 impl BackgroundTheory {
@@ -73,6 +84,17 @@ impl BackgroundTheory {
     pub fn instruction_issuer(&self, instr: &InstructionId) -> Option<&IssuerId> {
         self.instruction_issuer.get(instr)
     }
+
+    /// Robust-declassification floor for the levers (`return_endorsed`/`grant_override`).
+    pub fn lever_integ_floor(&self) -> IntegLevel {
+        self.lever_integ_floor
+    }
+
+    /// Vouchable inspect band above `lever_integ_floor` (used by `return_endorsed`, which
+    /// has a conformance verdict to vouch with; `grant_override` has none and stays strict).
+    pub fn lever_integ_inspect_floor(&self) -> IntegLevel {
+        self.lever_integ_inspect_floor
+    }
 }
 
 pub struct BackgroundTheoryBuilder {
@@ -81,6 +103,8 @@ pub struct BackgroundTheoryBuilder {
     inspect_ceiling: VecMap<EgressKind, ConfLevel>,
     trusted_issuers: VecSet<IssuerId>,
     instruction_issuer: VecMap<InstructionId, IssuerId>,
+    lever_integ_floor: IntegLevel,
+    lever_integ_inspect_floor: IntegLevel,
 }
 
 impl BackgroundTheoryBuilder {
@@ -91,6 +115,11 @@ impl BackgroundTheoryBuilder {
             inspect_ceiling: VecMap::new(),
             trusted_issuers: VecSet::new(),
             instruction_issuer: VecMap::new(),
+            // Untrusted = levers ungated, preserving V2 behavior until an operator sets
+            // real floors. Platforms MUST set real floors -- the robust-declassification
+            // posture (design §5.5) is a no-op at this default.
+            lever_integ_floor: IntegLevel::Untrusted,
+            lever_integ_inspect_floor: IntegLevel::Untrusted,
         }
     }
 
@@ -202,6 +231,15 @@ impl BackgroundTheoryBuilder {
         self
     }
 
+    /// Set the robust-declassification floors gating `return_endorsed`/`grant_override`.
+    /// Platforms MUST call this with real floors; the default (`Untrusted`/`Untrusted`)
+    /// leaves the levers ungated (V2 behavior).
+    pub fn set_lever_floors(&mut self, floor: IntegLevel, inspect_floor: IntegLevel) -> &mut Self {
+        self.lever_integ_floor = floor;
+        self.lever_integ_inspect_floor = inspect_floor;
+        self
+    }
+
     pub fn build(self) -> BackgroundTheory {
         BackgroundTheory {
             tools: self.tools,
@@ -209,6 +247,8 @@ impl BackgroundTheoryBuilder {
             inspect_ceiling: self.inspect_ceiling,
             trusted_issuers: self.trusted_issuers,
             instruction_issuer: self.instruction_issuer,
+            lever_integ_floor: self.lever_integ_floor,
+            lever_integ_inspect_floor: self.lever_integ_inspect_floor,
         }
     }
 }
@@ -241,6 +281,9 @@ mod tests {
             conf_floor: ConfLevel::Internal,
             output_bounded: false,
             issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect_floor: IntegLevel::Untrusted,
+            output_integ: IntegLevel::Attested,
         };
         builder.register_tool(ToolId::new("read_file"), meta.clone());
         let bg = builder.build();
@@ -248,6 +291,44 @@ mod tests {
         let found = bg.tool_metadata(&ToolId::new("read_file")).unwrap();
         assert_eq!(found, meta);
         assert!(bg.tool_metadata(&ToolId::new("nonexistent")).is_none());
+    }
+
+    #[test]
+    fn tool_metadata_roundtrips_integrity_fields() {
+        let mut builder = BackgroundTheoryBuilder::new();
+        let meta = ToolMetadata {
+            capabilities: VecSet::new(),
+            egress: VecSet::new(),
+            conf_floor: ConfLevel::Public,
+            output_bounded: true,
+            issuer: IssuerId::new("trusted"),
+            integ_floor: IntegLevel::Trusted,
+            integ_inspect_floor: IntegLevel::Standard,
+            output_integ: IntegLevel::Untrusted,
+        };
+        builder.register_tool(ToolId::new("web_fetch"), meta.clone());
+        let bg = builder.build();
+
+        let found = bg.tool_metadata(&ToolId::new("web_fetch")).unwrap();
+        assert_eq!(found.integ_floor, IntegLevel::Trusted);
+        assert_eq!(found.integ_inspect_floor, IntegLevel::Standard);
+        assert_eq!(found.output_integ, IntegLevel::Untrusted);
+    }
+
+    #[test]
+    fn lever_floors_default_to_untrusted() {
+        let bg = BackgroundTheoryBuilder::new().build();
+        assert_eq!(bg.lever_integ_floor(), IntegLevel::Untrusted);
+        assert_eq!(bg.lever_integ_inspect_floor(), IntegLevel::Untrusted);
+    }
+
+    #[test]
+    fn set_lever_floors_overrides_default() {
+        let mut b = BackgroundTheoryBuilder::new();
+        b.set_lever_floors(IntegLevel::Trusted, IntegLevel::Standard);
+        let bg = b.build();
+        assert_eq!(bg.lever_integ_floor(), IntegLevel::Trusted);
+        assert_eq!(bg.lever_integ_inspect_floor(), IntegLevel::Standard);
     }
 
     #[test]
