@@ -381,8 +381,13 @@ fn return_endorsed_does_not_propagate_taint() {
     k.sentinel_credit_budget(AgentId::new("p"), BUDGET_CAPACITY)
         .unwrap();
 
-    k.return_endorsed(AgentId::new("c"), AgentId::new("p"))
-        .unwrap();
+    k.return_endorsed(
+        AgentId::new("c"),
+        AgentId::new("p"),
+        ConfLevel::Sensitive,
+        IntegLevel::Attested,
+    )
+    .unwrap();
     assert!(k.state().taint_levels.get(&AgentId::new("p")).is_none());
 }
 

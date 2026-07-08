@@ -54,6 +54,12 @@ pub enum KernelError {
     /// An integrity floor was not cleared (CHECK 4 a/b/c) -- no override arm rescues this;
     /// endorsement is the only way up.
     IntegrityFloorDenied,
+    /// A declassification lever's integrity floor rejected the declassifying party
+    /// (`return_endorsed`'s child or `grant_override`'s granter) -- no override arm rescues this.
+    LeverIntegrityDenied,
+    /// A declared confidentiality/integrity level fails to bound the child's held taint/integ
+    /// sets (`return_endorsed`'s coverage guards).
+    DeclarationNotCovering,
     /// The event store failed to persist an event.
     EventStore,
 }

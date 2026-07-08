@@ -606,6 +606,8 @@ pub fn return_endorsed<F: ConformanceOracle>(
     conformance: &F,
     child: AgentId,
     parent: AgentId,
+    clvl: ConfLevel,
+    ilvl: IntegLevel,
 ) -> Result<(KernelState, KernelAction), KernelError> {
     if st.agent_parent.get(&child) != Some(&parent) {
         return Err(KernelError::NotDirectChild);
@@ -629,12 +631,64 @@ pub fn return_endorsed<F: ConformanceOracle>(
     if !conformance.return_conforms(&child, &parent, &st, bg) {
         return Err(KernelError::NotConforming);
     }
-    if !st.affordable(&parent, 2) {
+
+    // Robust declassification lever floor: the CHILD is the declassifying party, so its held
+    // integrity must clear the shared lever floor, or sit in the inspect band vouched by
+    // `return_conforms` (already required above; mirrored here for shape fidelity with the
+    // design's graduated-gate shape).
+    let child_integ = st.integ_levels.get_set_or_empty(&child);
+    let vouched = conformance.return_conforms(&child, &parent, &st, bg);
+    let mut lever_denied = false;
+    let mut li = 0;
+    while li < child_integ.len() {
+        let level = *child_integ.at(li);
+        let allowed = bg.lever_integ_floor().le(level)
+            || (bg.lever_integ_inspect_floor().le(level) && vouched);
+        if !allowed {
+            lever_denied = true;
+        }
+        li += 1;
+    }
+    if lever_denied {
+        return Err(KernelError::LeverIntegrityDenied);
+    }
+
+    // Coverage: the declared confidentiality level bounds the child's entire taint set, and the
+    // declared integrity level LOWER-bounds the child's entire integ set (integrity is a
+    // min lattice -- the declaration sits at or below every level the child holds).
+    let child_taint = st.taint_levels.get_set_or_empty(&child);
+    let mut conf_denied = false;
+    let mut ci = 0;
+    while ci < child_taint.len() {
+        let level = *child_taint.at(ci);
+        if !level.le(clvl) {
+            conf_denied = true;
+        }
+        ci += 1;
+    }
+    let mut integ_denied = false;
+    let mut ii = 0;
+    while ii < child_integ.len() {
+        let level = *child_integ.at(ii);
+        if !ilvl.le(level) {
+            integ_denied = true;
+        }
+        ii += 1;
+    }
+    if conf_denied || integ_denied {
+        return Err(KernelError::DeclarationNotCovering);
+    }
+
+    let weight = declass_weight(clvl) + integ_weight(ilvl);
+    if !st.affordable(&parent, weight) {
         return Err(KernelError::BudgetExhausted);
     }
-    st.debit_budget(&parent, 2);
+    st.debit_budget(&parent, weight);
 
-    Ok((st, KernelAction::ReturnEndorsed { child, parent }))
+    Ok((
+        st,
+        KernelAction::ReturnEndorsed { child, parent, clvl, ilvl },
+    ))
 }
 
 pub fn return_unendorsed<C: ContentGateOracle>(
@@ -798,7 +852,7 @@ pub fn sentinel_credit_budget(
 /// Self-grant (granter == target) is legal; the guard then binds the granter.
 pub fn grant_override(
     mut st: KernelState,
-    _bg: &BackgroundTheory,
+    bg: &BackgroundTheory,
     granter: AgentId,
     target: AgentId,
     tool: ToolId,
@@ -813,7 +867,26 @@ pub fn grant_override(
     if !st.agent_cap.set_contains(&granter, &CapKind::GrantOverride) {
         return Err(KernelError::CapabilityMissing);
     }
-    if !st.affordable(&granter, 1) {
+
+    // Robust declassification lever floor: the GRANTER is the declassifying party arming this
+    // lever, so its held integrity must clear the floor -- STRICT, no inspect/vouch arm (no
+    // conformance object exists here to vouch a near-miss granter with).
+    let granter_integ = st.integ_levels.get_set_or_empty(&granter);
+    let mut lever_denied = false;
+    let mut i = 0;
+    while i < granter_integ.len() {
+        let level = *granter_integ.at(i);
+        if !bg.lever_integ_floor().le(level) {
+            lever_denied = true;
+        }
+        i += 1;
+    }
+    if lever_denied {
+        return Err(KernelError::LeverIntegrityDenied);
+    }
+
+    let weight = declass_weight(level);
+    if !st.affordable(&granter, weight) {
         return Err(KernelError::BudgetExhausted);
     }
     if st.in_flight.set_nonempty(&target) {
@@ -828,7 +901,7 @@ pub fn grant_override(
         &target,
         &OverrideKey { tool: tool.clone(), level },
     );
-    st.debit_budget(&granter, 1);
+    st.debit_budget(&granter, weight);
 
     Ok((st, KernelAction::GrantOverride { granter, target, tool, level }))
 }
@@ -1455,14 +1528,29 @@ mod tests {
             .agent_cap
             .insert(child.clone(), VecSet::from([CapKind::Declassify]));
 
-        let (new_state, action) =
-            return_endorsed(st.clone(), &bg, &ConformsAll, child.clone(), AgentId::root()).unwrap();
+        let (new_state, action) = return_endorsed(
+            st.clone(),
+            &bg,
+            &ConformsAll,
+            child.clone(),
+            AgentId::root(),
+            ConfLevel::Public,
+            IntegLevel::Attested,
+        )
+        .unwrap();
         assert_eq!(new_state.taint_levels, st.taint_levels);
+        assert_eq!(
+            new_state.budget(&AgentId::root()),
+            st.budget(&AgentId::root()),
+            "a clean child returning at (public, attested) costs the parent nothing"
+        );
         assert_eq!(
             action,
             KernelAction::ReturnEndorsed {
                 child,
                 parent: AgentId::root(),
+                clvl: ConfLevel::Public,
+                ilvl: IntegLevel::Attested,
             }
         );
     }
@@ -1480,7 +1568,18 @@ mod tests {
         st
             .invocation_tool
             .insert(InvocationId::new("inv-1"), ToolId::new("t"));
-        assert!(return_endorsed(st, &bg, &ConformsAll, child, AgentId::root()).is_err());
+        assert!(
+            return_endorsed(
+                st,
+                &bg,
+                &ConformsAll,
+                child,
+                AgentId::root(),
+                ConfLevel::Public,
+                IntegLevel::Attested,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1489,7 +1588,18 @@ mod tests {
         let bg = BackgroundTheoryBuilder::new().build();
         let stranger = AgentId::new("stranger");
         st.agent_active.insert(stranger.clone());
-        assert!(return_endorsed(st, &bg, &ConformsAll, stranger, AgentId::root()).is_err());
+        assert!(
+            return_endorsed(
+                st,
+                &bg,
+                &ConformsAll,
+                stranger,
+                AgentId::root(),
+                ConfLevel::Public,
+                IntegLevel::Attested,
+            )
+            .is_err()
+        );
     }
 
     // --- declassification: conformance + budget ---
@@ -1822,8 +1932,15 @@ mod tests {
         // A ConformanceOracle whose return_conforms == false blocks the endorsed return.
         let st = parent_child_state();
         let bg = BackgroundTheoryBuilder::new().build();
-        let result =
-            return_endorsed(st, &bg, &ConformsNone, AgentId::new("c"), AgentId::new("p"));
+        let result = return_endorsed(
+            st,
+            &bg,
+            &ConformsNone,
+            AgentId::new("c"),
+            AgentId::new("p"),
+            ConfLevel::Sensitive,
+            IntegLevel::Attested,
+        );
         assert_eq!(result.unwrap_err(), KernelError::NotConforming);
     }
 
@@ -1848,7 +1965,16 @@ mod tests {
         st.agent_cap.insert(AgentId::new("c"), VecSet::new());
         let bg = BackgroundTheoryBuilder::new().build();
         assert!(
-            return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p")).is_err(),
+            return_endorsed(
+                st,
+                &bg,
+                &ConformsAll,
+                AgentId::new("c"),
+                AgentId::new("p"),
+                ConfLevel::Sensitive,
+                IntegLevel::Attested,
+            )
+            .is_err(),
             "a child lacking cap_declassify cannot declassify upward"
         );
     }
@@ -1857,12 +1983,24 @@ mod tests {
     fn return_endorsed_debits_recipient_budget() {
         let st = parent_child_state();
         let bg = BackgroundTheoryBuilder::new().build();
-        let (st, _) =
-            return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p")).unwrap();
+        // The child is untainted, so declaring (Sensitive, Attested) is an over-declaration --
+        // legal (coverage only requires the declaration to BOUND the held sets) and produces the
+        // same weight (declass_weight(Sensitive) + integ_weight(Attested) = 2 + 0 = 2) the old
+        // flat debit charged.
+        let (st, _) = return_endorsed(
+            st,
+            &bg,
+            &ConformsAll,
+            AgentId::new("c"),
+            AgentId::new("p"),
+            ConfLevel::Sensitive,
+            IntegLevel::Attested,
+        )
+        .unwrap();
         assert_eq!(
             st.budget(&AgentId::new("p")),
             BUDGET_CAPACITY - 2,
-            "return_endorsed charges the RECIPIENT (parent) budget by the flat weight (2)"
+            "return_endorsed charges the RECIPIENT (parent) the declared weight"
         );
     }
 
@@ -1870,18 +2008,225 @@ mod tests {
     fn return_endorsed_budget_drains_then_refuses() {
         let mut st = parent_child_state();
         let bg = BackgroundTheoryBuilder::new().build();
-        // Eight endorsed returns (each costs 2) drain the parent's per-subtree budget (16).
+        // Eight endorsed returns (each costs declass_weight(Sensitive) + integ_weight(Attested) =
+        // 2) drain the parent's per-subtree budget (16).
         for _ in 0..8 {
-            let (s, _) =
-                return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p"))
-                    .unwrap();
+            let (s, _) = return_endorsed(
+                st,
+                &bg,
+                &ConformsAll,
+                AgentId::new("c"),
+                AgentId::new("p"),
+                ConfLevel::Sensitive,
+                IntegLevel::Attested,
+            )
+            .unwrap();
             st = s;
         }
         assert!(!st.affordable(&AgentId::new("p"), 2));
         assert!(
-            return_endorsed(st, &bg, &ConformsAll, AgentId::new("c"), AgentId::new("p")).is_err(),
+            return_endorsed(
+                st,
+                &bg,
+                &ConformsAll,
+                AgentId::new("c"),
+                AgentId::new("p"),
+                ConfLevel::Sensitive,
+                IntegLevel::Attested,
+            )
+            .is_err(),
             "the next endorsed return is refused -- caller must fall back to return_unendorsed"
         );
+    }
+
+    #[test]
+    fn return_endorsed_conf_coverage_rejects_under_declaration() {
+        // Scenario 10: the child holds Sensitive taint; declaring a clvl strictly below it fails
+        // coverage.
+        let mut st = parent_child_state();
+        st
+            .taint_levels
+            .insert(AgentId::new("c"), VecSet::from([ConfLevel::Sensitive]));
+        let bg = BackgroundTheoryBuilder::new().build();
+        let result = return_endorsed(
+            st,
+            &bg,
+            &ConformsAll,
+            AgentId::new("c"),
+            AgentId::new("p"),
+            ConfLevel::Internal,
+            IntegLevel::Attested,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::DeclarationNotCovering);
+    }
+
+    #[test]
+    fn return_endorsed_conf_coverage_accepts_bounding_declaration() {
+        // A declaration that bounds the held taint set (Restricted >= Sensitive) is accepted and
+        // debits the parent the declared weight -- closing the child-laundering arbitrage.
+        let mut st = parent_child_state();
+        st
+            .taint_levels
+            .insert(AgentId::new("c"), VecSet::from([ConfLevel::Sensitive]));
+        let bg = BackgroundTheoryBuilder::new().build();
+        let (st, _) = return_endorsed(
+            st,
+            &bg,
+            &ConformsAll,
+            AgentId::new("c"),
+            AgentId::new("p"),
+            ConfLevel::Restricted,
+            IntegLevel::Attested,
+        )
+        .expect("Restricted bounds the held Sensitive taint level");
+        assert_eq!(
+            st.budget(&AgentId::new("p")),
+            BUDGET_CAPACITY
+                - (declass_weight(ConfLevel::Restricted) + integ_weight(IntegLevel::Attested)),
+            "debit follows the declaration, not the held set"
+        );
+    }
+
+    #[test]
+    fn return_endorsed_integ_coverage_rejects_over_declaration() {
+        // The child holds Standard integrity; declaring ilvl Trusted (above the held level)
+        // fails the lower-bound coverage -- integrity is a min lattice.
+        let mut st = parent_child_state();
+        st
+            .integ_levels
+            .insert(AgentId::new("c"), VecSet::from([IntegLevel::Standard]));
+        let bg = BackgroundTheoryBuilder::new().build();
+        let result = return_endorsed(
+            st,
+            &bg,
+            &ConformsAll,
+            AgentId::new("c"),
+            AgentId::new("p"),
+            ConfLevel::Public,
+            IntegLevel::Trusted,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::DeclarationNotCovering);
+    }
+
+    #[test]
+    fn return_endorsed_integ_coverage_accepts_bounding_declaration() {
+        let mut st = parent_child_state();
+        st
+            .integ_levels
+            .insert(AgentId::new("c"), VecSet::from([IntegLevel::Standard]));
+        let bg = BackgroundTheoryBuilder::new().build();
+        assert!(
+            return_endorsed(
+                st.clone(),
+                &bg,
+                &ConformsAll,
+                AgentId::new("c"),
+                AgentId::new("p"),
+                ConfLevel::Public,
+                IntegLevel::Standard,
+            )
+            .is_ok(),
+            "ilvl == the held level bounds it"
+        );
+        assert!(
+            return_endorsed(
+                st,
+                &bg,
+                &ConformsAll,
+                AgentId::new("c"),
+                AgentId::new("p"),
+                ConfLevel::Public,
+                IntegLevel::Untrusted,
+            )
+            .is_ok(),
+            "ilvl below the held level still lower-bounds it"
+        );
+    }
+
+    #[test]
+    fn return_endorsed_lever_floor_denies_untrusted_child() {
+        // Scenario 4: lever floors set to (Trusted, Trusted); a child holding Untrusted
+        // integrity fails the strict arm and does not clear the inspect band either.
+        let mut st = parent_child_state();
+        st
+            .integ_levels
+            .insert(AgentId::new("c"), VecSet::from([IntegLevel::Untrusted]));
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.set_lever_floors(IntegLevel::Trusted, IntegLevel::Trusted);
+        let bg = builder.build();
+        let result = return_endorsed(
+            st,
+            &bg,
+            &ConformsAll,
+            AgentId::new("c"),
+            AgentId::new("p"),
+            ConfLevel::Public,
+            IntegLevel::Untrusted,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::LeverIntegrityDenied);
+    }
+
+    #[test]
+    fn return_endorsed_lever_floor_allows_trusted_child() {
+        let mut st = parent_child_state();
+        st
+            .integ_levels
+            .insert(AgentId::new("c"), VecSet::from([IntegLevel::Trusted]));
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.set_lever_floors(IntegLevel::Trusted, IntegLevel::Trusted);
+        let bg = builder.build();
+        assert!(
+            return_endorsed(
+                st,
+                &bg,
+                &ConformsAll,
+                AgentId::new("c"),
+                AgentId::new("p"),
+                ConfLevel::Public,
+                IntegLevel::Trusted,
+            )
+            .is_ok(),
+            "a child clearing the strict floor may declassify"
+        );
+    }
+
+    #[test]
+    fn return_endorsed_lever_inspect_band_vouched_by_return_conforms() {
+        // Floors (Attested, Trusted): a child holding Trusted sits in the inspect band and is
+        // rescued by return_conforms (already required above -- the vouch is honest but
+        // redundant, kept for shape-fidelity per design §5.5).
+        let mut st = parent_child_state();
+        st
+            .integ_levels
+            .insert(AgentId::new("c"), VecSet::from([IntegLevel::Trusted]));
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.set_lever_floors(IntegLevel::Attested, IntegLevel::Trusted);
+        let bg = builder.build();
+        assert!(
+            return_endorsed(
+                st.clone(),
+                &bg,
+                &ConformsAll,
+                AgentId::new("c"),
+                AgentId::new("p"),
+                ConfLevel::Public,
+                IntegLevel::Trusted,
+            )
+            .is_ok(),
+            "inspect band + return_conforms vouch admits the declassification"
+        );
+        // With a non-conforming oracle, NotConforming fires first (the earlier require) --
+        // the inspect-band vouch is never reached.
+        let result = return_endorsed(
+            st,
+            &bg,
+            &ConformsNone,
+            AgentId::new("c"),
+            AgentId::new("p"),
+            ConfLevel::Public,
+            IntegLevel::Trusted,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::NotConforming);
     }
 
     #[test]
@@ -3488,7 +3833,8 @@ mod tests {
 
     #[test]
     fn grant_override_debits_granter() {
-        // Root starts at full capacity; after grant_override it should be one lower.
+        // Root starts at full capacity; after grant_override it should be debited by
+        // declass_weight(level).
         let target = AgentId::new("t");
         let mut st = KernelState::initial();
         st.agent_active.insert(target.clone());
@@ -3509,8 +3855,111 @@ mod tests {
         )
         .expect("grant_override should succeed");
 
-        assert_eq!(st.budget(&granter), BUDGET_CAPACITY - 1, "granter debited by one");
+        assert_eq!(
+            st.budget(&granter),
+            BUDGET_CAPACITY - declass_weight(ConfLevel::Sensitive),
+            "granter debited by declass_weight(level)"
+        );
         assert_eq!(st.budget(&target), target_budget_before, "target budget untouched");
+    }
+
+    #[test]
+    fn grant_override_public_level_is_free() {
+        let target = AgentId::new("t");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(target.clone());
+        st.agent_budget.insert(AgentId::root(), 0);
+
+        let bg = BackgroundTheoryBuilder::new().build();
+
+        let (st, _) = grant_override(
+            st,
+            &bg,
+            AgentId::root(),
+            target,
+            ToolId::new("t"),
+            ConfLevel::Public,
+        )
+        .expect("public-level overrides are free -- affordable even at budget 0");
+        assert_eq!(st.budget(&AgentId::root()), 0);
+    }
+
+    #[test]
+    fn grant_override_restricted_debits_four() {
+        let target = AgentId::new("t");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(target.clone());
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let (st, _) = grant_override(
+            st,
+            &bg,
+            AgentId::root(),
+            target,
+            ToolId::new("t"),
+            ConfLevel::Restricted,
+        )
+        .expect("grant_override should succeed");
+        assert_eq!(st.budget(&AgentId::root()), BUDGET_CAPACITY - 4);
+    }
+
+    #[test]
+    fn grant_override_restricted_refused_at_low_budget() {
+        let target = AgentId::new("t");
+        let mut st = KernelState::initial();
+        st.agent_active.insert(target.clone());
+        st.agent_budget.insert(AgentId::root(), 3);
+
+        let bg = BackgroundTheoryBuilder::new().build();
+        let result = grant_override(
+            st,
+            &bg,
+            AgentId::root(),
+            target,
+            ToolId::new("t"),
+            ConfLevel::Restricted,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::BudgetExhausted);
+    }
+
+    #[test]
+    fn grant_override_strict_lever_floor_denies_degraded_granter() {
+        let mut st = KernelState::initial();
+        let target = AgentId::new("t");
+        st.agent_active.insert(target.clone());
+        st
+            .integ_levels
+            .insert(AgentId::root(), VecSet::from([IntegLevel::Untrusted]));
+
+        let mut builder = BackgroundTheoryBuilder::new();
+        builder.set_lever_floors(IntegLevel::Trusted, IntegLevel::Trusted);
+        let bg = builder.build();
+
+        // Passing content gate does not rescue: grant_override's lever floor is strict, no
+        // vouch arm exists.
+        let result = grant_override(
+            st.clone(),
+            &bg,
+            AgentId::root(),
+            target.clone(),
+            ToolId::new("t"),
+            ConfLevel::Sensitive,
+        );
+        assert_eq!(result.unwrap_err(), KernelError::LeverIntegrityDenied);
+
+        st
+            .integ_levels
+            .insert(AgentId::root(), VecSet::from([IntegLevel::Trusted]));
+        let (st, _) = grant_override(
+            st,
+            &bg,
+            AgentId::root(),
+            target,
+            ToolId::new("t"),
+            ConfLevel::Sensitive,
+        )
+        .expect("granter clearing the lever floor may arm the override");
+        assert_eq!(st.budget(&AgentId::root()), BUDGET_CAPACITY - declass_weight(ConfLevel::Sensitive));
     }
 
     #[test]
@@ -3677,7 +4126,11 @@ mod tests {
             st.has_flow_override(&agent, &ToolId::new("t"), ConfLevel::Sensitive),
             "override armed for granter-as-target"
         );
-        assert_eq!(st.budget(&agent), budget_before - 1, "granter debited");
+        assert_eq!(
+            st.budget(&agent),
+            budget_before - declass_weight(ConfLevel::Sensitive),
+            "granter debited by declass_weight(level)"
+        );
     }
 
     #[test]

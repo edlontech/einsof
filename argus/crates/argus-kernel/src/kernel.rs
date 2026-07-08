@@ -6,7 +6,7 @@ use crate::event::{KernelAction, KernelEvent};
 use crate::state::KernelState;
 use crate::traits::{AuthorizerOracle, ConformanceOracle, ContentGateOracle, EventStore};
 use crate::transitions;
-use crate::types::{AgentId, ConfLevel, EgressKind, InstructionId, InvocationId, ToolId};
+use crate::types::{AgentId, ConfLevel, EgressKind, InstructionId, IntegLevel, InvocationId, ToolId};
 
 pub struct Kernel<
     A: AuthorizerOracle,
@@ -158,6 +158,8 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
         &mut self,
         child: AgentId,
         parent: AgentId,
+        clvl: ConfLevel,
+        ilvl: IntegLevel,
     ) -> Result<KernelEvent, KernelError> {
         let result = transitions::return_endorsed(
             self.state.clone(),
@@ -165,6 +167,8 @@ impl<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventSt
             &self.conformance,
             child,
             parent,
+            clvl,
+            ilvl,
         );
         self.apply(result)
     }
@@ -343,7 +347,12 @@ mod tests {
         );
 
         let e7 = kernel
-            .return_endorsed(AgentId::new("a1"), AgentId::root())
+            .return_endorsed(
+                AgentId::new("a1"),
+                AgentId::root(),
+                ConfLevel::Sensitive,
+                IntegLevel::Attested,
+            )
             .unwrap();
         assert_eq!(e7.sequence, 7);
 

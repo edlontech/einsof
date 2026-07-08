@@ -1,5 +1,5 @@
 use crate::capability::CapKind;
-use crate::types::{AgentId, ConfLevel, InstructionId, InvocationId, ToolId};
+use crate::types::{AgentId, ConfLevel, InstructionId, IntegLevel, InvocationId, ToolId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KernelAction {
@@ -36,6 +36,8 @@ pub enum KernelAction {
     ReturnEndorsed {
         child: AgentId,
         parent: AgentId,
+        clvl: ConfLevel,
+        ilvl: IntegLevel,
     },
     ReturnUnendorsed {
         child: AgentId,
@@ -113,6 +115,8 @@ mod tests {
             KernelAction::ReturnEndorsed {
                 child: AgentId::new("a"),
                 parent: AgentId::root(),
+                clvl: ConfLevel::Sensitive,
+                ilvl: IntegLevel::Attested,
             },
             KernelAction::ReturnUnendorsed {
                 child: AgentId::new("a"),
