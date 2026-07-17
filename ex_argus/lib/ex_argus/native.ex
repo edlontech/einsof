@@ -139,4 +139,38 @@ defmodule ExArgus.Native do
 
   def instance_explain_grant_override(_h, _granter, _target, _level),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_new(_live_bg, _candidate_bg), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_state(_h), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_seq(_h), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_register_tool(_h, _tool), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_unregister_tool(_h, _tool), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_load_instruction(_h, _agent, _instr), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_delegate(_h, _grantor, _grantee), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_grant_capability(_h, _parent, _child, _cap), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_revoke(_h, _parent, _target), do: :erlang.nif_error(:nif_not_loaded)
+  def shadow_cascade_revoke(_h, _child, _parent), do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_return_endorsed(_h, _child, _parent, _return_conforms, _clvl, _ilvl),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_sentinel_credit_budget(_h, _agent, _amount), do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_grant_override(_h, _granter, _target, _tool, _level),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_invoke_start(_h, _agent, _tool, _inv, _auth, _gate, _attested_egress),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_invoke_complete(_h, _agent, _inv, _conf),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_return_unendorsed(_h, _child, _parent, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_sentinel_elevate_taint(_h, _agent, _level, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def shadow_sentinel_degrade_integrity(_h, _agent, _level, _gate),
+    do: :erlang.nif_error(:nif_not_loaded)
 end

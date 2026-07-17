@@ -68,7 +68,7 @@ impl ActionN {
     }
 }
 
-#[derive(Debug, NifUnitEnum)]
+#[derive(Debug, PartialEq, Eq, NifUnitEnum)]
 pub enum KernelErrorN {
     ToolNotInTheory,
     ToolAlreadyRegistered,

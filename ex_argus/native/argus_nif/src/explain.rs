@@ -209,7 +209,7 @@ pub struct ExplainReportN {
 }
 
 impl ExplainReportN {
-    fn from_explain(r: ExplainReport) -> Self {
+    pub fn from_explain(r: ExplainReport) -> Self {
         Self {
             verdict: r.verdict.map(KernelErrorN::from_kernel),
             missing_caps: r
