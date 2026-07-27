@@ -1,0 +1,178 @@
+diff --git a/backends/lean/Aeneas/Data/Array.lean b/backends/lean/Aeneas/Data/Array.lean
+index 0930b95b..2ed2fc89 100644
+--- a/backends/lean/Aeneas/Data/Array.lean
++++ b/backends/lean/Aeneas/Data/Array.lean
+@@ -112 +112 @@ theorem getElem_set! {α : Type u}
+-theorem getElem!_set!_ne {α : Type u}
++theorem getElem!_set!_ne_aeneas {α : Type u}
+diff --git a/backends/lean/Aeneas/Data/Vector.lean b/backends/lean/Aeneas/Data/Vector.lean
+index 42118e3b..de008541 100644
+--- a/backends/lean/Aeneas/Data/Vector.lean
++++ b/backends/lean/Aeneas/Data/Vector.lean
+@@ -112 +112 @@ theorem getElem!_set! {α : Type u}
+-theorem getElem_set! {α : Type u}
++theorem getElem_set!_aeneas {α : Type u}
+@@ -131 +131 @@ theorem getElem!_set!_ne {α : Type u}
+-theorem getElem_set!_ne {α : Type u}
++theorem getElem_set!_ne_aeneas {α : Type u}
+diff --git a/backends/lean/Aeneas/Tactic/Simproc/ReduceZMod/ReduceZMod.lean b/backends/lean/Aeneas/Tactic/Simproc/ReduceZMod/ReduceZMod.lean
+index 4e63f80b..3a779808 100644
+--- a/backends/lean/Aeneas/Tactic/Simproc/ReduceZMod/ReduceZMod.lean
++++ b/backends/lean/Aeneas/Tactic/Simproc/ReduceZMod/ReduceZMod.lean
+@@ -83,2 +83,3 @@ simproc reduceZModPow
+-        (@Monoid.toPow _
+-          (@MonoidWithZero.toMonoid _
++        (@NPow.toPow _
++          (@Monoid.toNPow _
++            (@MonoidWithZero.toMonoid _
+@@ -86 +87 @@ simproc reduceZModPow
+-              (@CommSemiring.toSemiring _ (@CommRing.toCommSemiring _ (ZMod.commRing _)))))))
++              (@CommSemiring.toSemiring _ (@CommRing.toCommSemiring _ (ZMod.commRing _))))))))
+diff --git a/backends/lean/Aeneas/Tactic/Solver/BvTac/BvTac.lean b/backends/lean/Aeneas/Tactic/Solver/BvTac/BvTac.lean
+index 65d1fca3..baf4b4e3 100644
+--- a/backends/lean/Aeneas/Tactic/Solver/BvTac/BvTac.lean
++++ b/backends/lean/Aeneas/Tactic/Solver/BvTac/BvTac.lean
+@@ -10 +10 @@ open Bvify Utils
+-structure Config extends Lean.Elab.Tactic.BVDecide.Frontend.BVDecideConfig, Bvify.Config where
++structure Config extends Lean.Elab.Tactic.BVDecide.BVDecideConfig, Bvify.Config where
+@@ -82 +82 @@ elab "bv_tac_preprocess" config:Parser.Tactic.optConfig n:(colGt term)? : tactic
+-open Lean.Elab.Tactic.BVDecide.Frontend Lean.Elab in
++open Lean.Meta.Tactic.BVDecide Lean.Elab in
+@@ -121 +121 @@ elab "bv_tac" config:Parser.Tactic.optConfig n:(colGt term)? : tactic =>
+-    let cfg ← BVDecide.Frontend.TacticContext.new lratFile config
++    let cfg ← TacticContext.new lratFile config
+@@ -123 +123 @@ elab "bv_tac" config:Parser.Tactic.optConfig n:(colGt term)? : tactic =>
+-      discard <| bvDecide g cfg
++      discard <| Lean.Meta.Tactic.BVDecide.bvDecide g cfg
+diff --git a/backends/lean/Aeneas/Tactic/Step/Step.lean b/backends/lean/Aeneas/Tactic/Step/Step.lean
+index 28a5a032..c8a2b346 100644
+--- a/backends/lean/Aeneas/Tactic/Step/Step.lean
++++ b/backends/lean/Aeneas/Tactic/Step/Step.lean
+@@ -1029,0 +1030 @@ def tryApply (info : SpecInfo) (lifting : Option LiftingInfo) (args : Args) (isL
++      pure res
+diff --git a/backends/lean/Aeneas/Tactic/Step/StepArraySpec.lean b/backends/lean/Aeneas/Tactic/Step/StepArraySpec.lean
+index 715196f7..167b09a9 100644
+--- a/backends/lean/Aeneas/Tactic/Step/StepArraySpec.lean
++++ b/backends/lean/Aeneas/Tactic/Step/StepArraySpec.lean
+@@ -109,2 +109 @@ def parseStepArraySpec
+-    -- Compute the visibility of the `step` theorem
+-    let vis : TSyntax `declModifiers ← do
++    let cmd ←
+@@ -112 +111,5 @@ def parseStepArraySpec
+-      | none => `(declModifiers|@[step])
++      | none =>
++        `(command| @[step] theorem $thm_name:ident $i (_ : Aeneas.Std.UScalar.val $i < Aeneas.Std.Array.length $array) :
++            Aeneas.Std.WP.spec (Aeneas.Std.Array.index_usize $array $i) (fun $x:ident => $pred) :=
++            Aeneas.Std.Array.index_usize_const_spec (fun $i:ident $x:ident => $pred) (fun $i:ident $x:ident => $pred)
++            $array (by simp) (by $tac) $i (by scalar_tac) (by scalar_tac))
+@@ -115 +118,4 @@ def parseStepArraySpec
+-          `(declModifiers| @[local step] private)
++          `(command| @[local step] private theorem $thm_name:ident $i (_ : Aeneas.Std.UScalar.val $i < Aeneas.Std.Array.length $array) :
++              Aeneas.Std.WP.spec (Aeneas.Std.Array.index_usize $array $i) (fun $x:ident => $pred) :=
++              Aeneas.Std.Array.index_usize_const_spec (fun $i:ident $x:ident => $pred) (fun $i:ident $x:ident => $pred)
++              $array (by simp) (by $tac) $i (by scalar_tac) (by scalar_tac))
+@@ -117 +123,4 @@ def parseStepArraySpec
+-          `(declModifiers| @[scoped step])
++          `(command| @[scoped step] theorem $thm_name:ident $i (_ : Aeneas.Std.UScalar.val $i < Aeneas.Std.Array.length $array) :
++              Aeneas.Std.WP.spec (Aeneas.Std.Array.index_usize $array $i) (fun $x:ident => $pred) :=
++              Aeneas.Std.Array.index_usize_const_spec (fun $i:ident $x:ident => $pred) (fun $i:ident $x:ident => $pred)
++              $array (by simp) (by $tac) $i (by scalar_tac) (by scalar_tac))
+@@ -120,6 +129 @@ def parseStepArraySpec
+-    -- Elaborate the full theorem
+-    elabCommand
+-      (← `(command| $vis:declModifiers theorem $thm_name:ident $i (_ : Aeneas.Std.UScalar.val $i < Aeneas.Std.Array.length $array) :
+-            Aeneas.Std.WP.spec (Aeneas.Std.Array.index_usize $array $i) (fun $x:ident => $pred) :=
+-            Aeneas.Std.Array.index_usize_const_spec (fun $i:ident $x:ident => $pred) (fun $i:ident $x:ident => $pred)
+-            $array (by simp) (by $tac) $i (by scalar_tac) (by scalar_tac)))
++    elabCommand cmd
+diff --git a/backends/lean/Aeneas/Tactic/Step/StepStar.lean b/backends/lean/Aeneas/Tactic/Step/StepStar.lean
+index e1313f0b..3909d2ec 100644
+--- a/backends/lean/Aeneas/Tactic/Step/StepStar.lean
++++ b/backends/lean/Aeneas/Tactic/Step/StepStar.lean
+@@ -466 +466 @@ where
+-    let tac : Array Syntax.Tactic ← do
++    let tac : Array (TaskOrDone (Option Syntax.Tactic)) ← do
+diff --git a/backends/lean/AeneasMeta/BvEnumToBitVec.lean b/backends/lean/AeneasMeta/BvEnumToBitVec.lean
+index 2fadf4bc..88ae91b7 100644
+--- a/backends/lean/AeneasMeta/BvEnumToBitVec.lean
++++ b/backends/lean/AeneasMeta/BvEnumToBitVec.lean
+@@ -5,2 +5,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
+-import Lean
+-import Lean.Elab.Tactic.BVDecide.Frontend.Normalize.Enums
++module
++
++public import Lean
++public meta import Lean.Elab.Deriving.Basic
++import all Lean.Meta.Tactic.BVDecide.Normalize.Enums
++
++public section
+@@ -47 +52 @@ open Lean Meta Elab
+-open Lean.Elab.Tactic.BVDecide.Frontend.Normalize
++open Lean.Meta.Tactic.BVDecide.Normalize
+@@ -66 +71 @@ module) the realisers reuse them rather than failing. -/
+-def realizeBvEnumToBitVec (declName : Name) : CoreM Unit := do
++meta def realizeBvEnumToBitVec (declName : Name) : CoreM Unit := do
+@@ -91 +96 @@ open Lean.Elab.Command in
+-def elabDefineBvDecideToBitVec : CommandElab := fun stx =>
++meta def elabDefineBvDecideToBitVec : CommandElab := fun stx =>
+@@ -102 +107 @@ conversion constants for each derived type and registers a marker instance. -/
+-def mkBvEnumToBitVecInstance (declNames : Array Name) : CommandElabM Bool := do
++meta def mkBvEnumToBitVecInstance (declNames : Array Name) : CommandElabM Bool := do
+@@ -109 +114 @@ def mkBvEnumToBitVecInstance (declNames : Array Name) : CommandElabM Bool := do
+-initialize
++meta initialize
+diff --git a/backends/lean/AeneasMeta/Simp/Simp.lean b/backends/lean/AeneasMeta/Simp/Simp.lean
+index 322ea73a..455376f4 100644
+--- a/backends/lean/AeneasMeta/Simp/Simp.lean
++++ b/backends/lean/AeneasMeta/Simp/Simp.lean
+@@ -119 +119 @@ where
+-      | some (fvars, mvarId) => replaceMainGoal [mvarId]; pure fvars
++      | some (fvars, mvarId) => replaceMainGoal [mvarId]; pure (some fvars)
+diff --git a/backends/lean/lake-manifest.json b/backends/lean/lake-manifest.json
+index 276c521f..3054ebb2 100644
+--- a/backends/lean/lake-manifest.json
++++ b/backends/lean/lake-manifest.json
+@@ -8 +8 @@
+-   "rev": "fabf563a7c95a166b8d7b6efca11c8b4dc9d911f",
++   "rev": "520045ab14e26149ee970e2e617ca04b09bde5d6",
+@@ -11 +11 @@
+-   "inputRev": "v4.31.0",
++   "inputRev": "v4.32.1",
+@@ -18 +18 @@
+-   "rev": "63045536fe95024e6c18fc7b48e03f506701c5bc",
++   "rev": "e12c1910fe855cbfc38803cd4e55543906d5fa62",
+@@ -38 +38 @@
+-   "rev": "5c7542ed018c78194f1e2b903eaf6a792b74c03d",
++   "rev": "7e9612bf0b9ee66db3cb5b9988a35afc706f5a12",
+@@ -48 +48 @@
+-   "rev": "24b0d9dc081c5423f8eec7e866c441e5184f29d9",
++   "rev": "6e311e2a844da9b2cc3971187df2fe0066947b93",
+@@ -58 +58 @@
+-   "rev": "e3cb2f741431ce31bf73549fb52316a57368b06f",
++   "rev": "a7dbf0c63b694e47f425f3dcddbc0e178bb432d3",
+@@ -68 +68 @@
+-   "rev": "f46324995fca5f0483b742e4eb4daec7f4ee50d2",
++   "rev": "38d591e778f100aec9762bb582f9c7f55f50e9dc",
+@@ -78 +78 @@
+-   "rev": "fa08db58b30eb033edcdab331bba000827f9f785",
++   "rev": "023ce7d62a0531e22a5331e20b587817a80d49ff",
+@@ -88 +88 @@
+-   "rev": "92564e5770e4d09f2d86dfbf8ada1e9c715b384c",
++   "rev": "88679d088c9720c27ebdf2ba4dafe17341747f94",
+@@ -91 +91 @@
+-   "inputRev": "v4.31.0",
++   "inputRev": "v4.32.0",
+diff --git a/backends/lean/lakefile.lean b/backends/lean/lakefile.lean
+index bc2d2901..c8ae22e8 100644
+--- a/backends/lean/lakefile.lean
++++ b/backends/lean/lakefile.lean
+@@ -6 +6 @@ require mathlib from git
+-  "https://github.com/leanprover-community/mathlib4.git" @ "v4.31.0"
++  "https://github.com/leanprover-community/mathlib4.git" @ "v4.32.1"
+diff --git a/backends/lean/lean-toolchain b/backends/lean/lean-toolchain
+index 18640c8b..2b61957b 100644
+--- a/backends/lean/lean-toolchain
++++ b/backends/lean/lean-toolchain
+@@ -1 +1 @@
+-leanprover/lean4:v4.31.0
++leanprover/lean4:v4.32.1

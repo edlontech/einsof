@@ -1,7 +1,7 @@
 # Kav: kernel-checked invariant verifier
 
 Kav is a pure-Lean 4 transition-system verification framework. It uses mathlib
-(Lean 4.30.0 + mathlib v4.30.0) and Duper as automation backends.
+(Lean 4.32.1 + mathlib v4.32.1) and Duper as automation backends.
 
 It is a reusable library. The TzimtzumV2 protocol that exercises it lives in the sibling
 [`tzimtzum/`](../tzimtzum/) project, which `require`s Kav.
@@ -53,7 +53,7 @@ lake build Kav           # base framework library
 lake build KavTest       # framework self-tests (ActionTest/CheckTest/ModelCheckTest/SolveTest)
 ```
 
-Toolchain: Lean 4.30.0 + mathlib v4.30.0.
+Toolchain: Lean 4.32.1 + mathlib v4.32.1.
 
 ## File layout
 
@@ -61,7 +61,7 @@ Toolchain: Lean 4.30.0 + mathlib v4.30.0.
 kav/
   lakefile.toml              Kav + KavTest build targets
   KavTest.lean               aggregator: framework Test modules
-  lean-toolchain             v4.30.0
+  lean-toolchain             v4.32.1
   Kav/
     Core.lean                TransitionSystem, Action, Invariant types
     Action.lean              kav_action macro

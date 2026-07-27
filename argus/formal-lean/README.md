@@ -16,8 +16,37 @@ lake build              # the whole library, incl. implementation_sound
 lake build ArgusChecks  # opt-in Plausible property-test harness (not in the default build)
 ```
 
-Lean 4.30 (pinned via `lean-toolchain`). After a toolchain change, run `lake exe cache get`
+Lean 4.32.1 (pinned via `lean-toolchain`). After a toolchain change, run `lake exe cache get`
 first.
+
+### Frozen V4-campaign stack
+
+| Component | Pin |
+|---|---|
+| Lean / mathlib | `v4.32.1` |
+| lean-auto / Duper | `v4.32.0` |
+| REPL | `v4.32.0` |
+| Aeneas | `3a8586facab25b31bdb1e1f5f45acd60d1cc5ff0` |
+| Charon | `527ea8e3b5dcb52edd6aef0f7bc34cc09c11dd59` |
+| Charon Rust | `nightly-2026-06-01` |
+
+These pins and the resolved Lake manifests stay fixed for the V4 campaign. The evaluated versions,
+release-note review, adaptations, and clean-build evidence are recorded in
+[`UPGRADE-4.32.md`](UPGRADE-4.32.md). Aeneas upstream targets Lean 4.31 at this commit, so
+`patches/aeneas-lean-v4.32.1.patch` is part of the frozen stack. Recreate
+the intentionally gitignored tool checkout from the repository root with:
+
+```bash
+git clone https://github.com/AeneasVerif/aeneas tools/aeneas
+git -C tools/aeneas checkout 3a8586facab25b31bdb1e1f5f45acd60d1cc5ff0
+git -C tools/aeneas apply --unidiff-zero ../../argus/formal-lean/patches/aeneas-lean-v4.32.1.patch
+(cd tools/aeneas && env -u RUSTUP_TOOLCHAIN gmake setup-charon)
+(cd tools/aeneas && eval "$(opam env --switch=aeneas --set-switch)" && gmake build-bin-dir)
+```
+
+The Aeneas OCaml switch needs the upstream dependency set, including `ppx_deriving_yojson`.
+`argus/scripts/charon-aeneas-extract.sh` rejects any source/pin/patch mismatch and clean-rebuilds
+both ignored extractor binaries before use.
 
 ## Module map
 
@@ -67,19 +96,17 @@ correct. State the extractor and the assumptions whenever claiming end-to-end so
 `#print axioms ArgusLean.Refinement.implementation_sound` reports exactly:
 
 - Standard: `propext`, `Classical.choice`, `Quot.sound`.
-- `sorryAx`, inherited from the Aeneas standard library (`Aeneas/Std/Slice.lean` and the
-  String iterator files carry documented `sorry`s) — an extractor-library residual, not a
-  `sorry` in this refinement's own proofs.
 - Named-root: `argus_kernel.types.AgentId.root._native.decide.ax_1`, the `native_decide`
   residual for the root agent's concrete name. This is a baseline of naming the root, not
   a proof `sorry`.
-- Opaque id/String ops (7, in `Bridging/Collections.lean`): `string_eq_spec`,
-  `string_clone_spec`, `agentId_ne_spec`, `optionAgentId_ne_spec`, `invocationId_ne_spec`,
-  `overrideKey_ne_spec`, `toolId_ne_spec`, stating that the extracted opaque
-  `String`-backed decidable (dis)equality and clone behave faithfully.
-- Aeneas/Charon extractor residuals (in `Generated/ArgusKernel.lean`): the per-type
-  `...CmpPartialEq....ne` / `...eq` / `...clone` / `to_owned` instance axioms the extractor
-  emits for the opaque `String`-backed identifier types.
+- Three explicit opaque-operation specifications in `Bridging/Collections.lean`:
+  `string_eq_spec`, `string_clone_spec`, and `optionAgentId_eq_spec`.
+- Four Aeneas/Charon extractor residuals in `Generated/ArgusKernel.lean`:
+  `Str.…to_owned`, `String.…clone`, `String.…eq`, and `Option.…eq`.
+
+Aeneas Std still contains documented `sorry`s, but this theorem's dependency closure no longer
+contains `sorryAx`. The extractor's translated `PartialEq::ne` operations now use a proved default
+implementation, so the former per-id disequality assumptions were removed rather than replaced.
 
 Two assumptions are hypotheses of `implementation_sound` (discharged by the caller, not
 axioms):

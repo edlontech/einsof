@@ -177,15 +177,7 @@ theorem unregisterOuter_spec
           · exact ⟨vm.entries.val[iL.val]'hlt, Or.inr rfl, hPi⟩
       step*
       refine ⟨by scalar_tac, ?_, by scalar_tac⟩
-      have hgoal : (∃ (x : types.AgentId) (y : collections.VecSet types.InvocationId),
-          (x, y) ∈ vm.entries.val.take (iL.val + 1) ∧
-          ∃ I ∈ y.items.val, (vmLastEntry vm1.entries.val I).map Prod.snd = some tool) ↔
-          (∃ q ∈ vm.entries.val.take (iL.val + 1),
-            ∃ I ∈ q.2.items.val, (vmLastEntry vm1.entries.val I).map Prod.snd = some tool) := by
-        constructor
-        · rintro ⟨x, y, hxy, hI⟩; exact ⟨(x, y), hxy, hI⟩
-        · rintro ⟨⟨x, y⟩, hxy, hI⟩; exact ⟨x, y, hxy, hI⟩
-      rw [hi2 _ i2_post, hgoal, hext, ht2Iff, htifL, hvs]
+      rw [hi2 _ i2_post, hext, ht2Iff, htifL, hvs]
       constructor
       · rintro ((hA | hB) | hC)
         · exact Or.inl hA

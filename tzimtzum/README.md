@@ -96,7 +96,7 @@ The `#kav_check_action` commands emit PASS/FAIL tables to the info log. A succes
 `lake build TzimtzumTest` means all VCs passed, the soundness bundle assembled, and the
 axiom audit is clean.
 
-Toolchain: Lean 4.30.0 + mathlib v4.30.0 (via the Kav dependency). After a toolchain
+Toolchain: Lean 4.32.1 + mathlib v4.32.1 (via the Kav dependency). After a toolchain
 change, run `lake exe cache get` before building, or mathlib rebuilds from source.
 
 ## Scope and limitations
@@ -117,7 +117,7 @@ explicit assumptions).
 ```
 tzimtzum/
   lakefile.toml              requires ../kav; Tzimtzum + TzimtzumTest targets
-  lean-toolchain             v4.30.0
+  lean-toolchain             v4.32.1
   Tzimtzum.lean              spec root (State/Actions/Invariants/OpaqueTypes)
   TzimtzumTest.lean          aggregator: per-action VC checks + soundness + audit
   Tzimtzum/

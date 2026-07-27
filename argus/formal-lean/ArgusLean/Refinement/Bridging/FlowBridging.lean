@@ -28,7 +28,8 @@ per-invocation verdict rekeying (`invocation_gate_passes`): the invocation being
 necessarily the invocation being gated (CHECK 2b/4b vouch an in-flight invocation against a newly
 examined floor).
 
-Supporting collection facts: `overrideKey_eq_spec` (struct decidable equality, *proved*). -/
+Supporting collection facts, including proved structural `OverrideKey` equality, live in
+`Collections`. -/
 
 namespace ArgusLean.Refinement
 
@@ -37,21 +38,6 @@ open Aeneas.Std.WP
 
 set_option Aeneas.Deprecated.progressWarning false
 set_option maxHeartbeats 4000000
-
-/-! ## Decidable equality for `OverrideKey`
-
-(`DecidableEq types.ConfLevel` + `confLevel_eq_spec` now live in `Collections`.) -/
-
-deriving instance DecidableEq for types.OverrideKey
-
-/-- `OverrideKey.eq` is faithful decidable equality: tool (`String`-backed) then level (enum). -/
-@[simp] theorem overrideKey_eq_spec (a b : types.OverrideKey) :
-    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.eq a b = .ok (decide (a = b)) := by
-  obtain ⟨t1, l1⟩ := a; obtain ⟨t2, l2⟩ := b
-  simp only [types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.eq, toolId_eq_spec, bind_tc_ok]
-  by_cases ht : t1 = t2
-  · subst ht; simp [confLevel_eq_spec]
-  · simp [ht]
 
 /-! ## `flow_decision` (confidentiality side) -/
 

@@ -776,8 +776,8 @@ theorem return_unendorsed_preservesR {C : Type} (cgInst : traits.ContentGateOrac
   rw [hoEq] at hok
   simp only [bind_tc_ok] at hok
   obtain ⟨b, hbEq, hbIff⟩ :
-      ∃ bb, core.option.Option.Insts.CoreCmpPartialEqOption.ne
-        (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o (some parent) =
+      ∃ bb, core.cmp.PartialEq.ne.trait_default (core.option.Option.Insts.CoreCmpPartialEqOption
+        (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId)) o (some parent) =
         .ok bb ∧ (bb = true ↔ o ≠ some parent) :=
     ⟨_, optionAgentId_ne_spec o (some parent), by simp⟩
   rw [hbEq] at hok

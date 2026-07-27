@@ -9,12 +9,11 @@ per-action simulation proofs consume.
 
 ## Trust assumptions (extractor residual)
 
-Rust's `String` is a stdlib primitive with no MIR body, so Charon/Aeneas extract its
-`PartialEq::eq` and `Clone::clone` as bare, unspecified axioms (`String.…eq`/`…clone`).
-We pin their behaviour to faithful decidable equality / identity. This is part of the
-already-accepted "trust the extractor" residual — the same status the `String` model
-itself has — and is the ONLY thing these axioms add to the TCB beyond
-`propext`/`Classical.choice`/`Quot.sound` + Aeneas. -/
+Rust's `String` and generic `Option` equality are stdlib operations without translated MIR
+bodies, so Charon/Aeneas emit bare, unspecified equality/clone axioms. We pin the operations
+used by this refinement to faithful decidable equality or identity. These three specifications
+(`string_eq_spec`, `string_clone_spec`, `optionAgentId_eq_spec`) are part of the accepted
+extractor residual and are the only axioms introduced by this file. -/
 
 namespace ArgusLean.Refinement
 
@@ -110,17 +109,16 @@ deriving instance DecidableEq for capability.CapKind
 @[simp] theorem capKind_clone_spec (a : capability.CapKind) :
     capability.CapKind.Insts.CoreCloneClone.clone a = .ok a := rfl
 
-/-! ## `PartialEq::ne` extractor residual
+/-! ## `PartialEq::ne` default-method bridge
 
-`PartialEq::ne` is a *default* trait method (`!self.eq(other)`), so Charon extracts the
-per-type `…ne` as a bare, unspecified axiom (just like the `String` primitives). We pin it
-to faithful decidable disequality — the same already-accepted "trust the extractor" status
-as `string_eq_spec` / `string_clone_spec`. Only `AgentId.ne` is needed for the cleared-map
-removes in `clear_agent_state`; other key types get their own residual when first used. -/
+Aeneas now translates `PartialEq::ne` through its proved default implementation
+(`!self.eq(other)`). The disequality specifications below therefore derive from the equality
+specifications rather than adding extractor assumptions. -/
 
-/-- The opaque extracted `AgentId.ne` is faithful decidable disequality. -/
-axiom agentId_ne_spec (a b : types.AgentId) :
-    types.AgentId.Insts.CoreCmpPartialEqAgentId.ne a b = .ok (decide (a ≠ b))
+/-- `AgentId.ne` is faithful decidable disequality, derived from `AgentId.eq`. -/
+@[simp] theorem agentId_ne_spec (a b : types.AgentId) :
+    types.AgentId.Insts.CoreCmpPartialEqAgentId.ne a b = .ok (decide (a ≠ b)) := by
+  simp [core.cmp.PartialEq.ne.default]
 
 /-! ## VecSet membership abstraction -/
 
@@ -269,11 +267,11 @@ theorem vecMapKVecSetInsertIntoLoop_spec {K T : Type} [DecidableEq K]
       step*
       have hget : v.val[i.val]? = some (t, vs0) := by
         rw [List.getElem?_eq_getElem hlt, ← he]
-      split <;>
-        (step*
-         refine ⟨by omega, ?_, by omega⟩
-         intro q hq
-         grind)
+      split <;> step*
+      all_goals
+        refine ⟨by omega, ?_, by omega⟩
+        intro q hq
+        grind
     case isFalse h =>
       simp only [spec_ok]
       exact hidx
@@ -807,15 +805,15 @@ theorem agentParentDropEndpointLoop_spec
       have hget : map.entries.val[i.val]? = some (child, parent) := by
         rw [List.getElem?_eq_getElem hlt, hpair]
       clear hpair hchild hparent
-      simp only [core.cmp.impls.PartialEqShared.ne]
-      rw [agentId_ne_spec child dropped]
+      simp only [core.cmp.impls.PartialEqShared.ne, core.cmp.PartialEq.ne.default,
+        agentId_eq_spec, bind_tc_ok]
       step*
       split
       · rename_i hbo
-        rw [agentId_ne_spec parent dropped]
-        step*
+        simp at hbo
         split
         · rename_i hbi
+          simp at hbi
           simp only [agentId_clone_spec, bind_tc_ok]
           obtain ⟨kept1, hkept1Eq, hkept1⟩ := spec_imp_exists
             (vecMapInsert_append_spec types.AgentId.Insts.CoreCloneClone
@@ -825,22 +823,24 @@ theorem agentParentDropEndpointLoop_spec
           step*
           refine ⟨by scalar_tac, ?_, by scalar_tac⟩
           rw [hkept1, i2_post, List.take_add_one, hget, Option.toList_some]
-          have hcd : child ≠ dropped := decide_eq_true_eq.mp hbo
-          have hpd : parent ≠ dropped := decide_eq_true_eq.mp hbi
+          have hcd : child ≠ dropped := hbo
+          have hpd : parent ≠ dropped := hbi
           have hpk : parentKept dropped (child, parent) = true := by simp [parentKept, hcd, hpd]
           simp [List.filter_append, hpk, ← hkept]
         · rename_i hbi
+          simp at hbi
           step*
           refine ⟨by scalar_tac, ?_, by scalar_tac⟩
           rw [i2_post, List.take_add_one, hget, Option.toList_some]
-          have hpd : parent = dropped := not_not.mp (fun hc => hbi (decide_eq_true_eq.mpr hc))
+          have hpd : parent = dropped := hbi
           have hpk : parentKept dropped (child, parent) = false := by simp [parentKept, hpd]
           simp [List.filter_append, hpk, ← hkept]
       · rename_i hbo
+        simp at hbo
         step*
         refine ⟨by scalar_tac, ?_, by scalar_tac⟩
         rw [i2_post, List.take_add_one, hget, Option.toList_some]
-        have hcd : child = dropped := not_not.mp (fun hc => hbo (decide_eq_true_eq.mpr hc))
+        have hcd : child = dropped := hbo
         have hpk : parentKept dropped (child, parent) = false := by simp [parentKept, hcd]
         simp [List.filter_append, hpk, ← hkept]
     case isFalse h =>
@@ -911,14 +911,20 @@ via `agent_parent_drop_child` (a pure key-filter — no re-appended edge, unlike
 and (d) `VecMap.remove` the agent's caps. The lemmas below are the bridging those need; they are
 shared between the two removal actions. -/
 
-/-- The opaque extracted `Option AgentId` disequality is faithful decidable disequality. Same
-    extractor-residual status as `agentId_ne_spec`: `PartialEq::ne` is a default trait method,
-    so Charon emits the per-type `…ne` as a bare axiom. Consumed by the parent-edge gate of
-    `revoke` / `cascade_revoke` (and later `grant_capability`). -/
-axiom optionAgentId_ne_spec (o1 o2 : Option types.AgentId) :
-    core.option.Option.Insts.CoreCmpPartialEqOption.ne
+/-- The opaque extracted `Option AgentId` equality is faithful decidable equality. -/
+axiom optionAgentId_eq_spec (o1 o2 : Option types.AgentId) :
+    core.option.Option.Insts.CoreCmpPartialEqOption.eq
       (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o1 o2
-      = .ok (decide (o1 ≠ o2))
+      = .ok (decide (o1 = o2))
+
+/-- `Option AgentId.ne` is faithful decidable disequality, derived from its extracted equality. -/
+@[simp] theorem optionAgentId_ne_spec (o1 o2 : Option types.AgentId) :
+    core.cmp.PartialEq.ne.trait_default
+      (core.option.Option.Insts.CoreCmpPartialEqOption
+        (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId)) o1 o2
+      = .ok (decide (o1 ≠ o2)) := by
+  simp [core.cmp.PartialEq.ne.trait_default, core.cmp.PartialEq.ne.default,
+    optionAgentId_eq_spec]
 
 /-- A present last-match entry is keyed by the queried key (it came out of the key-filter). -/
 theorem vmLastEntry_fst {K V : Type} [DecidableEq K] (l : List (K × V)) (key : K) (p : K × V)
@@ -1199,11 +1205,12 @@ theorem agentParentDropChildLoop_spec
         have hfm := fst_getElem_not_mem_map_take map.entries.val i.val hlt hnd
         rw [hkept]; intro p hp hpc
         exact hfm (by rw [← hchild, ← hpc]; exact List.mem_map.mpr ⟨p, List.mem_of_mem_filter hp, rfl⟩)
-      simp only [core.cmp.impls.PartialEqShared.ne]
-      rw [agentId_ne_spec child dropped]
+      simp only [core.cmp.impls.PartialEqShared.ne, core.cmp.PartialEq.ne.default,
+        agentId_eq_spec, bind_tc_ok]
       step*
       split
       · rename_i hbo
+        simp at hbo
         simp only [agentId_clone_spec, bind_tc_ok]
         obtain ⟨parent, hparentEq, hparent⟩ := spec_imp_exists
           (vecMapValAt_spec types.AgentId.Insts.CoreCloneClone
@@ -1223,15 +1230,16 @@ theorem agentParentDropChildLoop_spec
         have hget : map.entries.val[i.val]? = some (child, parent) := by
           rw [List.getElem?_eq_getElem hlt, hpair]
         rw [hkept1, i2_post, List.take_add_one, hget, Option.toList_some]
-        have hcd : child ≠ dropped := decide_eq_true_eq.mp hbo
+        have hcd : child ≠ dropped := hbo
         have hpk : removeKept dropped (child, parent) = true := by simp [removeKept, hcd]
         simp [List.filter_append, hpk, ← hkept]
       · rename_i hbo
+        simp at hbo
         step*
         refine ⟨by scalar_tac, ?_, by scalar_tac⟩
         have hget : map.entries.val[i.val]? = some (map.entries.val[i.val]'hlt) :=
           List.getElem?_eq_getElem hlt
-        have hcd : child = dropped := not_not.mp (fun hc => hbo (decide_eq_true_eq.mpr hc))
+        have hcd : child = dropped := hbo
         have hpk : removeKept dropped (map.entries.val[i.val]'hlt) = false := by
           simp only [removeKept, ← hchild, hcd, ne_eq, not_true_eq_false, decide_false]
         have hfilt : List.filter (removeKept dropped) [map.entries.val[i.val]'hlt] = [] := by
@@ -1839,24 +1847,31 @@ theorem vecSetInsertNodup_spec {T : Type} [DecidableEq T]
       exact ⟨hnd, List.nodup_singleton x,
         fun a ha b hb hab => hx (by rw [List.mem_singleton] at hb; subst hab; subst hb; exact ha)⟩
 
-/-- The opaque extracted `InvocationId.ne` is faithful decidable disequality. -/
-axiom invocationId_ne_spec (a b : types.InvocationId) :
-    types.InvocationId.Insts.CoreCmpPartialEqInvocationId.ne a b = .ok (decide (a ≠ b))
+/-- `InvocationId.ne` is faithful decidable disequality, derived from equality. -/
+@[simp] theorem invocationId_ne_spec (a b : types.InvocationId) :
+    types.InvocationId.Insts.CoreCmpPartialEqInvocationId.ne a b = .ok (decide (a ≠ b)) := by
+  simp [core.cmp.PartialEq.ne.default]
 
-/-- Same extractor-residual family (String-backed `ne` default trait method): needed by
-    `unregister_tool`'s `VecSet.remove` on `tool_registered`. -/
-axiom toolId_ne_spec (a b : types.ToolId) :
-    types.ToolId.Insts.CoreCmpPartialEqToolId.ne a b = .ok (decide (a ≠ b))
+/-- `ToolId.ne` is faithful decidable disequality, derived from equality. -/
+@[simp] theorem toolId_ne_spec (a b : types.ToolId) :
+    types.ToolId.Insts.CoreCmpPartialEqToolId.ne a b = .ok (decide (a ≠ b)) := by
+  simp [core.cmp.PartialEq.ne.default]
 
--- `DecidableEq types.OverrideKey` (also derived in `FlowBridging`; both yield the same structural
--- instance) — needed for the `decide (a ≠ b)` in `overrideKey_ne_spec` below.
+-- Needed for the structural equality specifications below.
 deriving instance DecidableEq for types.OverrideKey
 
-/-- The opaque extracted `OverrideKey.ne` is faithful decidable disequality. The derived `ne` was
-    extracted as an axiom (a String-`ne` residual via the `ToolId` field), so its faithfulness is
-    pinned here in the same `agentId_ne_spec` / `invocationId_ne_spec` baseline family. -/
-axiom overrideKey_ne_spec (a b : types.OverrideKey) :
-    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.ne a b = .ok (decide (a ≠ b))
+/-- `OverrideKey.eq` is faithful decidable equality, derived from its `ToolId` field. -/
+@[simp] theorem overrideKey_eq_spec (a b : types.OverrideKey) :
+    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.eq a b = .ok (decide (a = b)) := by
+  cases a with | mk atool aegr =>
+    cases b with | mk btool begr =>
+      simp only [types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.eq, toolId_eq_spec, bind_tc_ok]
+      by_cases ht : atool = btool <;> simp [ht]
+
+/-- `OverrideKey.ne` is faithful decidable disequality, derived from equality. -/
+@[simp] theorem overrideKey_ne_spec (a b : types.OverrideKey) :
+    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.ne a b = .ok (decide (a ≠ b)) := by
+  simp [core.cmp.PartialEq.ne.default, overrideKey_eq_spec]
 
 theorem setContainsLast_spec {K T : Type} [DecidableEq K] [DecidableEq T]
     (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)

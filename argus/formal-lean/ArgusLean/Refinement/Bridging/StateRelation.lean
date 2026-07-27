@@ -355,6 +355,8 @@ theorem creditBudget_spec (st : state.KernelState) (agent : types.AgentId) (n : 
   obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (budget_spec st agent)
   rw [hbEq]
   simp only [bind_tc_ok, core.num.U8.saturating_add, lift, agentId_clone_spec]
+  step*
+  rw [next_post]
   obtain ⟨vm, hvmEq, hvm⟩ := spec_imp_exists
     (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec core.clone.CloneU8 st.agent_budget

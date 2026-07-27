@@ -17,18 +17,31 @@ noncomputable section
 
 namespace argus_kernel
 
-/-- [core::option::{impl core::cmp::PartialEq<core::option::Option<T>> for core::option::Option<T>}::ne]:
-    Source: '/rustc/library/core/src/option.rs', lines 2422:0-2422:56
-    Name pattern: [core::option::{core::cmp::PartialEq<core::option::Option<@T>, core::option::Option<@T>>}::ne]
+/-- [core::option::{impl core::cmp::PartialEq<core::option::Option<T>> for core::option::Option<T>}::eq]:
+    Source: '/rustc/library/core/src/option.rs', lines 2440:4-2440:38
+    Name pattern: [core::option::{core::cmp::PartialEq<core::option::Option<@T>, core::option::Option<@T>>}::eq]
     Visibility: public -/
 @[rust_fun
-  "core::option::{core::cmp::PartialEq<core::option::Option<@T>, core::option::Option<@T>>}::ne"]
-axiom core.option.Option.Insts.CoreCmpPartialEqOption.ne
+  "core::option::{core::cmp::PartialEq<core::option::Option<@T>, core::option::Option<@T>>}::eq"]
+axiom core.option.Option.Insts.CoreCmpPartialEqOption.eq
   {T : Type} (cmpPartialEqInst : core.cmp.PartialEq T T) :
   Option T → Option T → Result Bool
 
+/-- Trait implementation: [core::option::{impl core::cmp::PartialEq<core::option::Option<T>> for core::option::Option<T>}]
+    Source: '/rustc/library/core/src/option.rs', lines 2438:0-2438:56
+    Name pattern: [core::cmp::PartialEq<core::option::Option<@T>, core::option::Option<@T>>] -/
+@[reducible, rust_trait_impl
+  "core::cmp::PartialEq<core::option::Option<@T>, core::option::Option<@T>>"]
+impl_def core.option.Option.Insts.CoreCmpPartialEqOption {T : Type}
+  (cmpPartialEqInst : core.cmp.PartialEq T T) : core.cmp.PartialEq (Option T)
+  (Option T) := {
+  eq := core.option.Option.Insts.CoreCmpPartialEqOption.eq cmpPartialEqInst
+  ne := core.cmp.PartialEq.ne.trait_default
+    (core.option.Option.Insts.CoreCmpPartialEqOption cmpPartialEqInst)
+}
+
 /-- [alloc::str::{impl alloc::borrow::ToOwned<alloc::string::String> for str}::to_owned]:
-    Source: '/rustc/library/alloc/src/str.rs', lines 210:4-210:32
+    Source: '/rustc/library/alloc/src/str.rs', lines 250:4-250:32
     Name pattern: [alloc::str::{alloc::borrow::ToOwned<str, alloc::string::String>}::to_owned]
     Visibility: public -/
 @[rust_fun
@@ -45,7 +58,7 @@ axiom alloc.string.String.Insts.CoreCmpPartialEqString.eq
   : String → String → Result Bool
 
 /-- [alloc::string::{impl core::clone::Clone for alloc::string::String}::clone]:
-    Source: '/rustc/library/alloc/src/string.rs', lines 2351:4-2351:27
+    Source: '/rustc/library/alloc/src/string.rs', lines 2364:4-2364:27
     Name pattern: [alloc::string::{core::clone::Clone<alloc::string::String>}::clone]
     Visibility: public -/
 @[rust_fun "alloc::string::{core::clone::Clone<alloc::string::String>}::clone"]
@@ -270,12 +283,6 @@ structure background.BackgroundTheory where
   lever_integ_floor : types.IntegLevel
   lever_integ_inspect_floor : types.IntegLevel
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ToolId> for argus_kernel::types::ToolId}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 22:23-22:32
-    Visibility: public -/
-axiom types.ToolId.Insts.CoreCmpPartialEqToolId.ne
-  : types.ToolId → types.ToolId → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ToolId> for argus_kernel::types::ToolId}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 22:23-22:32
     Visibility: public -/
@@ -286,10 +293,11 @@ def types.ToolId.Insts.CoreCmpPartialEqToolId.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ToolId> for argus_kernel::types::ToolId}]
     Source: 'crates/argus-kernel/src/types.rs', lines 22:23-22:32 -/
 @[reducible]
-def types.ToolId.Insts.CoreCmpPartialEqToolId : core.cmp.PartialEq types.ToolId
-  types.ToolId := {
+impl_def types.ToolId.Insts.CoreCmpPartialEqToolId : core.cmp.PartialEq
+  types.ToolId types.ToolId := {
   eq := types.ToolId.Insts.CoreCmpPartialEqToolId.eq
-  ne := types.ToolId.Insts.CoreCmpPartialEqToolId.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.ToolId.Insts.CoreCmpPartialEqToolId
 }
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::ToolId}::clone]:
@@ -377,12 +385,6 @@ def background.BackgroundTheory.tool_metadata
     types.ToolId.Insts.CoreCmpPartialEqToolId
     background.ToolMetadata.Insts.CoreCloneClone self.tools tool
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 211:29-211:38
-    Visibility: public -/
-axiom types.EgressKind.Insts.CoreCmpPartialEqEgressKind.ne
-  : types.EgressKind → types.EgressKind → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 211:29-211:38
     Visibility: public -/
@@ -395,10 +397,11 @@ def types.EgressKind.Insts.CoreCmpPartialEqEgressKind.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::EgressKind> for argus_kernel::types::EgressKind}]
     Source: 'crates/argus-kernel/src/types.rs', lines 211:29-211:38 -/
 @[reducible]
-def types.EgressKind.Insts.CoreCmpPartialEqEgressKind : core.cmp.PartialEq
+impl_def types.EgressKind.Insts.CoreCmpPartialEqEgressKind : core.cmp.PartialEq
   types.EgressKind types.EgressKind := {
   eq := types.EgressKind.Insts.CoreCmpPartialEqEgressKind.eq
-  ne := types.EgressKind.Insts.CoreCmpPartialEqEgressKind.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.EgressKind.Insts.CoreCmpPartialEqEgressKind
 }
 
 /-- [argus_kernel::types::{argus_kernel::types::ConfLevel}::rank]:
@@ -458,12 +461,6 @@ def background.BackgroundTheory.flow_mode
     then ok background.FlowMode.Inspect
     else ok background.FlowMode.Deny
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IssuerId> for argus_kernel::types::IssuerId}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 52:23-52:32
-    Visibility: public -/
-axiom types.IssuerId.Insts.CoreCmpPartialEqIssuerId.ne
-  : types.IssuerId → types.IssuerId → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IssuerId> for argus_kernel::types::IssuerId}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 52:23-52:32
     Visibility: public -/
@@ -474,10 +471,11 @@ def types.IssuerId.Insts.CoreCmpPartialEqIssuerId.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IssuerId> for argus_kernel::types::IssuerId}]
     Source: 'crates/argus-kernel/src/types.rs', lines 52:23-52:32 -/
 @[reducible]
-def types.IssuerId.Insts.CoreCmpPartialEqIssuerId : core.cmp.PartialEq
+impl_def types.IssuerId.Insts.CoreCmpPartialEqIssuerId : core.cmp.PartialEq
   types.IssuerId types.IssuerId := {
   eq := types.IssuerId.Insts.CoreCmpPartialEqIssuerId.eq
-  ne := types.IssuerId.Insts.CoreCmpPartialEqIssuerId.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.IssuerId.Insts.CoreCmpPartialEqIssuerId
 }
 
 /-- Trait implementation: [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::IssuerId}]
@@ -545,12 +543,6 @@ def background.BackgroundTheory.is_trusted_issuer
   collections.VecSet.contains types.IssuerId.Insts.CoreCloneClone
     types.IssuerId.Insts.CoreCmpPartialEqIssuerId self.trusted_issuers issuer
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::InstructionId> for argus_kernel::types::InstructionId}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 67:23-67:32
-    Visibility: public -/
-axiom types.InstructionId.Insts.CoreCmpPartialEqInstructionId.ne
-  : types.InstructionId → types.InstructionId → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::InstructionId> for argus_kernel::types::InstructionId}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 67:23-67:32
     Visibility: public -/
@@ -563,10 +555,11 @@ def types.InstructionId.Insts.CoreCmpPartialEqInstructionId.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::InstructionId> for argus_kernel::types::InstructionId}]
     Source: 'crates/argus-kernel/src/types.rs', lines 67:23-67:32 -/
 @[reducible]
-def types.InstructionId.Insts.CoreCmpPartialEqInstructionId :
+impl_def types.InstructionId.Insts.CoreCmpPartialEqInstructionId :
   core.cmp.PartialEq types.InstructionId types.InstructionId := {
   eq := types.InstructionId.Insts.CoreCmpPartialEqInstructionId.eq
-  ne := types.InstructionId.Insts.CoreCmpPartialEqInstructionId.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.InstructionId.Insts.CoreCmpPartialEqInstructionId
 }
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::InstructionId}::clone]:
@@ -668,12 +661,6 @@ def background.BackgroundTheory.impl.lever_integ_inspect_floor
   (self : background.BackgroundTheory) : Result types.IntegLevel := do
   ok self.lever_integ_inspect_floor
 
-/-- [argus_kernel::capability::{impl core::cmp::PartialEq<argus_kernel::capability::CapKind> for argus_kernel::capability::CapKind}::ne]:
-    Source: 'crates/argus-kernel/src/capability.rs', lines 4:29-4:38
-    Visibility: public -/
-axiom capability.CapKind.Insts.CoreCmpPartialEqCapKind.ne
-  : capability.CapKind → capability.CapKind → Result Bool
-
 /-- [argus_kernel::capability::{impl core::cmp::PartialEq<argus_kernel::capability::CapKind> for argus_kernel::capability::CapKind}::eq]:
     Source: 'crates/argus-kernel/src/capability.rs', lines 4:29-4:38
     Visibility: public -/
@@ -686,10 +673,11 @@ def capability.CapKind.Insts.CoreCmpPartialEqCapKind.eq
 /-- Trait implementation: [argus_kernel::capability::{impl core::cmp::PartialEq<argus_kernel::capability::CapKind> for argus_kernel::capability::CapKind}]
     Source: 'crates/argus-kernel/src/capability.rs', lines 4:29-4:38 -/
 @[reducible]
-def capability.CapKind.Insts.CoreCmpPartialEqCapKind : core.cmp.PartialEq
+impl_def capability.CapKind.Insts.CoreCmpPartialEqCapKind : core.cmp.PartialEq
   capability.CapKind capability.CapKind := {
   eq := capability.CapKind.Insts.CoreCmpPartialEqCapKind.eq
-  ne := capability.CapKind.Insts.CoreCmpPartialEqCapKind.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    capability.CapKind.Insts.CoreCmpPartialEqCapKind
 }
 
 /-- [argus_kernel::capability::{argus_kernel::capability::CapKind}::ALL]
@@ -1599,12 +1587,6 @@ def types.OverrideKey.Insts.CoreCloneClone : core.clone.Clone types.OverrideKey
   clone := types.OverrideKey.Insts.CoreCloneClone.clone
 }
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::InvocationId> for argus_kernel::types::InvocationId}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 37:23-37:32
-    Visibility: public -/
-axiom types.InvocationId.Insts.CoreCmpPartialEqInvocationId.ne
-  : types.InvocationId → types.InvocationId → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::InvocationId> for argus_kernel::types::InvocationId}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 37:23-37:32
     Visibility: public -/
@@ -1615,10 +1597,11 @@ def types.InvocationId.Insts.CoreCmpPartialEqInvocationId.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::InvocationId> for argus_kernel::types::InvocationId}]
     Source: 'crates/argus-kernel/src/types.rs', lines 37:23-37:32 -/
 @[reducible]
-def types.InvocationId.Insts.CoreCmpPartialEqInvocationId : core.cmp.PartialEq
-  types.InvocationId types.InvocationId := {
+impl_def types.InvocationId.Insts.CoreCmpPartialEqInvocationId :
+  core.cmp.PartialEq types.InvocationId types.InvocationId := {
   eq := types.InvocationId.Insts.CoreCmpPartialEqInvocationId.eq
-  ne := types.InvocationId.Insts.CoreCmpPartialEqInvocationId.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.InvocationId.Insts.CoreCmpPartialEqInvocationId
 }
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::InvocationId}::clone]:
@@ -1644,12 +1627,6 @@ def types.AgentId.root : Result types.AgentId := do
   let s ← Str.Insts.AllocBorrowToOwnedString.to_owned (toStr "root")
   ok s
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::AgentId> for argus_kernel::types::AgentId}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 3:23-3:32
-    Visibility: public -/
-axiom types.AgentId.Insts.CoreCmpPartialEqAgentId.ne
-  : types.AgentId → types.AgentId → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::AgentId> for argus_kernel::types::AgentId}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 3:23-3:32
     Visibility: public -/
@@ -1660,10 +1637,11 @@ def types.AgentId.Insts.CoreCmpPartialEqAgentId.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::AgentId> for argus_kernel::types::AgentId}]
     Source: 'crates/argus-kernel/src/types.rs', lines 3:23-3:32 -/
 @[reducible]
-def types.AgentId.Insts.CoreCmpPartialEqAgentId : core.cmp.PartialEq
+impl_def types.AgentId.Insts.CoreCmpPartialEqAgentId : core.cmp.PartialEq
   types.AgentId types.AgentId := {
   eq := types.AgentId.Insts.CoreCmpPartialEqAgentId.eq
-  ne := types.AgentId.Insts.CoreCmpPartialEqAgentId.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.AgentId.Insts.CoreCmpPartialEqAgentId
 }
 
 /-- [argus_kernel::types::{impl core::clone::Clone for argus_kernel::types::AgentId}::clone]:
@@ -1805,12 +1783,6 @@ def state.KernelState.initial : Result state.KernelState := do
       agent_budget := vm8
     }
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::OverrideKey> for argus_kernel::types::OverrideKey}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 121:16-121:25
-    Visibility: public -/
-axiom types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.ne
-  : types.OverrideKey → types.OverrideKey → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ConfLevel> for argus_kernel::types::ConfLevel}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 82:29-82:38
     Visibility: public -/
@@ -1834,10 +1806,11 @@ def types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::OverrideKey> for argus_kernel::types::OverrideKey}]
     Source: 'crates/argus-kernel/src/types.rs', lines 121:16-121:25 -/
 @[reducible]
-def types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey : core.cmp.PartialEq
-  types.OverrideKey types.OverrideKey := {
+impl_def types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey :
+  core.cmp.PartialEq types.OverrideKey types.OverrideKey := {
   eq := types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.eq
-  ne := types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.OverrideKey.Insts.CoreCmpPartialEqOverrideKey
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::override_consumed]:
@@ -1935,7 +1908,8 @@ def state.KernelState.credit_budget
   := do
   let i ← state.KernelState.budget self agent
   let i1 ← lift (core.num.U8.saturating_add i n)
-  let next ← lift (core.cmp.impls.OrdU8.min i1 types.BUDGET_CAPACITY)
+  let next ←
+    core.cmp.Ord.min.trait_default core.cmp.OrdU8 i1 types.BUDGET_CAPACITY
   let ai ← types.AgentId.Insts.CoreCloneClone.clone agent
   let vm ←
     collections.VecMap.insert types.AgentId.Insts.CoreCloneClone
@@ -1943,19 +1917,14 @@ def state.KernelState.credit_budget
       self.agent_budget ai next
   ok { self with agent_budget := vm }
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ConfLevel> for argus_kernel::types::ConfLevel}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 82:29-82:38
-    Visibility: public -/
-axiom types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.ne
-  : types.ConfLevel → types.ConfLevel → Result Bool
-
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::ConfLevel> for argus_kernel::types::ConfLevel}]
     Source: 'crates/argus-kernel/src/types.rs', lines 82:29-82:38 -/
 @[reducible]
-def types.ConfLevel.Insts.CoreCmpPartialEqConfLevel : core.cmp.PartialEq
+impl_def types.ConfLevel.Insts.CoreCmpPartialEqConfLevel : core.cmp.PartialEq
   types.ConfLevel types.ConfLevel := {
   eq := types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.eq
-  ne := types.ConfLevel.Insts.CoreCmpPartialEqConfLevel.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_taint]: loop body 0:
@@ -2038,12 +2007,6 @@ def state.KernelState.speculative_taint
   state.KernelState.speculative_taint_loop self.invocation_tool bg taint
     flights 0#usize
 
-/-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IntegLevel> for argus_kernel::types::IntegLevel}::ne]:
-    Source: 'crates/argus-kernel/src/types.rs', lines 153:29-153:38
-    Visibility: public -/
-axiom types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.ne
-  : types.IntegLevel → types.IntegLevel → Result Bool
-
 /-- [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IntegLevel> for argus_kernel::types::IntegLevel}::eq]:
     Source: 'crates/argus-kernel/src/types.rs', lines 153:29-153:38
     Visibility: public -/
@@ -2056,10 +2019,11 @@ def types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.eq
 /-- Trait implementation: [argus_kernel::types::{impl core::cmp::PartialEq<argus_kernel::types::IntegLevel> for argus_kernel::types::IntegLevel}]
     Source: 'crates/argus-kernel/src/types.rs', lines 153:29-153:38 -/
 @[reducible]
-def types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel : core.cmp.PartialEq
+impl_def types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel : core.cmp.PartialEq
   types.IntegLevel types.IntegLevel := {
   eq := types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.eq
-  ne := types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel.ne
+  ne := core.cmp.PartialEq.ne.trait_default
+    types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
 }
 
 /-- [argus_kernel::state::{argus_kernel::state::KernelState}::speculative_integ]: loop body 0:
@@ -2780,9 +2744,10 @@ def transitions.grant_capability
           types.AgentId.Insts.CoreCmpPartialEqAgentId
           types.AgentId.Insts.CoreCloneClone st.agent_parent child
       let b2 ←
-        core.option.Option.Insts.CoreCmpPartialEqOption.ne
+        core.cmp.PartialEq.ne.trait_default
+          (core.option.Option.Insts.CoreCmpPartialEqOption
           (core.cmp.PartialEqShared
-          types.AgentId.Insts.CoreCmpPartialEqAgentId) o (some parent)
+          types.AgentId.Insts.CoreCmpPartialEqAgentId)) o (some parent)
       if b2
       then ok (core.result.Result.Err error.KernelError.NotDirectChild)
       else
@@ -2823,8 +2788,9 @@ def transitions.revoke
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       types.AgentId.Insts.CoreCloneClone st.agent_parent target
   let b ←
-    core.option.Option.Insts.CoreCmpPartialEqOption.ne
-      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o
+    core.cmp.PartialEq.ne.trait_default
+      (core.option.Option.Insts.CoreCmpPartialEqOption
+      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId)) o
       (some parent)
   if b
   then ok (core.result.Result.Err error.KernelError.NotDirectChild)
@@ -2880,8 +2846,9 @@ def transitions.cascade_revoke
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       types.AgentId.Insts.CoreCloneClone st.agent_parent child
   let b ←
-    core.option.Option.Insts.CoreCmpPartialEqOption.ne
-      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o
+    core.cmp.PartialEq.ne.trait_default
+      (core.option.Option.Insts.CoreCmpPartialEqOption
+      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId)) o
       (some parent)
   if b
   then ok (core.result.Result.Err error.KernelError.NotDirectChild)
@@ -5130,8 +5097,9 @@ def transitions.return_endorsed
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       types.AgentId.Insts.CoreCloneClone st.agent_parent child
   let b ←
-    core.option.Option.Insts.CoreCmpPartialEqOption.ne
-      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o
+    core.cmp.PartialEq.ne.trait_default
+      (core.option.Option.Insts.CoreCmpPartialEqOption
+      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId)) o
       (some parent)
   if b
   then ok (core.result.Result.Err error.KernelError.NotDirectChild)
@@ -5834,8 +5802,9 @@ def transitions.return_unendorsed
       types.AgentId.Insts.CoreCmpPartialEqAgentId
       types.AgentId.Insts.CoreCloneClone st.agent_parent child
   let b ←
-    core.option.Option.Insts.CoreCmpPartialEqOption.ne
-      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId) o
+    core.cmp.PartialEq.ne.trait_default
+      (core.option.Option.Insts.CoreCmpPartialEqOption
+      (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId)) o
       (some parent)
   if b
   then ok (core.result.Result.Err error.KernelError.NotDirectChild)
