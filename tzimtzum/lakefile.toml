@@ -1,8 +1,11 @@
 name = "tzimtzum"
 defaultTargets = ["Tzimtzum"]
 
-# The TzimtzumV2 port is built on the Kav transition-system framework.
+# TzimtzumV4 is built on the Kav transition-system framework.
 # mathlib / lean-auto / Duper come transitively through kav.
+#
+# The archived V3 spec lives under `archive/v3/` and is deliberately not a lean_lib:
+# nothing imports it, so lake never compiles it.
 [[require]]
 name = "kav"
 path = "../kav"
@@ -10,6 +13,5 @@ path = "../kav"
 [[lean_lib]]
 name = "Tzimtzum"
 
-[[lean_lib]]
-name = "TzimtzumTest"
-globs = ["TzimtzumTest"]
+# `TzimtzumTest` (the per-action VC checks + axiom audit) returns in Task 13, once the V4
+# check modules exist. Until then `make verify` builds the spec alone.
