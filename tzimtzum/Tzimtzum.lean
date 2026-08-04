@@ -6,5 +6,5 @@
 import Tzimtzum.State
 import Tzimtzum.Actions
 import Tzimtzum.Invariants
-import Tzimtzum.Soundness.Bundle
+import Tzimtzum.Soundness
 import Tzimtzum.OpaqueTypes
