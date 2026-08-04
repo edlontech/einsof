@@ -6,5 +6,6 @@
 import Tzimtzum.State
 import Tzimtzum.Actions.Structural
 import Tzimtzum.Actions.Ingest
+import Tzimtzum.Actions.Invoke
 import Tzimtzum.Actions.Settle
 import Tzimtzum.OpaqueTypes
