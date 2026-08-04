@@ -5,4 +5,6 @@
 -- authority for its evolution. See `README.md` for what V4 changes and why.
 import Tzimtzum.State
 import Tzimtzum.Actions
+import Tzimtzum.Invariants
+import Tzimtzum.Soundness.Bundle
 import Tzimtzum.OpaqueTypes
