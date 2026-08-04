@@ -237,6 +237,38 @@ noncomputable def settleAt
     settleAt p inv Outcome.ambiguous inv = some { J with quarantined := True } := by
   unfold settleAt; simp [h]
 
+/-! ## Grant decrement -/
+
+open Classical in
+/-- Decrement the remaining uses of the grant at `(a, d)` by one, leaving `provisioned`
+(and every other key) alone. -/
+noncomputable def decrementGrantAt (g : AgentId → AssignmentDigest → Option CrossingGrant)
+    (a : AgentId) (d : AssignmentDigest) : AgentId → AssignmentDigest → Option CrossingGrant :=
+  fun A D =>
+    if A = a ∧ D = d then
+      (match g A D with
+        | some cg => some { cg with remaining := cg.remaining - 1 }
+        | none => none)
+    else g A D
+
+@[simp] theorem decrementGrantAt_self
+    (g : AgentId → AssignmentDigest → Option CrossingGrant) (a : AgentId)
+    (d : AssignmentDigest) (cg : CrossingGrant) (h : g a d = some cg) :
+    decrementGrantAt g a d a d = some { cg with remaining := cg.remaining - 1 } := by
+  unfold decrementGrantAt; simp [h]
+
+@[simp] theorem decrementGrantAt_self_none
+    (g : AgentId → AssignmentDigest → Option CrossingGrant) (a : AgentId)
+    (d : AssignmentDigest) (h : g a d = none) :
+    decrementGrantAt g a d a d = none := by
+  unfold decrementGrantAt; simp [h]
+
+@[simp] theorem decrementGrantAt_other
+    (g : AgentId → AssignmentDigest → Option CrossingGrant) (a A : AgentId)
+    (d D : AssignmentDigest) (h : ¬ (A = a ∧ D = d)) :
+    decrementGrantAt g a d A D = g A D := by
+  unfold decrementGrantAt; simp [h]
+
 -- (A separate frame lemma is unnecessary: `demoteAllOf_of_agent` / `demoteAllOf_of_other`
 -- already exhibit the post-record as the pre-record with at most `disposition` changed.)
 

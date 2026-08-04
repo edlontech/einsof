@@ -25,4 +25,16 @@ def close4 {σ α β γ δ : Type} (f : α → β → γ → δ → Action σ) :
   { guard := fun s => ∃ a b c d, (f a b c d).guard s
     next  := fun s s' => ∃ a b c d, (f a b c d).guard s ∧ (f a b c d).next s s' }
 
+def close5 {σ α β γ δ ε : Type} (f : α → β → γ → δ → ε → Action σ) : Action σ :=
+  { guard := fun s => ∃ a b c d e, (f a b c d e).guard s
+    next  := fun s s' => ∃ a b c d e, (f a b c d e).guard s ∧ (f a b c d e).next s s' }
+
+def close7 {σ α β γ δ ε ζ η : Type} (f : α → β → γ → δ → ε → ζ → η → Action σ) : Action σ :=
+  { guard := fun s => ∃ a b c d e f' g, (f a b c d e f' g).guard s
+    next  := fun s s' => ∃ a b c d e f' g, (f a b c d e f' g).guard s ∧ (f a b c d e f' g).next s s' }
+
+def close8 {σ α β γ δ ε ζ η θ : Type} (f : α → β → γ → δ → ε → ζ → η → θ → Action σ) : Action σ :=
+  { guard := fun s => ∃ a b c d e f' g h, (f a b c d e f' g h).guard s
+    next  := fun s s' => ∃ a b c d e f' g h, (f a b c d e f' g h).guard s ∧ (f a b c d e f' g h).next s s' }
+
 end Kav
