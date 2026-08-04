@@ -235,26 +235,40 @@ kav_action begin_invocation (a : AgentId) (inv : InvocationId) (chal : Challenge
   require v = Verdict.deny → ¬ beginAdmissible s a snap egr authorized
   -- An enforce-mode hard deny is not a transition; a monitor-mode one is (and pends).
   require v = Verdict.deny → s.mode = Mode.monitor
+  -- The (verdict, mode) dispatch is a `match` on two small inductives, NOT nested `ite`s:
+  -- an `ite` condition like `v = inspection_required ∧ s.mode = enforce` carries a
+  -- `Classical.propDecidable` instance over an `And` with a state projection, and the
+  -- discharge cascade `whnf`s that instance at every congruence step — measured at Task 7
+  -- as the difference between a 3 s discharge and an 8M-heartbeat timeout (the same
+  -- failure class as E8, one level down). A constructor `match` needs no `Decidable` at
+  -- all and `grind` splits it natively.
   pending := fun I =>
     if I = inv then
-      (if v = Verdict.allow then
-        some { agent := a, policy := snap, egress := egr, admission := Admission.plain,
-               disposition := Disposition.permitted, authorized := authorized,
-               quarantined := False }
-      else if v = Verdict.inspection_required ∧ s.mode = Mode.enforce then
+      (match v, s.mode with
+        | Verdict.allow, _ =>
+          some { agent := a, policy := snap, egress := egr, admission := Admission.plain,
+                 disposition := Disposition.permitted, authorized := authorized,
+                 quarantined := False }
         -- E1(b): an unresolved enforce-mode challenge pends nothing.
-        none
-      else
+        | Verdict.inspection_required, Mode.enforce => none
         -- Monitor-mode inspection_required or deny (E23): the effect really runs, so it
         -- really constrains. The canonical verdict stays in the event.
-        some { agent := a, policy := snap, egress := egr, admission := Admission.bypassed,
-               disposition := Disposition.monitor_bypassed, authorized := authorized,
-               quarantined := False })
+        | Verdict.inspection_required, Mode.monitor =>
+          some { agent := a, policy := snap, egress := egr, admission := Admission.bypassed,
+                 disposition := Disposition.monitor_bypassed, authorized := authorized,
+                 quarantined := False }
+        | Verdict.deny, _ =>
+          some { agent := a, policy := snap, egress := egr, admission := Admission.bypassed,
+                 disposition := Disposition.monitor_bypassed, authorized := authorized,
+                 quarantined := False })
     else s.pending I
   challenges := fun I =>
-    if I = inv ∧ v = Verdict.inspection_required ∧ s.mode = Mode.enforce then
-      some { challenge := chal, agent := a, policy := snap, egress := egr, args_hash := ah,
-             authorized := authorized }
+    if I = inv then
+      (match v, s.mode with
+        | Verdict.inspection_required, Mode.enforce =>
+          some { challenge := chal, agent := a, policy := snap, egress := egr,
+                 args_hash := ah, authorized := authorized }
+        | _, _ => s.challenges I)
     else s.challenges I
   -- Consumed on every arm that is a transition: freshness and `challenge_unique` both
   -- lean on it.
