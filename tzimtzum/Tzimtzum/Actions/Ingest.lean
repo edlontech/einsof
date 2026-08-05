@@ -16,7 +16,7 @@ never a conservative default invented inside the kernel.
 Updates are always the same two insertions: taint only ever grows, integrity only ever
 falls (T-3, T-4). What differs by mode is whether the *holds* are enforced.
 
-## The two holds
+## The three holds
 
 Carried from V3's `sentinel_elevate_taint` / `sentinel_degrade_integrity` gates with the
 override arms removed. The kernel refuses an ingestion that would break a live permit; the
