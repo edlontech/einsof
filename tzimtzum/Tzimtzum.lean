@@ -7,4 +7,6 @@ import Tzimtzum.State
 import Tzimtzum.Actions
 import Tzimtzum.Invariants
 import Tzimtzum.Soundness
+import Tzimtzum.GrantConservation
+import Tzimtzum.Transitions
 import Tzimtzum.OpaqueTypes
