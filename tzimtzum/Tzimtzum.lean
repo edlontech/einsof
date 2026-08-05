@@ -9,4 +9,5 @@ import Tzimtzum.Invariants
 import Tzimtzum.Soundness
 import Tzimtzum.GrantConservation
 import Tzimtzum.Transitions
+import Tzimtzum.Audit
 import Tzimtzum.OpaqueTypes
