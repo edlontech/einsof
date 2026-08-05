@@ -10,11 +10,12 @@ import Tzimtzum.CheckCascadeRevoke
 import Tzimtzum.CheckIngest
 import Tzimtzum.CheckSettleInvocation
 import Tzimtzum.CheckAuthorizeInspected
+import Tzimtzum.CheckBeginInvocation
 
 /-!
-# TzimtzumV4 — soundness aggregator (Tasks 7–8 slice)
+# TzimtzumV4 — soundness aggregator (Tasks 7–9 slice)
 
-Init VCs plus the seven structural actions and Task 8's three lighter commands. The remaining
-two actions land in Tasks 9–10, and the `Kav.reachable_sound` assembly (`kav_sound` /
-`kav_soundP`) lands once all twelve exist.
+Init VCs plus eleven actions: the seven structural actions, Task 8's three lighter commands,
+and `begin_invocation`. `cross_output` lands in Task 10, and the `Kav.reachable_sound`
+assembly (`kav_sound` / `kav_soundP`) lands once all twelve preservation lemmas exist.
 -/
