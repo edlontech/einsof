@@ -1,134 +1,252 @@
-# Tzimtzum: the TzimtzumV2 authorization protocol
+# TzimtzumV4 authorization protocol
 
-The formally verified TzimtzumV2 protocol; the source of truth for Einsof's authorization
-state machine. It is a pure-Lean specification built on the [Kav](../kav/) transition-system
-framework (this project `require`s `kav` as a library). The discharge engine is
-kernel-checked mathlib automation.
+Tzimtzum is the formally verified source of truth for Einsof's authorization state
+machine. It is a pure Lean 4 specification built on the [Kav](../kav/) transition-system
+framework. The proof is kernel-checked; no SMT solver is in the trusted computing base.
 
-For a plain-language walkthrough of what the proofs show, why that's useful, and where
-the guarantee stops, see [PROOFS.md](PROOFS.md).
+For a plain-language account of the guarantees and limits, see
+[PROOFS.md](PROOFS.md).
 
-## The verified protocol
+## Verified surface
 
-The full protocol is 16 actions, 11 safety properties, and 15 strengthening invariants
-(26 total), proved inductive over all transitions. `ConfLevel` (confidentiality, rises as
-an agent reads secret data) and `IntegLevel` (integrity, falls as an agent ingests
-untrusted content) are dual 4-point lattices; the invoke gate checks both (CHECK 1-3 flow
-+ authorizer, CHECK 4 integrity), and a single unified crossing guard (`crossing_ok`)
-clears both dimensions with one conformance verdict at both declassification sites
-(`invoke_complete_endorsed`, `return_endorsed`):
+V4 has **12 actions** and **32 state invariants**, all proved inductive:
 
-- 442 VCs discharged: 26 initiation VCs (`#kav_check_init`) plus 16 × 26 preservation VCs
-  (`#kav_check_action`), one per (action, invariant) pair. Some actions split their 26 VCs
-  across several `#kav_check_action` calls (invariant-name filters) purely for
-  automation-search stability, not to change the total.
-- All kernel-checked: the automation cascade uses only mathlib tactics (`grind`, `simp_all`,
-  `auto`, `duper`).
-- The declassification budget is a total function field (`agent_budget : AgentId → Nat`),
-  updated by classical `ite` point-updates in every action that debits or credits it.
-  `delegate` spawns the child's budget at 0 (delegation mints nothing);
-  `sentinel_credit_budget` is the only faucet. Debits are weighted, not flat: the unified
-  crossing's `crossing_weight` (dimension-adjusted: pays `declass_weight` only if the conf
-  insert is new, `integ_weight` only if the integ drop is real), `return_endorsed`'s
-  `declass_weight clvl + integ_weight ilvl` (level-parameterized, coverage-guarded), and
-  `grant_override`'s `declass_weight lvl`.
-- Six VCs proved by hand: `revocation_clean` under `delegate`, `invoke_complete_endorsed`,
-  `return_endorsed`, `grant_override`, and `sentinel_credit_budget` (the classical `ite`
-  inside the untouched `agent_budget` conjunct stalls the shared cascade for this one
-  invariant, even though its own logic never touches the budget), plus `budget_bounded`
-  under `sentinel_credit_budget` (the saturating credit's `≤ budget_capacity` bound is
-  hidden behind an `@[irreducible]` helper). These live in the matching
-  `Tzimtzum/Check*.lean` modules.
-- New since the integrity-taint campaign: `unregister_tool` (tool lifecycle -- a
-  compromised tool can leave the authorization surface), `sentinel_degrade_integrity`
-  (platform-reported ingestion at an integrity level, gated against in-flight tools'
-  floors), and `invoke_complete` split into `invoke_complete_endorsed` /
-  `invoke_complete_unendorsed` (complementary total guards over `crossing_ok`, so each
-  branch of the Rust kernel's `if/else` refines exactly one spec action).
-- Oracle verdicts (`invocation_conforms`, `invocation_authorized`, `invocation_gate_passes`,
-  `invocation_egress`) are keyed per invocation, not per static (agent, tool) pair, with a
-  freshness guard (`invocation_used`) closing invocation-id replay.
+1. `register_tool`
+2. `unregister_tool`
+3. `delegate`
+4. `grant_capability`
+5. `grant_crossing`
+6. `revoke`
+7. `cascade_revoke`
+8. `ingest`
+9. `begin_invocation`
+10. `authorize_inspected`
+11. `settle_invocation`
+12. `cross_output`
 
-### Soundness bundle
+The invariants are intentionally split into five bundles:
 
-The per-action VCs are assembled into a single reachability theorem via the
-protocol-independent `Kav.reachable_sound` meta-induction:
+| Bundle | Count | Purpose |
+|---|---:|---|
+| S | 9 | agent tree, capability, revocation, active ownership |
+| P | 12 | pending identity, freshness, gates, clearance |
+| P′ | 2 | pairwise confidentiality and integrity compatibility |
+| E | 6 | challenge/evidence scope, one-use, monitor/quarantine honesty |
+| C | 3 | crossing-grant bound, active ownership, key pinning |
 
-```
+This is **416 logical VCs**: 32 initial-state obligations plus 12 × 32 preservation
+obligations. Expensive semantic VCs are proved as single conjuncts and then reassembled;
+that proof organization changes automation cost, not the logical count.
+
+The local checks assemble through `Kav.reachable_sound` into:
+
+```lean
 Tzimtzum.kav_sound : ∀ s, Kav.Reachable ksystem s → allInv s
+Tzimtzum.kav_soundP : -- the same theorem at arbitrary sort instantiations
 ```
 
-Every reachable state satisfies the full invariant bundle. `kav_soundP` is the same result
-over an arbitrary sort instantiation; `kav_sound` is its specialization to the opaque
-`KSt`. Both live under `Tzimtzum/Soundness/`.
+Therefore every state reachable through any ordering of the 12 actions satisfies the
+complete bundle.
 
-### Axiom audit
+## Protocol mechanics
 
-`#print axioms` on the audited theorems (see `Tzimtzum/Audit.lean`) confirms that every
-proof depends only on the three standard Lean kernel axioms:
+### Invocation and inspection
 
-```
+`begin_invocation` checks capability, confidentiality clearance, pairwise flow,
+authorizer approval, and pairwise integrity against a frozen policy snapshot and the
+invocation's attested egress set.
+
+Its canonical partition is:
+
+- `allow` → a plain, contained pending invocation;
+- `inspection_required` in `enforce` → an invocation-keyed challenge and no pending effect;
+- `inspection_required` in `monitor` → a monitor-bypassed pending effect;
+- `deny` in `monitor` → a monitor-bypassed pending effect;
+- `deny` in `enforce` → no transition.
+
+`authorize_inspected` requires exact challenge scope, one-use evidence, a positive
+inspection verdict, and a re-evaluation of the live gate. A negative verdict or live-gate
+failure closes fail-closed; a scope mismatch is rejected at the boundary and leaves the
+challenge unresolved.
+
+### Settlement and quarantine
+
+`settle_invocation` absorbs the frozen output confidentiality/integrity pair on ordinary
+success or failure. `ambiguous` keeps the invocation pending and marks it quarantined.
+A quarantined record can settle only with a fresh resolution attestation scoped to that
+invocation and declared outcome. Quarantined records remain in speculative and pairwise
+quantifiers until resolution or revocation.
+
+### Crossing
+
+`grant_crossing` is the root-only operator faucet. It provisions a receiver/assignment key
+with `{ remaining, provisioned }`; it is set-to-`n`, not additive.
+
+`cross_output` has an exact trichotomy:
+
+- `endorsed` when `endorsedOK` holds: consume scope-exact conformance evidence, decrement
+  one grant use, and insert the assignment-bounded released pair into the receiver;
+- `unendorsed` when endorsement is unavailable and the authenticated revision declares
+  `release_unendorsed`: release at source labels with no evidence or grant consumption;
+- `fail` when endorsement is unavailable and the revision declares `fail`: release
+  nothing.
+
+`cross_branch_total` and `cross_branch_exclusive` prove the partition total and disjoint.
+The crossing id is consumed on every transitioning arm. Receiver-side permit holds or
+monitor demotion prevent a label update from invalidating an in-flight permit.
+
+## Named theorems
+
+`Tzimtzum/Transitions.lean` and `Tzimtzum/Audit.lean` expose the citable results:
+
+- T-1/T-2: `audit_integrity_confinement`, `audit_flow_confinement`;
+- T-3/T-4: integrity monotonicity and confidentiality no-descent for all 12 actions,
+  with the explicit agent-lifecycle exception;
+- T-5: inspection does not restore either label dimension and its attestation cannot
+  admit another invocation;
+- T-6: exact E25 crossing frame, source-frame exception, and release bounds;
+- T-7: `grant_conservation` for all 11 non-faucet actions;
+- T-8: permit stability through ingestion, settlement, and crossing/monitor demotion;
+- T-9: consumed invocation ids persist across every action and every begin burns a fresh id;
+- T-10: quarantine requires scope-exact one-use resolution and remains in gate quantifiers;
+- T-11: `audit_evidence_conservation` for inspected admission, quarantine resolution, and
+  endorsed crossing steps whose pre-state is reachable;
+- T-12: `audit_fresh_compartment`, the defensive post-delegation empty-label/pending/grant
+  guarantee.
+
+T-13 is deliberately only `replay_equivalence_statement`: Kav's closed relational actions
+hide serialized parameters, so concrete replay determinism is a parent adapter/kernel
+conformance obligation rather than a claimed abstract theorem.
+
+`#print axioms` on every proof crown reports only:
+
+```text
 [propext, Classical.choice, Quot.sound]
 ```
 
-No `sorryAx` or `native_decide` axiom appears.
+There is no project-local `sorry`, `native_decide` proof, or unnamed protocol axiom.
 
-Audited theorems:
-- `audit_flow_confinement`: flow confinement preserved by `invoke_start`.
-- `audit_override_consumed`: single-use override invariant preserved by `invoke_start`.
-- `audit_init_flow_confinement`: flow confinement holds in the initial state.
-- `return_endorsed_pres_revocation_clean`: one of the five manual `revocation_clean`
-  proofs, re-audited here for visibility.
-- `audit_integrity_confinement`: the headline injection-containment guarantee --
-  integrity confinement preserved by `invoke_start` (CHECK 4a/4b/4c).
-- `audit_crossing_endorsed`: the unified crossing's defining property -- an endorsed
-  completion (`invoke_complete_endorsed`) never inserts taint or integrity.
-
-## Building and running the check suite
+## Build and verification
 
 ```bash
-cd tzimtzum/
-make build         # lake build Tzimtzum: spec only (no check modules)
-make verify        # lake build Tzimtzum TzimtzumTest: all VCs + manual proofs + soundness + audit
+cd tzimtzum
+lake exe cache get                       # after toolchain/dependency changes
+make build                               # fast incremental abstract spec
+make verify                              # package-clean full V4 verification
+lake build Tzimtzum TzimtzumTest         # explicit spec + all-check target
 ```
 
-The `#kav_check_action` commands emit PASS/FAIL tables to the info log. A successful
-`lake build TzimtzumTest` means all VCs passed, the soundness bundle assembled, and the
-axiom audit is clean.
+`make verify` runs `lake clean tzimtzum` and then builds both libraries. It does not erase
+mathlib's downloaded cache. The pinned toolchain is Lean 4.32.1/mathlib 4.32.1.
 
-Toolchain: Lean 4.32.1 + mathlib v4.32.1 (via the Kav dependency). After a toolchain
-change, run `lake exe cache get` before building, or mathlib rebuilds from source.
+## Trust statement and scope
 
-## Scope and limitations
+The proof establishes safety of the **abstract V4 transition system**. It does not prove:
 
-What the VCs prove: the invariant bundle is inductive. For each action and each invariant,
-if the bundle holds before the action it holds after; and the bundle holds in every initial
-state. `kav_sound` then closes this into `∀ s, Reachable s → allInv s`.
+- liveness, deadlock freedom, or that a legitimate request will be accepted;
+- arbitrary capability-combination safety;
+- LLM behavior;
+- the external SPIFFE/STS identity mesh, persistence/serialization, append-before-commit,
+  event attribution, or adapter correctness;
+- attestation issuer truth or wall-clock freshness policy. The kernel checks positivity,
+  exact scope, and one-use consumption; issuer authentication/truth is an external seam;
+- the Aeneas/Charon extractor or hand-written Rust source.
 
-Refinement: this project verifies the abstract TzimtzumV2 specification. The connection to
-the Rust kernel (`argus-kernel`) is a separate, completed layer: the kernel is mechanically
-extracted to Lean via Aeneas/Charon and refined against this spec in
-[`argus/formal-lean/`](../argus/formal-lean/), where `implementation_sound` proves the
-extracted model refines a safe abstract state (modulo the trusted extractor and two
-explicit assumptions).
+External-ingress labels are adapter inputs. Agent-to-agent delivery is additionally checked
+against the source agent's kernel-held labels, but authentic delivery and tenant identity
+remain boundary obligations.
+
+### `CrossInput` authentication boundary
+
+`CrossInput` is the authenticated contract-revision/assignment request. Before constructing
+it, the adapter must validate the exact revision descriptor and fallback, assignment digest
+and bounds, receiver assignment pin, and applicable identity/tenant binding. Missing,
+stale, or mismatched authority is rejected at the boundary and never reaches
+`cross_output`; the kernel therefore does not authenticate those fields itself.
+
+## V4 kernel/refinement handoff
+
+The abstract V4 proof is complete. The current files under
+[`argus/formal-lean/`](../argus/formal-lean/) still document and prove the **V3 baseline**;
+they must not be cited as a completed V4 refinement until the parent campaign's Task 8
+regenerates the model and proves the V4 action bundle. The handoff surface is:
+
+- action registry: [`Tzimtzum/Actions.lean`](Tzimtzum/Actions.lean);
+- state and frozen record shapes: [`Tzimtzum/State.lean`](Tzimtzum/State.lean);
+- branch definitions: `Actions/{Invoke,Settle,Cross}.lean`;
+- invariant contract: [`Tzimtzum/Invariants.lean`](Tzimtzum/Invariants.lean);
+- final action checks and crowns: `Tzimtzum/Check*.lean`, `Soundness.lean`,
+  `Transitions.lean`, and `Audit.lean`.
+
+### State shapes the kernel must reproduce
+
+V4 has 11 abstract sorts. Mutable state contains the agent tree/capabilities, dual label
+sets, invocation-keyed `pending` and `challenges`, consumed invocation/attestation/crossing
+histories, receiver/assignment-keyed crossing grants, and the tool registry. Egress
+ceilings, enforcement mode, and root identity are immutable background.
+
+A frozen action snapshot carries the exact composite `ToolId`, required capabilities,
+confidentiality clearance, integrity allow/inspect floors, output label pair, declared
+egress, and policy digest. Pending records additionally carry agent, attested egress,
+admission, disposition, authorizer verdict, and quarantine. Challenge scope carries the
+challenge id, agent, snapshot/egress, arguments hash, and authorizer verdict.
+
+### Reshaped refinement assumptions
+
+The V4 refinement must keep two explicit assumptions, with narrower content than V3:
+
+**`OracleFidelity`** is per-invocation agreement only for:
+
+1. the authorizer verdict; and
+2. egress-kind classification producing the attested egress set.
+
+Inspection, quarantine-resolution, and conformance decisions are explicit attestation
+inputs, not timeless ContentGate/Conformance oracle relations. The kernel verifies their
+scope and one-use; issuer truth remains external.
+
+**`CapacityOK`** covers exactly the allocations made by the fired branch:
+
+- register: tool-set insertion;
+- delegate: active/parent insertions;
+- grant capability: outer capability map and child set;
+- grant crossing: grant-map insertion **and `n < 2^32`** for abstract `Nat` versus Rust
+  `u32`;
+- ingest: taint/integrity outer-map and inner-set insertions;
+- begin: pending-or-challenge insertion plus consumed-id insertion;
+- authorize: admitted-pending insertion plus consumed-attestation insertion;
+- settle: non-ambiguous label insertions plus resolution-attestation insertion;
+- cross: crossing-id insertion; endorsed label/evidence writes; unendorsed bulk label
+  copies with joint destination/source bounds;
+- removal and frame-only branches: no growth bound.
+
+A single insertion requires `length < Usize.max`; bulk copying requires
+`destination.length + source.length ≤ Usize.max`.
+
+Each `begin_invocation` call also supplies two fresh-call predictions:
+
+- the abstract frozen snapshot/tool binding equals the concrete exact composite tool
+  binding; and
+- `∀ E, abstractEgress E ↔ VecSet.mem attested_egress E`.
+
+Parent Task 6 consumes the action/state/partition handoff. Parent Task 8 consumes these
+assumption shapes and the theorem names above.
 
 ## File layout
 
-```
+```text
 tzimtzum/
-  lakefile.toml              requires ../kav; Tzimtzum + TzimtzumTest targets
-  lean-toolchain             v4.32.1
-  Tzimtzum.lean              spec root (State/Actions/Invariants/OpaqueTypes)
-  TzimtzumTest.lean          aggregator: per-action VC checks + soundness + audit
+  Tzimtzum.lean                 abstract V4 root
+  TzimtzumTest.lean             explicit full-verification aggregator
   Tzimtzum/
-    OpaqueTypes.lean         shared opaque sorts (KAgent, KTool, ..., KSt)
-    State.lean               St structure, ConfLevel/IntegLevel, initial predicate
-    Actions.lean             16 kav_action definitions
-    Invariants.lean          26 invariant/safety predicates + allInvariants bundle
-    Check*.lean              per-action #kav_check_action modules (16 files) + CheckInit
-    CheckInit.lean           #kav_check_init (26 initiation VCs)
-    Soundness.lean           kav_sound aggregator (over Soundness/)
-    Soundness/               reachability bundle (Common, PresMost, per-budget-action Pres, Bundle)
-    Audit.lean               audited named theorems + #print axioms
-    BudgetConservation.lean  budget_monotone_except_credit per-action lemmas
+    State.lean                  state, labels, snapshots, pending/challenge records
+    Actions.lean                complete 12-action registry
+    Actions/                    action definitions and branch partitions
+    Invariants.lean             32 invariant predicates
+    Soundness/                  shared bundle/discharge infrastructure
+    Check*.lean                 init and per-action preservation proofs
+    Soundness.lean              reachable-state assembly, kav_sound/kav_soundP
+    GrantConservation.lean      T-7
+    Transitions.lean            T-3–T-10
+    Audit.lean                  T-1/T-2/T-11/T-12 and T-13 statement
+  archive/v3/                   historical only; not a Lean build target
 ```

@@ -5,6 +5,13 @@ pure-Lean TzimtzumV3 (Kav) spec. The end-to-end result is `implementation_sound`
 reachable state of the extracted kernel refines an abstract TzimtzumV3 state that
 satisfies all safety invariants (11 safeties + 15 strengthening invariants, 16 actions).
 
+> **V4 campaign handoff:** the abstract TzimtzumV4 proof is now complete under
+> [`tzimtzum/`](../../tzimtzum/), but this directory remains the verified **V3 baseline**
+> until parent campaign Task 8 regenerates the model and ports the unified relation and
+> preservation bundle. Do not cite `implementation_sound` as a V4 refinement yet. The V4
+> action/state/partition and reshaped `CapacityOK`/`OracleFidelity` handoff is recorded in
+> [`tzimtzum/README.md`](../../tzimtzum/README.md#v4-kernelrefinement-handoff).
+
 The Rust kernel is extracted to Lean with Charon and Aeneas
 (`scripts/charon-aeneas-extract.sh` produces `ArgusLean/Generated/ArgusKernel.lean`); this
 library proves the extracted model refines the spec.

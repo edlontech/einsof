@@ -13,5 +13,7 @@ path = "../kav"
 [[lean_lib]]
 name = "Tzimtzum"
 
-# `TzimtzumTest` (the per-action VC checks + axiom audit) returns in Task 13, once the V4
-# check modules exist. Until then `make verify` builds the spec alone.
+# Opt-in full verification target: every V4 action check, soundness crown, transition
+# theorem, and axiom audit. The archived V3 tree remains outside all Lean libraries.
+[[lean_lib]]
+name = "TzimtzumTest"
