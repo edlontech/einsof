@@ -27,6 +27,10 @@ pub enum KernelError {
     NotPending,
     EgressNotNarrowing,
     EgressNotCovering,
+    /// The frozen snapshot's inspect floor is above its allow floor (incoherent band).
+    IncoherentPolicy,
+    /// A challenge is already open for this invocation id.
+    ChallengeAlreadyOpen,
 
     // --- gates ---
     ClearanceDenied,

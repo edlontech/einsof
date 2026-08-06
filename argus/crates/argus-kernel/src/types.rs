@@ -318,6 +318,19 @@ pub struct ResolutionAttestation {
     pub outcome: Outcome,
 }
 
+/// An inspection attestation — an *input*, not state. The kernel checks its scope (invocation,
+/// challenge attribution, arguments hash, policy digest) and one-use consumption; issuer truth is
+/// the external seam. `positive` is the inspector's verdict.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectionAttestation {
+    pub id: AttestationId,
+    pub inv: InvocationId,
+    pub challenge: ChallengeId,
+    pub args_hash: ContentHash,
+    pub policy_digest: PolicyDigest,
+    pub positive: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

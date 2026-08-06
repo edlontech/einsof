@@ -10,13 +10,15 @@
 
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
-use crate::collections::VecMap;
+use crate::collections::{VecMap, VecSet};
 use crate::error::KernelError;
 use crate::event::KernelAction;
 use crate::state::KernelState;
 use crate::types::{
-    AgentId, AssignmentDigest, ConfLevel, CrossingGrant, CrossingKey, Disposition, IntegLevel,
-    InvocationId, Mode, Outcome, ResolutionAttestation, ToolId,
+    ActionPolicySnapshot, Admission, AgentId, AssignmentDigest, ChallengeId, ChallengeScope,
+    ConfLevel, ContentHash, CrossingGrant, CrossingKey, Disposition, EgressKind,
+    InspectionAttestation, IntegLevel, InvocationId, Mode, Outcome, PendingInvocation,
+    ResolutionAttestation, ToolId, Verdict,
 };
 
 /// `register_tool` — add an unregistered exact tool identity (E17: `ToolId` is the composite
@@ -447,6 +449,426 @@ pub fn settle_invocation(
             clvl,
             ilvl,
             resolution,
+        },
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// begin_invocation / authorize_inspected — the nine-check admission gate (A4).
+// Every helper below is extracted: Vec-backed, index `while` loops, no closures,
+// no early `return` inside loops, owned accessors. `bool` conjunctions latch a
+// single `ok` flag instead of short-circuiting so the loop bodies stay total.
+// ---------------------------------------------------------------------------
+
+/// CHECK 1: the agent holds every capability the frozen snapshot requires.
+fn check_capability(s: &KernelState, a: &AgentId, snap: &ActionPolicySnapshot) -> bool {
+    let mut ok = true;
+    let mut i = 0;
+    while i < snap.required_caps.len() {
+        let c = *snap.required_caps.at(i);
+        if !s.agent_cap.set_contains(a, &c) {
+            ok = false;
+        }
+        i += 1;
+    }
+    ok
+}
+
+/// CHECK 2a/2b/2c: speculative taint clears the snapshot clearance; the new output clears every
+/// pending record's clearance; and the new output clears its own snapshot clearance.
+fn check_clearance(s: &KernelState, a: &AgentId, snap: &ActionPolicySnapshot) -> bool {
+    let mut ok = true;
+    let st = s.speculative_taint(a);
+    let mut i = 0;
+    while i < st.len() {
+        let l = *st.at(i);
+        if !l.le(snap.conf_clearance) {
+            ok = false;
+        }
+        i += 1;
+    }
+    let mut i = 0;
+    while i < s.pending.len() {
+        let inv = s.pending.key_at(i).clone();
+        if let Some(j) = s.pending.get_cloned(&inv) {
+            if j.agent == *a && !snap.output_conf.le(j.policy.conf_clearance) {
+                ok = false;
+            }
+        }
+        i += 1;
+    }
+    if !snap.output_conf.le(snap.conf_clearance) {
+        ok = false;
+    }
+    ok
+}
+
+/// CHECK 3a/3b/3c flow, ALLOW arm (strict) or ALLOW-or-INSPECT arm (admissible). The admissible
+/// pending arm requires the pending party vouched for its inspect band (E22).
+fn check_flow(
+    s: &KernelState,
+    bg: &BackgroundTheory,
+    a: &AgentId,
+    snap: &ActionPolicySnapshot,
+    egr: &VecSet<EgressKind>,
+    strict: bool,
+) -> bool {
+    let mut ok = true;
+    let st = s.speculative_taint(a);
+    let mut i = 0;
+    while i < st.len() {
+        let l = *st.at(i);
+        let mut e = 0;
+        while e < egr.len() {
+            let eg = *egr.at(e);
+            let pass = if strict {
+                bg.flow_allows(l, eg)
+            } else {
+                bg.flow_allows(l, eg) || bg.flow_inspects(l, eg)
+            };
+            if !pass {
+                ok = false;
+            }
+            e += 1;
+        }
+        i += 1;
+    }
+    let mut i = 0;
+    while i < s.pending.len() {
+        let inv = s.pending.key_at(i).clone();
+        if let Some(j) = s.pending.get_cloned(&inv) {
+            if j.agent == *a {
+                let vouched = j.vouched();
+                let mut e = 0;
+                while e < j.egress.len() {
+                    let eg = *j.egress.at(e);
+                    let pass = if strict {
+                        bg.flow_allows(snap.output_conf, eg)
+                    } else {
+                        bg.flow_allows(snap.output_conf, eg)
+                            || (bg.flow_inspects(snap.output_conf, eg) && vouched)
+                    };
+                    if !pass {
+                        ok = false;
+                    }
+                    e += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    let mut e = 0;
+    while e < egr.len() {
+        let eg = *egr.at(e);
+        let pass = if strict {
+            bg.flow_allows(snap.output_conf, eg)
+        } else {
+            bg.flow_allows(snap.output_conf, eg) || bg.flow_inspects(snap.output_conf, eg)
+        };
+        if !pass {
+            ok = false;
+        }
+        e += 1;
+    }
+    ok
+}
+
+/// CHECK 5a/5b/5c integrity, ALLOW arm (strict) or ALLOW-or-INSPECT arm (admissible). The
+/// admissible pending arm requires the pending party vouched for its inspect band (E22).
+fn check_integ(s: &KernelState, a: &AgentId, snap: &ActionPolicySnapshot, strict: bool) -> bool {
+    let mut ok = true;
+    let si = s.speculative_integ(a);
+    let mut i = 0;
+    while i < si.len() {
+        let l = *si.at(i);
+        let pass = if strict {
+            snap.integ_floor.le(l)
+        } else {
+            snap.integ_floor.le(l) || snap.integ_inspect.le(l)
+        };
+        if !pass {
+            ok = false;
+        }
+        i += 1;
+    }
+    let mut i = 0;
+    while i < s.pending.len() {
+        let inv = s.pending.key_at(i).clone();
+        if let Some(j) = s.pending.get_cloned(&inv) {
+            if j.agent == *a {
+                let pass = if strict {
+                    j.policy.integ_floor.le(snap.output_integ)
+                } else {
+                    j.policy.integ_floor.le(snap.output_integ)
+                        || (j.policy.integ_inspect.le(snap.output_integ) && j.vouched())
+                };
+                if !pass {
+                    ok = false;
+                }
+            }
+        }
+        i += 1;
+    }
+    let self_pass = if strict {
+        snap.integ_floor.le(snap.output_integ)
+    } else {
+        snap.integ_floor.le(snap.output_integ) || snap.integ_inspect.le(snap.output_integ)
+    };
+    if !self_pass {
+        ok = false;
+    }
+    ok
+}
+
+/// Every attested egress kind is within the frozen declared set (narrowing).
+fn egress_narrows(egr: &VecSet<EgressKind>, declared: &VecSet<EgressKind>) -> bool {
+    let mut ok = true;
+    let mut i = 0;
+    while i < egr.len() {
+        if !declared.contains(egr.at(i)) {
+            ok = false;
+        }
+        i += 1;
+    }
+    ok
+}
+
+/// An egress-bearing action (non-empty declared set) may not be admitted on an empty attestation.
+fn egress_covers(declared: &VecSet<EgressKind>, egr: &VecSet<EgressKind>) -> bool {
+    if declared.is_empty() {
+        true
+    } else {
+        !egr.is_empty()
+    }
+}
+
+/// `beginAdmissible`: every check on its ALLOW-or-INSPECT arm.
+fn begin_admissible(
+    s: &KernelState,
+    bg: &BackgroundTheory,
+    a: &AgentId,
+    snap: &ActionPolicySnapshot,
+    egr: &VecSet<EgressKind>,
+    authorized: bool,
+) -> bool {
+    check_capability(s, a, snap)
+        && authorized
+        && check_clearance(s, a, snap)
+        && check_flow(s, bg, a, snap, egr, false)
+        && check_integ(s, a, snap, false)
+}
+
+/// `begin_invocation` — the nine-check admission gate. The verdict is COMPUTED from the checks and
+/// recorded (E8): `allow` when strict, `inspection_required` when admissible-not-strict, otherwise
+/// `deny` (a transition only in monitor mode). The (verdict, mode) product selects one effect:
+/// plain permitted pend / enforce challenge / monitor-bypassed pend; enforce deny is no transition.
+#[allow(clippy::too_many_arguments)]
+pub fn begin_invocation(
+    mut s: KernelState,
+    bg: &BackgroundTheory,
+    a: AgentId,
+    inv: InvocationId,
+    chal: ChallengeId,
+    snap: ActionPolicySnapshot,
+    egr: VecSet<EgressKind>,
+    ah: ContentHash,
+    authorized: bool,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    // Structural guards (boundary rejections in any mode).
+    if !s.agent_active.contains(&a) {
+        return Err(KernelError::AgentInactive);
+    }
+    if a == *bg.root_agent() {
+        return Err(KernelError::RootNotAllowed);
+    }
+    if !s.tool_registered.contains(&snap.tool) {
+        return Err(KernelError::ToolNotRegistered);
+    }
+    if !snap.integ_inspect.le(snap.integ_floor) {
+        return Err(KernelError::IncoherentPolicy);
+    }
+    if s.pending.contains_key(&inv) {
+        return Err(KernelError::InvocationExists);
+    }
+    if s.consumed_ids.contains(&inv) {
+        return Err(KernelError::InvocationReplayed);
+    }
+    if s.challenges.contains_key(&inv) {
+        return Err(KernelError::ChallengeAlreadyOpen);
+    }
+    if !egress_narrows(&egr, &snap.declared_egress) {
+        return Err(KernelError::EgressNotNarrowing);
+    }
+    if !egress_covers(&snap.declared_egress, &egr) {
+        return Err(KernelError::EgressNotCovering);
+    }
+
+    // The nine checks -> verdict.
+    let cap = check_capability(&s, &a, &snap);
+    let clear = check_clearance(&s, &a, &snap);
+    let flow_strict = check_flow(&s, bg, &a, &snap, &egr, true);
+    let flow_adm = check_flow(&s, bg, &a, &snap, &egr, false);
+    let integ_strict = check_integ(&s, &a, &snap, true);
+    let integ_adm = check_integ(&s, &a, &snap, false);
+    let allow = cap && authorized && clear && flow_strict && integ_strict;
+    let admissible = cap && authorized && clear && flow_adm && integ_adm;
+    let verdict = if allow {
+        Verdict::Allow
+    } else if admissible {
+        Verdict::InspectionRequired
+    } else {
+        Verdict::Deny
+    };
+
+    let tool = snap.tool.clone();
+    let mode = bg.mode();
+
+    // (verdict, mode) selects exactly one effect.
+    match (verdict, mode) {
+        (Verdict::Allow, _) => {
+            s.pending.insert(
+                inv.clone(),
+                PendingInvocation {
+                    agent: a.clone(),
+                    policy: snap,
+                    egress: egr,
+                    admission: Admission::Plain,
+                    disposition: Disposition::Permitted,
+                    authorized,
+                    quarantined: false,
+                },
+            );
+        }
+        (Verdict::InspectionRequired, Mode::Enforce) => {
+            s.challenges.insert(
+                inv.clone(),
+                ChallengeScope {
+                    challenge: chal,
+                    agent: a.clone(),
+                    policy: snap,
+                    egress: egr,
+                    args_hash: ah,
+                    authorized,
+                },
+            );
+        }
+        (Verdict::InspectionRequired, Mode::Monitor) | (Verdict::Deny, Mode::Monitor) => {
+            s.pending.insert(
+                inv.clone(),
+                PendingInvocation {
+                    agent: a.clone(),
+                    policy: snap,
+                    egress: egr,
+                    admission: Admission::Bypassed,
+                    disposition: Disposition::MonitorBypassed,
+                    authorized,
+                    quarantined: false,
+                },
+            );
+        }
+        (Verdict::Deny, Mode::Enforce) => {
+            // Not a transition: return the most specific admissible sub-check that failed.
+            if !cap {
+                return Err(KernelError::CapabilityMissing);
+            }
+            if !authorized {
+                return Err(KernelError::AuthorizerDenied);
+            }
+            if !clear {
+                return Err(KernelError::ClearanceDenied);
+            }
+            if !flow_adm {
+                return Err(KernelError::FlowGateBlocked);
+            }
+            return Err(KernelError::IntegrityFloorDenied);
+        }
+    }
+
+    // Consumed on every transitioning arm (freshness + challenge_unique both lean on it).
+    s.consumed_ids.insert(inv.clone());
+    Ok((
+        s,
+        KernelAction::BeginInvocation {
+            agent: a,
+            inv,
+            tool,
+            verdict,
+            authorized,
+        },
+    ))
+}
+
+/// `authorizeAdmits`: the structural conditions plus the live admissible gate re-evaluated against
+/// the CURRENT state (E13). Reuses `begin_admissible` over the frozen challenge scope.
+fn authorize_admits(
+    s: &KernelState,
+    bg: &BackgroundTheory,
+    inv: &InvocationId,
+    sc: &ChallengeScope,
+) -> bool {
+    s.agent_active.contains(&sc.agent)
+        && sc.agent != *bg.root_agent()
+        && s.tool_registered.contains(&sc.policy.tool)
+        && sc.policy.integ_inspect.le(sc.policy.integ_floor)
+        && !s.pending.contains_key(inv)
+        && egress_narrows(&sc.egress, &sc.policy.declared_egress)
+        && egress_covers(&sc.policy.declared_egress, &sc.egress)
+        && begin_admissible(s, bg, &sc.agent, &sc.policy, &sc.egress, sc.authorized)
+}
+
+/// `authorize_inspected` — resolve an open challenge. Exact scope match and one-use are boundary
+/// rejections that leave the challenge open (E24). A scope-matching attestation closes the
+/// challenge and consumes the id; a positive attestation admitted by the live gate creates a
+/// permitted `inspected` pending record, otherwise it closes fail-closed (E13).
+pub fn authorize_inspected(
+    mut s: KernelState,
+    bg: &BackgroundTheory,
+    inv: InvocationId,
+    att: InspectionAttestation,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    let sc = match s.challenges.get_cloned(&inv) {
+        Some(sc) => sc,
+        None => return Err(KernelError::ChallengeNotOpen),
+    };
+    // Exact scope equality (mismatch = boundary rejection, challenge survives, E24).
+    if att.inv != inv
+        || att.challenge != sc.challenge
+        || att.args_hash != sc.args_hash
+        || att.policy_digest != sc.policy.policy_digest
+    {
+        return Err(KernelError::ChallengeScopeMismatch);
+    }
+    // One-use (also a boundary rejection).
+    if s.consumed_attestations.contains(&att.id) {
+        return Err(KernelError::AttestationConsumed);
+    }
+    // NOTE: `s.consumed_ids.contains(&inv)` is guaranteed by the open challenge (begin consumed it),
+    // so the abstract's freshness guard needs no runtime check here.
+
+    let admit = att.positive && authorize_admits(&s, bg, &inv, &sc);
+    if admit {
+        s.pending.insert(
+            inv.clone(),
+            PendingInvocation {
+                agent: sc.agent.clone(),
+                policy: sc.policy.clone(),
+                egress: sc.egress.clone(),
+                admission: Admission::Inspected(att.id.clone()),
+                disposition: Disposition::Permitted,
+                authorized: sc.authorized,
+                quarantined: false,
+            },
+        );
+    }
+    // Both branches close the challenge and consume the attestation; labels are framed.
+    s.challenges.remove(&inv);
+    s.consumed_attestations.insert(att.id.clone());
+    Ok((
+        s,
+        KernelAction::AuthorizeInspected {
+            inv,
+            attestation: att.id,
+            admitted: admit,
         },
     ))
 }

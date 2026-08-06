@@ -4,7 +4,7 @@
 use crate::capability::CapKind;
 use crate::types::{
     AgentId, AssignmentDigest, AttestationId, ConfLevel, Disposition, IntegLevel, InvocationId,
-    Outcome, ToolId,
+    Outcome, ToolId, Verdict,
 };
 
 /// The recorded action of a committed transition.
@@ -55,6 +55,18 @@ pub enum KernelAction {
         ilvl: IntegLevel,
         /// The consumed resolution attestation id, if this was the quarantine-resolution arm.
         resolution: Option<AttestationId>,
+    },
+    BeginInvocation {
+        agent: AgentId,
+        inv: InvocationId,
+        tool: ToolId,
+        verdict: Verdict,
+        authorized: bool,
+    },
+    AuthorizeInspected {
+        inv: InvocationId,
+        attestation: AttestationId,
+        admitted: bool,
     },
 }
 

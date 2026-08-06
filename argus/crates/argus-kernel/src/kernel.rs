@@ -1,12 +1,14 @@
 use crate::background::BackgroundTheory;
 use crate::capability::CapKind;
+use crate::collections::VecSet;
 use crate::error::KernelError;
 use crate::event::{KernelAction, KernelEvent};
 use crate::state::KernelState;
-use crate::traits::EventStore;
+use crate::traits::{AuthorizerOracle, EventStore};
 use crate::transitions;
 use crate::types::{
-    AgentId, AssignmentDigest, ConfLevel, IntegLevel, InvocationId, Outcome, ResolutionAttestation,
+    ActionPolicySnapshot, AgentId, AssignmentDigest, ChallengeId, ConfLevel, ContentHash,
+    EgressKind, InspectionAttestation, IntegLevel, InvocationId, Outcome, ResolutionAttestation,
     ToolId,
 };
 
@@ -14,19 +16,21 @@ use crate::types::{
 /// commands (needing the authorizer + egress-classifier oracles) arrive in Tasks A4–A5, which
 /// extend the generic parameter list. Every command appends its event before advancing state, so
 /// an event-store failure leaves state and sequence unchanged.
-pub struct Kernel<E: EventStore> {
+pub struct Kernel<A: AuthorizerOracle, E: EventStore> {
     state: KernelState,
     background: BackgroundTheory,
     sequence: u64,
+    authorizer: A,
     events: E,
 }
 
-impl<E: EventStore> Kernel<E> {
-    pub fn new(background: BackgroundTheory, events: E) -> Self {
+impl<A: AuthorizerOracle, E: EventStore> Kernel<A, E> {
+    pub fn new(background: BackgroundTheory, authorizer: A, events: E) -> Self {
         Self {
             state: KernelState::initial(),
             background,
             sequence: 0,
+            authorizer,
             events,
         }
     }
@@ -146,6 +150,43 @@ impl<E: EventStore> Kernel<E> {
         let r = transitions::settle_invocation(self.state.clone(), inv, outcome, att);
         self.apply(r)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_invocation(
+        &mut self,
+        agent: AgentId,
+        inv: InvocationId,
+        chal: ChallengeId,
+        snap: ActionPolicySnapshot,
+        attested_egress: VecSet<EgressKind>,
+        args_hash: ContentHash,
+    ) -> Result<KernelEvent, KernelError> {
+        // The authorizer verdict is a per-invocation oracle input (OracleFidelity).
+        let authorized =
+            self.authorizer
+                .allows(&agent, &snap.tool, &inv, &self.state, &self.background);
+        let r = transitions::begin_invocation(
+            self.state.clone(),
+            &self.background,
+            agent,
+            inv,
+            chal,
+            snap,
+            attested_egress,
+            args_hash,
+            authorized,
+        );
+        self.apply(r)
+    }
+
+    pub fn authorize_inspected(
+        &mut self,
+        inv: InvocationId,
+        att: InspectionAttestation,
+    ) -> Result<KernelEvent, KernelError> {
+        let r = transitions::authorize_inspected(self.state.clone(), &self.background, inv, att);
+        self.apply(r)
+    }
 }
 
 #[cfg(test)]
@@ -154,8 +195,9 @@ mod tests {
     use crate::background::BackgroundTheoryBuilder;
     use crate::collections::VecSet;
     use crate::types::{
-        ActionPolicySnapshot, Admission, AttestationId, ConfLevel, CrossingKey, Disposition,
-        EgressKind, IntegLevel, Mode, PendingInvocation, PolicyDigest,
+        ActionPolicySnapshot, Admission, AttestationId, ChallengeId, ConfLevel, ContentHash,
+        CrossingKey, Disposition, EgressKind, InspectionAttestation, IntegLevel, Mode,
+        PendingInvocation, PolicyDigest,
     };
     use std::cell::RefCell;
 
@@ -216,8 +258,40 @@ mod tests {
         }
     }
 
-    fn kernel() -> Kernel<VecStore> {
-        Kernel::new(BackgroundTheoryBuilder::new().build(), VecStore::new())
+    struct AllowAll;
+    impl AuthorizerOracle for AllowAll {
+        fn allows(
+            &self,
+            _: &AgentId,
+            _: &ToolId,
+            _: &InvocationId,
+            _: &KernelState,
+            _: &BackgroundTheory,
+        ) -> bool {
+            true
+        }
+    }
+
+    struct DenyAll;
+    impl AuthorizerOracle for DenyAll {
+        fn allows(
+            &self,
+            _: &AgentId,
+            _: &ToolId,
+            _: &InvocationId,
+            _: &KernelState,
+            _: &BackgroundTheory,
+        ) -> bool {
+            false
+        }
+    }
+
+    fn kernel() -> Kernel<AllowAll, VecStore> {
+        Kernel::new(
+            BackgroundTheoryBuilder::new().build(),
+            AllowAll,
+            VecStore::new(),
+        )
     }
 
     #[test]
@@ -339,6 +413,7 @@ mod tests {
                 b.set_mode(Mode::Monitor);
                 b.build()
             },
+            AllowAll,
             VecStore::new(),
         );
         k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
@@ -546,6 +621,326 @@ mod tests {
     }
 
     #[test]
+    fn begin_allow_pends_a_permitted_plain_record() {
+        let mut k = kernel();
+        k.register_tool(ToolId::new("t")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        k.begin_invocation(
+            AgentId::new("a1"),
+            InvocationId::new("inv"),
+            ChallengeId::new("c"),
+            snap(
+                ConfLevel::Restricted,
+                IntegLevel::Untrusted,
+                IntegLevel::Untrusted,
+                ConfLevel::Public,
+                IntegLevel::Attested,
+                VecSet::new(),
+            ),
+            VecSet::new(),
+            ContentHash::new("ah"),
+        )
+        .unwrap();
+        let rec = k
+            .state()
+            .pending
+            .get_cloned(&InvocationId::new("inv"))
+            .unwrap();
+        assert_eq!(rec.disposition, Disposition::Permitted);
+        assert_eq!(rec.admission, Admission::Plain);
+        assert!(k.state().consumed_ids.contains(&InvocationId::new("inv")));
+    }
+
+    #[test]
+    fn begin_rejects_replayed_invocation_id() {
+        let mut k = kernel();
+        k.register_tool(ToolId::new("t")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        let go = |k: &mut Kernel<AllowAll, VecStore>| {
+            k.begin_invocation(
+                AgentId::new("a1"),
+                InvocationId::new("inv"),
+                ChallengeId::new("c"),
+                snap(
+                    ConfLevel::Restricted,
+                    IntegLevel::Untrusted,
+                    IntegLevel::Untrusted,
+                    ConfLevel::Public,
+                    IntegLevel::Attested,
+                    VecSet::new(),
+                ),
+                VecSet::new(),
+                ContentHash::new("ah"),
+            )
+        };
+        go(&mut k).unwrap();
+        // The record settles (freeing the pending slot) but consumed_ids retains the id.
+        k.settle_invocation(InvocationId::new("inv"), Outcome::Success, None)
+            .unwrap();
+        assert_eq!(go(&mut k).unwrap_err(), KernelError::InvocationReplayed);
+    }
+
+    #[test]
+    fn enforce_inspection_creates_challenge_then_resolves_to_inspected_permit() {
+        let mut k = kernel();
+        k.register_tool(ToolId::new("t")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        // Sensitive output over an egress whose allow ceiling is Internal, inspect ceiling Sensitive:
+        // strict flow fails, admissible flow passes -> inspection_required.
+        k.background = {
+            let mut b = BackgroundTheoryBuilder::new();
+            b.set_egress_ceilings(
+                EgressKind::NetworkExternal,
+                Some(ConfLevel::Internal),
+                Some(ConfLevel::Sensitive),
+            );
+            b.build()
+        };
+        let egress = VecSet::from([EgressKind::NetworkExternal]);
+        k.begin_invocation(
+            AgentId::new("a1"),
+            InvocationId::new("inv"),
+            ChallengeId::new("c"),
+            snap(
+                ConfLevel::Restricted,
+                IntegLevel::Untrusted,
+                IntegLevel::Untrusted,
+                ConfLevel::Sensitive,
+                IntegLevel::Attested,
+                egress,
+            ),
+            VecSet::from([EgressKind::NetworkExternal]),
+            ContentHash::new("ah"),
+        )
+        .unwrap();
+        assert!(k.state().challenges.contains_key(&InvocationId::new("inv")));
+        assert!(!k.state().pending.contains_key(&InvocationId::new("inv")));
+
+        // Positive, scope-matching attestation -> live gate re-admits -> inspected permit.
+        let att = InspectionAttestation {
+            id: AttestationId::new("att1"),
+            inv: InvocationId::new("inv"),
+            challenge: ChallengeId::new("c"),
+            args_hash: ContentHash::new("ah"),
+            policy_digest: PolicyDigest::new("d"),
+            positive: true,
+        };
+        k.authorize_inspected(InvocationId::new("inv"), att)
+            .unwrap();
+        let rec = k
+            .state()
+            .pending
+            .get_cloned(&InvocationId::new("inv"))
+            .unwrap();
+        assert_eq!(rec.disposition, Disposition::Permitted);
+        assert_eq!(
+            rec.admission,
+            Admission::Inspected(AttestationId::new("att1"))
+        );
+        assert!(!k.state().challenges.contains_key(&InvocationId::new("inv")));
+        assert!(
+            k.state()
+                .consumed_attestations
+                .contains(&AttestationId::new("att1"))
+        );
+    }
+
+    #[test]
+    fn scope_mismatched_attestation_leaves_challenge_open() {
+        let mut k = kernel();
+        k.register_tool(ToolId::new("t")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        k.background = {
+            let mut b = BackgroundTheoryBuilder::new();
+            b.set_egress_ceilings(
+                EgressKind::NetworkExternal,
+                Some(ConfLevel::Internal),
+                Some(ConfLevel::Sensitive),
+            );
+            b.build()
+        };
+        k.begin_invocation(
+            AgentId::new("a1"),
+            InvocationId::new("inv"),
+            ChallengeId::new("c"),
+            snap(
+                ConfLevel::Restricted,
+                IntegLevel::Untrusted,
+                IntegLevel::Untrusted,
+                ConfLevel::Sensitive,
+                IntegLevel::Attested,
+                VecSet::from([EgressKind::NetworkExternal]),
+            ),
+            VecSet::from([EgressKind::NetworkExternal]),
+            ContentHash::new("ah"),
+        )
+        .unwrap();
+        let bad = InspectionAttestation {
+            id: AttestationId::new("att1"),
+            inv: InvocationId::new("inv"),
+            challenge: ChallengeId::new("WRONG"),
+            args_hash: ContentHash::new("ah"),
+            policy_digest: PolicyDigest::new("d"),
+            positive: true,
+        };
+        assert_eq!(
+            k.authorize_inspected(InvocationId::new("inv"), bad)
+                .unwrap_err(),
+            KernelError::ChallengeScopeMismatch
+        );
+        // Challenge survives the boundary rejection (E24); no attestation consumed.
+        assert!(k.state().challenges.contains_key(&InvocationId::new("inv")));
+        assert!(
+            !k.state()
+                .consumed_attestations
+                .contains(&AttestationId::new("att1"))
+        );
+    }
+
+    /// Register `t`, delegate `a1`, set NetworkExternal ceilings (allow=Internal, inspect=Sensitive)
+    /// and begin a Sensitive-output invocation over that egress -> opens an enforce-mode challenge.
+    fn open_challenge(k: &mut Kernel<AllowAll, VecStore>) {
+        k.register_tool(ToolId::new("t")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        k.background = {
+            let mut b = BackgroundTheoryBuilder::new();
+            b.set_egress_ceilings(
+                EgressKind::NetworkExternal,
+                Some(ConfLevel::Internal),
+                Some(ConfLevel::Sensitive),
+            );
+            b.build()
+        };
+        k.begin_invocation(
+            AgentId::new("a1"),
+            InvocationId::new("inv"),
+            ChallengeId::new("c"),
+            snap(
+                ConfLevel::Restricted,
+                IntegLevel::Untrusted,
+                IntegLevel::Untrusted,
+                ConfLevel::Sensitive,
+                IntegLevel::Attested,
+                VecSet::from([EgressKind::NetworkExternal]),
+            ),
+            VecSet::from([EgressKind::NetworkExternal]),
+            ContentHash::new("ah"),
+        )
+        .unwrap();
+    }
+
+    fn positive_att() -> InspectionAttestation {
+        InspectionAttestation {
+            id: AttestationId::new("att1"),
+            inv: InvocationId::new("inv"),
+            challenge: ChallengeId::new("c"),
+            args_hash: ContentHash::new("ah"),
+            policy_digest: PolicyDigest::new("d"),
+            positive: true,
+        }
+    }
+
+    #[test]
+    fn monitor_mode_deny_pends_a_bypassed_record() {
+        let mut k = Kernel::new(
+            {
+                let mut b = BackgroundTheoryBuilder::new();
+                b.set_mode(Mode::Monitor);
+                b.build()
+            },
+            DenyAll,
+            VecStore::new(),
+        );
+        k.register_tool(ToolId::new("t")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        k.begin_invocation(
+            AgentId::new("a1"),
+            InvocationId::new("inv"),
+            ChallengeId::new("c"),
+            snap(
+                ConfLevel::Restricted,
+                IntegLevel::Untrusted,
+                IntegLevel::Untrusted,
+                ConfLevel::Public,
+                IntegLevel::Attested,
+                VecSet::new(),
+            ),
+            VecSet::new(),
+            ContentHash::new("ah"),
+        )
+        .unwrap();
+        let rec = k
+            .state()
+            .pending
+            .get_cloned(&InvocationId::new("inv"))
+            .unwrap();
+        assert_eq!(rec.disposition, Disposition::MonitorBypassed);
+        assert_eq!(rec.admission, Admission::Bypassed);
+    }
+
+    #[test]
+    fn one_use_attestation_replay_rejected_challenge_survives() {
+        let mut k = kernel();
+        open_challenge(&mut k);
+        k.state
+            .consumed_attestations
+            .insert(AttestationId::new("att1"));
+        assert_eq!(
+            k.authorize_inspected(InvocationId::new("inv"), positive_att())
+                .unwrap_err(),
+            KernelError::AttestationConsumed
+        );
+        assert!(k.state().challenges.contains_key(&InvocationId::new("inv")));
+    }
+
+    #[test]
+    fn positive_attestation_denied_by_live_gate_closes_fail_closed() {
+        let mut k = kernel();
+        open_challenge(&mut k);
+        // Tighten policy so the live re-evaluation no longer admits the Sensitive egress.
+        k.background = BackgroundTheoryBuilder::new().build();
+        k.authorize_inspected(InvocationId::new("inv"), positive_att())
+            .unwrap();
+        assert!(!k.state().pending.contains_key(&InvocationId::new("inv")));
+        assert!(!k.state().challenges.contains_key(&InvocationId::new("inv")));
+        assert!(
+            k.state()
+                .consumed_attestations
+                .contains(&AttestationId::new("att1"))
+        );
+    }
+
+    #[test]
+    fn begin_authorizer_denied_is_typed_in_enforce() {
+        let mut k = Kernel::new(
+            BackgroundTheoryBuilder::new().build(),
+            DenyAll,
+            VecStore::new(),
+        );
+        k.register_tool(ToolId::new("t")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        assert_eq!(
+            k.begin_invocation(
+                AgentId::new("a1"),
+                InvocationId::new("inv"),
+                ChallengeId::new("c"),
+                snap(
+                    ConfLevel::Restricted,
+                    IntegLevel::Untrusted,
+                    IntegLevel::Untrusted,
+                    ConfLevel::Public,
+                    IntegLevel::Attested,
+                    VecSet::new(),
+                ),
+                VecSet::new(),
+                ContentHash::new("ah"),
+            )
+            .unwrap_err(),
+            KernelError::AuthorizerDenied
+        );
+    }
+
+    #[test]
     fn grant_crossing_is_root_only() {
         let mut k = kernel();
         k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
@@ -648,7 +1043,7 @@ mod tests {
 
     #[test]
     fn event_store_failure_leaves_state_and_sequence_unchanged() {
-        let mut k = Kernel::new(BackgroundTheoryBuilder::new().build(), FailStore);
+        let mut k = Kernel::new(BackgroundTheoryBuilder::new().build(), AllowAll, FailStore);
         assert_eq!(
             k.register_tool(ToolId::new("t")).unwrap_err(),
             KernelError::EventStore
