@@ -59,6 +59,12 @@ pub enum KernelError {
     CrossingReplayed,
     GrantMissing,
     GrantExhausted,
+    /// The source agent still has pending (in-flight) work, so it cannot cross output.
+    SourceInFlight,
+    /// Endorsed release violates the frozen assignment's integrity/confidentiality bound.
+    CrossingBoundViolated,
+    /// A release branch's receiver holds fail under enforce mode.
+    CrossingHoldFailed,
 
     // --- infrastructure ---
     EventStore,

@@ -8,8 +8,8 @@ use crate::traits::{AuthorizerOracle, EventStore};
 use crate::transitions;
 use crate::types::{
     ActionPolicySnapshot, AgentId, AssignmentDigest, ChallengeId, ConfLevel, ContentHash,
-    EgressKind, InspectionAttestation, IntegLevel, InvocationId, Outcome, ResolutionAttestation,
-    ToolId,
+    CrossInput, EgressKind, InspectionAttestation, IntegLevel, InvocationId, Outcome,
+    ResolutionAttestation, ToolId,
 };
 
 /// The stateful V4 kernel driver. Structural commands are wired here; the invocation/crossing
@@ -187,6 +187,11 @@ impl<A: AuthorizerOracle, E: EventStore> Kernel<A, E> {
         let r = transitions::authorize_inspected(self.state.clone(), &self.background, inv, att);
         self.apply(r)
     }
+
+    pub fn cross_output(&mut self, q: CrossInput) -> Result<KernelEvent, KernelError> {
+        let r = transitions::cross_output(self.state.clone(), &self.background, q);
+        self.apply(r)
+    }
 }
 
 #[cfg(test)]
@@ -195,9 +200,10 @@ mod tests {
     use crate::background::BackgroundTheoryBuilder;
     use crate::collections::VecSet;
     use crate::types::{
-        ActionPolicySnapshot, Admission, AttestationId, ChallengeId, ConfLevel, ContentHash,
-        CrossingKey, Disposition, EgressKind, InspectionAttestation, IntegLevel, Mode,
-        PendingInvocation, PolicyDigest,
+        ActionPolicySnapshot, Admission, AttestationId, ChallengeId, ConfLevel,
+        ConformanceAttestation, ContentHash, CrossInput, CrossingId, CrossingKey, Disposition,
+        EgressKind, Fallback, InspectionAttestation, IntegLevel, Mode, PendingInvocation,
+        PolicyDigest,
     };
     use std::cell::RefCell;
 
@@ -1058,5 +1064,234 @@ mod tests {
         k.register_tool(ToolId::new("t")).unwrap();
         k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
         assert_eq!(k.events.len(), 2);
+    }
+
+    fn two_agents() -> Kernel<AllowAll, VecStore> {
+        let mut k = kernel();
+        k.delegate(AgentId::root(), AgentId::new("src")).unwrap();
+        k.delegate(AgentId::root(), AgentId::new("rcv")).unwrap();
+        k
+    }
+
+    fn cross(
+        crossing: &str,
+        fallback: Fallback,
+        evidence: Option<ConformanceAttestation>,
+    ) -> CrossInput {
+        CrossInput {
+            src: AgentId::new("src"),
+            rcv: AgentId::new("rcv"),
+            crossing: CrossingId::new(crossing),
+            output_hash: ContentHash::new("out"),
+            descriptor: ContentHash::new("desc"),
+            fallback,
+            t_integ: IntegLevel::Attested,
+            t_conf: Some(ConfLevel::Public),
+            assignment: AssignmentDigest::new("asg"),
+            evidence,
+            released_conf: ConfLevel::Public,
+            released_integ: IntegLevel::Attested,
+        }
+    }
+
+    #[test]
+    fn endorsed_cross_releases_bounded_pair_and_decrements_grant() {
+        let mut k = two_agents();
+        k.grant_crossing(
+            AgentId::root(),
+            AgentId::new("rcv"),
+            AssignmentDigest::new("asg"),
+            2,
+        )
+        .unwrap();
+        let evidence = ConformanceAttestation {
+            id: AttestationId::new("att1"),
+            output: ContentHash::new("out"),
+            src: AgentId::new("src"),
+            rcv: AgentId::new("rcv"),
+            descriptor: ContentHash::new("desc"),
+            assignment: AssignmentDigest::new("asg"),
+            positive: true,
+        };
+        k.cross_output(cross("x1", Fallback::Fail, Some(evidence)))
+            .unwrap();
+        assert!(
+            k.state()
+                .taint_levels
+                .set_contains(&AgentId::new("rcv"), &ConfLevel::Public)
+        );
+        assert!(
+            k.state()
+                .integ_levels
+                .set_contains(&AgentId::new("rcv"), &IntegLevel::Attested)
+        );
+        let key = CrossingKey {
+            agent: AgentId::new("rcv"),
+            assignment: AssignmentDigest::new("asg"),
+        };
+        assert_eq!(
+            k.state()
+                .crossing_grants
+                .get_cloned(&key)
+                .unwrap()
+                .remaining,
+            1
+        );
+        assert!(
+            k.state()
+                .consumed_crossings
+                .contains(&CrossingId::new("x1"))
+        );
+        assert!(
+            k.state()
+                .consumed_attestations
+                .contains(&AttestationId::new("att1"))
+        );
+    }
+
+    #[test]
+    fn unendorsed_fallback_releases_source_labels() {
+        let mut k = two_agents();
+        k.state
+            .taint_levels
+            .insert_into(AgentId::new("src"), ConfLevel::Sensitive);
+        k.state
+            .integ_levels
+            .insert_into(AgentId::new("src"), IntegLevel::Standard);
+        // No grant, no evidence -> endorsedOK false -> declared release_unendorsed fallback.
+        let mut q = cross("x1", Fallback::ReleaseUnendorsed, None);
+        q.t_conf = None;
+        k.cross_output(q).unwrap();
+        assert!(
+            k.state()
+                .taint_levels
+                .set_contains(&AgentId::new("rcv"), &ConfLevel::Sensitive)
+        );
+        assert!(
+            k.state()
+                .integ_levels
+                .set_contains(&AgentId::new("rcv"), &IntegLevel::Standard)
+        );
+        assert!(
+            k.state()
+                .consumed_crossings
+                .contains(&CrossingId::new("x1"))
+        );
+    }
+
+    #[test]
+    fn fail_fallback_releases_nothing_but_consumes_crossing() {
+        let mut k = two_agents();
+        k.state
+            .taint_levels
+            .insert_into(AgentId::new("src"), ConfLevel::Sensitive);
+        k.cross_output(cross("x1", Fallback::Fail, None)).unwrap();
+        assert!(
+            !k.state()
+                .taint_levels
+                .set_contains(&AgentId::new("rcv"), &ConfLevel::Sensitive)
+        );
+        assert!(
+            k.state()
+                .consumed_crossings
+                .contains(&CrossingId::new("x1"))
+        );
+    }
+
+    #[test]
+    fn crossing_id_is_one_use() {
+        let mut k = two_agents();
+        k.cross_output(cross("x1", Fallback::Fail, None)).unwrap();
+        assert_eq!(
+            k.cross_output(cross("x1", Fallback::Fail, None))
+                .unwrap_err(),
+            KernelError::CrossingReplayed
+        );
+    }
+
+    #[test]
+    fn source_with_pending_work_cannot_cross() {
+        let mut k = two_agents();
+        k.state.pending.insert(
+            InvocationId::new("inv"),
+            permitted(
+                "src",
+                snap(
+                    ConfLevel::Restricted,
+                    IntegLevel::Untrusted,
+                    IntegLevel::Untrusted,
+                    ConfLevel::Public,
+                    IntegLevel::Attested,
+                    VecSet::new(),
+                ),
+            ),
+        );
+        assert_eq!(
+            k.cross_output(cross("x1", Fallback::Fail, None))
+                .unwrap_err(),
+            KernelError::SourceInFlight
+        );
+    }
+
+    #[test]
+    fn enforce_refuses_release_that_breaks_a_receiver_permit() {
+        let mut k = two_agents();
+        // A Public-clearance receiver permit; an unendorsed Sensitive source label breaks its
+        // clearance hold, so enforce mode refuses.
+        k.state.pending.insert(
+            InvocationId::new("rinv"),
+            permitted(
+                "rcv",
+                snap(
+                    ConfLevel::Public,
+                    IntegLevel::Untrusted,
+                    IntegLevel::Untrusted,
+                    ConfLevel::Public,
+                    IntegLevel::Attested,
+                    VecSet::new(),
+                ),
+            ),
+        );
+        k.state
+            .taint_levels
+            .insert_into(AgentId::new("src"), ConfLevel::Sensitive);
+        let mut q = cross("x1", Fallback::ReleaseUnendorsed, None);
+        q.t_conf = None;
+        assert_eq!(
+            k.cross_output(q).unwrap_err(),
+            KernelError::CrossingHoldFailed
+        );
+    }
+
+    #[test]
+    fn non_declassifying_endorsement_must_dominate_source_taint() {
+        let mut k = two_agents();
+        k.grant_crossing(
+            AgentId::root(),
+            AgentId::new("rcv"),
+            AssignmentDigest::new("asg"),
+            1,
+        )
+        .unwrap();
+        k.state
+            .taint_levels
+            .insert_into(AgentId::new("src"), ConfLevel::Sensitive);
+        let evidence = ConformanceAttestation {
+            id: AttestationId::new("att1"),
+            output: ContentHash::new("out"),
+            src: AgentId::new("src"),
+            rcv: AgentId::new("rcv"),
+            descriptor: ContentHash::new("desc"),
+            assignment: AssignmentDigest::new("asg"),
+            positive: true,
+        };
+        // Non-declassifying (t_conf=None) release at Public cannot dominate a Sensitive source.
+        let mut q = cross("x1", Fallback::Fail, Some(evidence));
+        q.t_conf = None;
+        q.released_conf = ConfLevel::Public;
+        assert_eq!(
+            k.cross_output(q).unwrap_err(),
+            KernelError::CrossingBoundViolated
+        );
     }
 }

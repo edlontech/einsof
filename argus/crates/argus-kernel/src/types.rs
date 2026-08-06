@@ -331,6 +331,51 @@ pub struct InspectionAttestation {
     pub positive: bool,
 }
 
+/// Which arm of the `cross_output` trichotomy fired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossBranch {
+    Endorsed,
+    Unendorsed,
+    Fail,
+}
+
+/// A conformance attestation — an *input*, not state. Scope is (output hash, src, rcv, descriptor,
+/// assignment); the kernel checks scope + one-use consumption, issuer truth is the external seam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConformanceAttestation {
+    pub id: AttestationId,
+    pub output: ContentHash,
+    pub src: AgentId,
+    pub rcv: AgentId,
+    pub descriptor: ContentHash,
+    pub assignment: AssignmentDigest,
+    pub positive: bool,
+}
+
+/// The authenticated boundary-crossing request. Its Rust image IS the authenticated contract
+/// revision + assignment: the adapter validates the revision/assignment/pin/tenant before
+/// constructing it, so the kernel does not re-authenticate those fields (residual assumption).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossInput {
+    pub src: AgentId,
+    pub rcv: AgentId,
+    pub crossing: CrossingId,
+    pub output_hash: ContentHash,
+    /// Contract revision: descriptor hash.
+    pub descriptor: ContentHash,
+    /// Contract revision: declared fallback when endorsement is unavailable.
+    pub fallback: Fallback,
+    /// Assignment: max target integrity.
+    pub t_integ: IntegLevel,
+    /// Assignment: most-public target confidentiality; `Some` iff the contract declassifies.
+    pub t_conf: Option<ConfLevel>,
+    /// Assignment digest; the grant key.
+    pub assignment: AssignmentDigest,
+    pub evidence: Option<ConformanceAttestation>,
+    pub released_conf: ConfLevel,
+    pub released_integ: IntegLevel,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

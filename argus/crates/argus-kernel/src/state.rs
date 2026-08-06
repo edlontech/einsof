@@ -172,6 +172,29 @@ impl KernelState {
         self.pending = rebuilt;
     }
 
+    /// Decrement the remaining uses of the grant at `(agent, assignment)` by one, leaving
+    /// `provisioned` (and every other key) alone (spec `decrementGrantAt`). No-op if absent;
+    /// `cross_output` only calls this on the endorsed branch, where `remaining > 0` is guaranteed.
+    pub fn decrement_grant_at(
+        &mut self,
+        agent: &AgentId,
+        assignment: &crate::types::AssignmentDigest,
+    ) {
+        let key = CrossingKey {
+            agent: agent.clone(),
+            assignment: assignment.clone(),
+        };
+        if let Some(g) = self.crossing_grants.get_cloned(&key) {
+            self.crossing_grants.insert(
+                key,
+                CrossingGrant {
+                    remaining: g.remaining - 1,
+                    provisioned: g.provisioned,
+                },
+            );
+        }
+    }
+
     /// Drop every crossing grant held by `agent` (spec `dropGrantsOf`).
     pub fn drop_grants_of(&mut self, agent: &AgentId) {
         let mut kept: VecMap<CrossingKey, CrossingGrant> = VecMap::new();

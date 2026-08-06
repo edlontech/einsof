@@ -16,9 +16,9 @@ use crate::event::KernelAction;
 use crate::state::KernelState;
 use crate::types::{
     ActionPolicySnapshot, Admission, AgentId, AssignmentDigest, ChallengeId, ChallengeScope,
-    ConfLevel, ContentHash, CrossingGrant, CrossingKey, Disposition, EgressKind,
-    InspectionAttestation, IntegLevel, InvocationId, Mode, Outcome, PendingInvocation,
-    ResolutionAttestation, ToolId, Verdict,
+    ConfLevel, ContentHash, CrossBranch, CrossInput, CrossingGrant, CrossingKey, Disposition,
+    EgressKind, Fallback, InspectionAttestation, IntegLevel, InvocationId, Mode, Outcome,
+    PendingInvocation, ResolutionAttestation, ToolId, Verdict,
 };
 
 /// `register_tool` — add an unregistered exact tool identity (E17: `ToolId` is the composite
@@ -265,40 +265,21 @@ fn clear_agent(s: &mut KernelState, agent: &AgentId) {
     s.drop_grants_of(agent);
 }
 
-/// The three ingest holds against every pending record of `a`: flow (per egress channel),
-/// clearance (per target), and integrity (per target). Accumulator scan (no early return).
-fn ingest_holds(
-    s: &KernelState,
-    bg: &BackgroundTheory,
-    a: &AgentId,
-    pconf: ConfLevel,
-    pinteg: IntegLevel,
-) -> bool {
-    let mut holds = true;
+/// Conf/flow hold for a single incoming level `pconf` against every pending record of `a`: each
+/// attested egress channel is ALLOW, or INSPECT with the pending party vouched. Accumulator scan.
+fn ingest_conf_hold(s: &KernelState, bg: &BackgroundTheory, a: &AgentId, pconf: ConfLevel) -> bool {
+    let mut ok = true;
     let mut i = 0;
     while i < s.pending.len() {
         let inv = s.pending.key_at(i).clone();
         if let Some(j) = s.pending.get_cloned(&inv) {
             if j.agent == *a {
                 let vouched = j.vouched();
-                // Clearance hold: pconf clears the record's frozen clearance ceiling.
-                if !pconf.le(j.policy.conf_clearance) {
-                    holds = false;
-                }
-                // Integrity hold: ALLOW, or INSPECT with the pending party vouched.
-                let integ_allows = j.policy.integ_floor.le(pinteg);
-                let integ_inspects = j.policy.integ_inspect.le(pinteg);
-                if !(integ_allows || (integ_inspects && vouched)) {
-                    holds = false;
-                }
-                // Flow hold: for every attested egress channel, ALLOW or INSPECT+vouch.
                 let mut e = 0;
                 while e < j.egress.len() {
                     let eg = *j.egress.at(e);
-                    let flow_allows = bg.flow_allows(pconf, eg);
-                    let flow_inspects = bg.flow_inspects(pconf, eg);
-                    if !(flow_allows || (flow_inspects && vouched)) {
-                        holds = false;
+                    if !(bg.flow_allows(pconf, eg) || (bg.flow_inspects(pconf, eg) && vouched)) {
+                        ok = false;
                     }
                     e += 1;
                 }
@@ -306,7 +287,58 @@ fn ingest_holds(
         }
         i += 1;
     }
-    holds
+    ok
+}
+
+/// Clearance hold for a single incoming level `pconf`: it clears every pending record owner's
+/// frozen clearance ceiling (because the value is inserted into that owner's held taint).
+fn ingest_clear_hold(s: &KernelState, a: &AgentId, pconf: ConfLevel) -> bool {
+    let mut ok = true;
+    let mut i = 0;
+    while i < s.pending.len() {
+        let inv = s.pending.key_at(i).clone();
+        if let Some(j) = s.pending.get_cloned(&inv) {
+            if j.agent == *a && !pconf.le(j.policy.conf_clearance) {
+                ok = false;
+            }
+        }
+        i += 1;
+    }
+    ok
+}
+
+/// Integrity hold for a single incoming level `pinteg`: ALLOW, or INSPECT with the pending party
+/// vouched, against every pending record of `a`.
+fn ingest_integ_hold(s: &KernelState, a: &AgentId, pinteg: IntegLevel) -> bool {
+    let mut ok = true;
+    let mut i = 0;
+    while i < s.pending.len() {
+        let inv = s.pending.key_at(i).clone();
+        if let Some(j) = s.pending.get_cloned(&inv) {
+            if j.agent == *a {
+                let allows = j.policy.integ_floor.le(pinteg);
+                let inspects = j.policy.integ_inspect.le(pinteg);
+                if !(allows || (inspects && j.vouched())) {
+                    ok = false;
+                }
+            }
+        }
+        i += 1;
+    }
+    ok
+}
+
+/// All three ingest holds against every pending record of `a` for the pair `(pconf, pinteg)`.
+fn ingest_holds(
+    s: &KernelState,
+    bg: &BackgroundTheory,
+    a: &AgentId,
+    pconf: ConfLevel,
+    pinteg: IntegLevel,
+) -> bool {
+    ingest_conf_hold(s, bg, a, pconf)
+        && ingest_clear_hold(s, a, pconf)
+        && ingest_integ_hold(s, a, pinteg)
 }
 
 /// `ingest` — add a frozen provenance pair `(pconf, pinteg)` to an active agent's labels. The
@@ -869,6 +901,210 @@ pub fn authorize_inspected(
             inv,
             attestation: att.id,
             admitted: admit,
+        },
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// cross_output — the atomic boundary-crossing trichotomy (A5).
+// ---------------------------------------------------------------------------
+
+/// `endorsedOK`: positive, fresh, scope-matching conformance evidence paired with a
+/// receiver/assignment grant that has a remaining use.
+fn endorsed_ok(s: &KernelState, q: &CrossInput) -> bool {
+    let evidence_ok = match &q.evidence {
+        Some(e) => {
+            e.positive
+                && !s.consumed_attestations.contains(&e.id)
+                && e.output == q.output_hash
+                && e.src == q.src
+                && e.rcv == q.rcv
+                && e.descriptor == q.descriptor
+                && e.assignment == q.assignment
+        }
+        None => false,
+    };
+    if !evidence_ok {
+        return false;
+    }
+    let key = CrossingKey {
+        agent: q.rcv.clone(),
+        assignment: q.assignment.clone(),
+    };
+    match s.crossing_grants.get_cloned(&key) {
+        Some(g) => g.remaining > 0,
+        None => false,
+    }
+}
+
+/// Receiver-protecting holds for the label-releasing branches. `endorsed` releases the single
+/// `(released_conf, released_integ)` pair; `unendorsed` releases every source label; `fail`
+/// releases nothing so its holds are vacuous.
+fn cross_holds(
+    s: &KernelState,
+    bg: &BackgroundTheory,
+    q: &CrossInput,
+    branch: CrossBranch,
+) -> bool {
+    match branch {
+        CrossBranch::Endorsed => ingest_holds(s, bg, &q.rcv, q.released_conf, q.released_integ),
+        CrossBranch::Unendorsed => {
+            let mut ok = true;
+            let src_taint = s.taint_levels.get_set_or_empty(&q.src);
+            let mut i = 0;
+            while i < src_taint.len() {
+                let l = *src_taint.at(i);
+                if !ingest_conf_hold(s, bg, &q.rcv, l) || !ingest_clear_hold(s, &q.rcv, l) {
+                    ok = false;
+                }
+                i += 1;
+            }
+            let src_integ = s.integ_levels.get_set_or_empty(&q.src);
+            let mut i = 0;
+            while i < src_integ.len() {
+                let li = *src_integ.at(i);
+                if !ingest_integ_hold(s, &q.rcv, li) {
+                    ok = false;
+                }
+                i += 1;
+            }
+            ok
+        }
+        CrossBranch::Fail => true,
+    }
+}
+
+/// `cross_output` — one atomic boundary crossing. `endorsed` (scope-exact one-use evidence + a
+/// remaining receiver grant) consumes the evidence, decrements one grant use, and releases the
+/// assignment-bounded pair into the receiver; `unendorsed` releases the source labels; `fail`
+/// releases nothing. The crossing id is consumed on every branch. Release branches satisfy the
+/// receiver holds or, in monitor mode, demote the receiver's pending records (E18/E25).
+pub fn cross_output(
+    mut s: KernelState,
+    bg: &BackgroundTheory,
+    q: CrossInput,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    if !s.agent_active.contains(&q.src) {
+        return Err(KernelError::AgentInactive);
+    }
+    if !s.agent_active.contains(&q.rcv) {
+        return Err(KernelError::AgentInactive);
+    }
+    // A source with pending work has speculative labels, so it cannot cross output.
+    let mut src_in_flight = false;
+    let mut i = 0;
+    while i < s.pending.len() {
+        let inv = s.pending.key_at(i).clone();
+        if let Some(j) = s.pending.get_cloned(&inv) {
+            if j.agent == q.src {
+                src_in_flight = true;
+            }
+        }
+        i += 1;
+    }
+    if src_in_flight {
+        return Err(KernelError::SourceInFlight);
+    }
+    if s.consumed_crossings.contains(&q.crossing) {
+        return Err(KernelError::CrossingReplayed);
+    }
+
+    // Branch selection: a total complementary partition over (endorsedOK, declared fallback).
+    let branch = if endorsed_ok(&s, &q) {
+        CrossBranch::Endorsed
+    } else {
+        match q.fallback {
+            Fallback::ReleaseUnendorsed => CrossBranch::Unendorsed,
+            Fallback::Fail => CrossBranch::Fail,
+        }
+    };
+
+    // Endorsement obeys the frozen assignment bounds (boundary rejection if violated).
+    if branch == CrossBranch::Endorsed {
+        if !q.released_integ.le(q.t_integ) {
+            return Err(KernelError::CrossingBoundViolated);
+        }
+        match q.t_conf {
+            Some(c) => {
+                if !q.released_conf.le(c) {
+                    return Err(KernelError::CrossingBoundViolated);
+                }
+            }
+            None => {
+                // Non-declassifying: the released level must dominate the source's held taint.
+                let src_taint = s.taint_levels.get_set_or_empty(&q.src);
+                let mut ok = true;
+                let mut i = 0;
+                while i < src_taint.len() {
+                    let l = *src_taint.at(i);
+                    if !l.le(q.released_conf) {
+                        ok = false;
+                    }
+                    i += 1;
+                }
+                if !ok {
+                    return Err(KernelError::CrossingBoundViolated);
+                }
+            }
+        }
+    }
+
+    // Disposition (E19): permitted when the receiver holds pass; monitor-bypassed (demoting the
+    // receiver) when they fail under monitor; refused under enforce.
+    let holds = cross_holds(&s, bg, &q, branch);
+    let disposition = if holds {
+        Disposition::Permitted
+    } else if bg.mode() == Mode::Monitor {
+        Disposition::MonitorBypassed
+    } else {
+        return Err(KernelError::CrossingHoldFailed);
+    };
+
+    // Label release into the receiver.
+    match branch {
+        CrossBranch::Endorsed => {
+            s.taint_levels.insert_into(q.rcv.clone(), q.released_conf);
+            s.integ_levels.insert_into(q.rcv.clone(), q.released_integ);
+        }
+        CrossBranch::Unendorsed => {
+            let src_taint = s.taint_levels.get_set_or_empty(&q.src);
+            let mut i = 0;
+            while i < src_taint.len() {
+                let l = *src_taint.at(i);
+                s.taint_levels.insert_into(q.rcv.clone(), l);
+                i += 1;
+            }
+            let src_integ = s.integ_levels.get_set_or_empty(&q.src);
+            let mut i = 0;
+            while i < src_integ.len() {
+                let li = *src_integ.at(i);
+                s.integ_levels.insert_into(q.rcv.clone(), li);
+                i += 1;
+            }
+        }
+        CrossBranch::Fail => {}
+    }
+
+    // The crossing id is consumed on every branch; endorsement consumes evidence + a grant use.
+    s.consumed_crossings.insert(q.crossing.clone());
+    if branch == CrossBranch::Endorsed {
+        if let Some(e) = &q.evidence {
+            s.consumed_attestations.insert(e.id.clone());
+        }
+        s.decrement_grant_at(&q.rcv, &q.assignment);
+    }
+    if disposition == Disposition::MonitorBypassed {
+        s.demote_all_of(&q.rcv);
+    }
+
+    Ok((
+        s,
+        KernelAction::CrossOutput {
+            src: q.src,
+            rcv: q.rcv,
+            crossing: q.crossing,
+            branch,
+            disposition,
         },
     ))
 }

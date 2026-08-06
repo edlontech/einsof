@@ -3,8 +3,8 @@
 
 use crate::capability::CapKind;
 use crate::types::{
-    AgentId, AssignmentDigest, AttestationId, ConfLevel, Disposition, IntegLevel, InvocationId,
-    Outcome, ToolId, Verdict,
+    AgentId, AssignmentDigest, AttestationId, ConfLevel, CrossBranch, CrossingId, Disposition,
+    IntegLevel, InvocationId, Outcome, ToolId, Verdict,
 };
 
 /// The recorded action of a committed transition.
@@ -67,6 +67,13 @@ pub enum KernelAction {
         inv: InvocationId,
         attestation: AttestationId,
         admitted: bool,
+    },
+    CrossOutput {
+        src: AgentId,
+        rcv: AgentId,
+        crossing: CrossingId,
+        branch: CrossBranch,
+        disposition: Disposition,
     },
 }
 
