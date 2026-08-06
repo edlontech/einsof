@@ -1,6 +1,6 @@
 import Tzimtzum.Soundness.Common
 
-/-! # Task 8 — `ingest` preserves the bundle (one theorem per sub-bundle). -/
+/-! `ingest` preserves the bundle (one theorem per sub-bundle). -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true
@@ -385,7 +385,7 @@ theorem presC_ingest (a : AgentId) (src : Option AgentId) (pconf : ConfLevel)
     (hn : (ingest a src pconf pinteg d).next s s') : invC s' := by
   kav_discharge_lite ingest
 
-/-- The full-bundle preservation lemma Tasks 11+ and the soundness assembly consume. -/
+/-- Combines preservation of all invariant sub-bundles. -/
 theorem pres_ingest (a : AgentId) (src : Option AgentId) (pconf : ConfLevel)
     (pinteg : IntegLevel) (d : Disposition)
     (s s' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId

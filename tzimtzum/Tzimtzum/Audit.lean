@@ -1,19 +1,12 @@
 import Tzimtzum.Transitions
 
 /-!
-# TzimtzumV4 — crown-jewel audit and trace theorems
+# Reachable-step audit theorems
 
-T-11 is stated over evidence-bearing steps whose pre-state is `Kav.Reachable`. Kav records
-states and guarded transitions, but the protocol intentionally stores neither issuer ids nor
-an event log in kernel state. The theorem therefore proves the kernel half exactly — scope,
-freshness, one-use consumption, and endorsed grant decrement — while exposing the complete
-input object as event-side attribution. Issuer authentication/truth remains the named
-external seam from the architecture; it is not silently promoted to a kernel fact.
-
-Here “band-crossing” names the three evidence-bearing classes inventoried by T-11. An
-`unendorsed` crossing releases at the source's labels and is not an evidence-backed band
-crossing. Likewise, kernel state has no ingestion-history log; T-12 uses the state-level
-freshness witness the protocol does retain — the defensive post-`delegate` clearing.
+These theorems expose the guard and update facts for evidence-consuming admissions, quarantine
+resolutions, endorsed crossings, and delegated compartments. They prove only kernel facts: scope,
+freshness, one-use consumption, and state updates. Attestation issuer identity and truth are
+external inputs rather than kernel state.
 -/
 
 set_option maxHeartbeats 8000000
@@ -22,7 +15,7 @@ set_option linter.unusedSimpArgs false
 
 namespace Tzimtzum
 
-/-- **T-1.** The CHECK 5a/5b/5c gate preserves headline integrity confinement. -/
+/-- The integrity checks preserve `integrity_confinement` after invocation admission. -/
 theorem audit_integrity_confinement (a : KAgent) (inv : KInv) (chal : KChallenge)
     (snap : KSnapshot) (egr : KEgress → Prop) (ah : KContentHash) (authorized : Prop)
     (v : Verdict) (s s' : KSt) (hinv : allInv s)
@@ -35,7 +28,7 @@ theorem audit_integrity_confinement (a : KAgent) (inv : KInv) (chal : KChallenge
 
 #print axioms audit_integrity_confinement
 
-/-- **T-2.** The CHECK 3a/3b/3c gate preserves headline flow confinement. -/
+/-- The flow checks preserve `flow_confinement` after invocation admission. -/
 theorem audit_flow_confinement (a : KAgent) (inv : KInv) (chal : KChallenge)
     (snap : KSnapshot) (egr : KEgress → Prop) (ah : KContentHash) (authorized : Prop)
     (v : Verdict) (s s' : KSt) (hinv : allInv s)
@@ -48,7 +41,7 @@ theorem audit_flow_confinement (a : KAgent) (inv : KInv) (chal : KChallenge)
 
 #print axioms audit_flow_confinement
 
-/-! ## T-11 — evidence conservation over reachable steps -/
+/-! ## Evidence conservation over reachable steps -/
 
 /-- Kernel conservation claim for an inspected admission event. -/
 def InspectionEvidenceConserved : Prop :=
@@ -160,9 +153,8 @@ theorem audit_endorsed_evidence : EndorsedEvidenceConserved := by
 
 #print axioms audit_endorsed_evidence
 
-/-- **T-11 audit evidence conservation.** Every evidence-bearing event from a reachable
-pre-state consumes one fresh, scope-exact attestation; endorsed crossings additionally
-consume a fresh crossing id and decrement a provision-bounded grant exactly once. -/
+/-- Every evidence-bearing reachable step consumes one fresh, scope-matching attestation.
+An endorsed crossing also consumes its crossing identifier and decrements its grant once. -/
 theorem audit_evidence_conservation :
     InspectionEvidenceConserved
     ∧ ResolutionEvidenceConserved
@@ -171,11 +163,10 @@ theorem audit_evidence_conservation :
 
 #print axioms audit_evidence_conservation
 
-/-! ## T-12 — fresh compartment -/
+/-! ## Fresh compartment -/
 
-/-- **T-12 fresh-compartment lemma.** Delegation defensively clears labels, pending
-provenance, and grants for the grantee. Consequently every held-label clearance/floor
-quantifier is vacuous immediately after delegation. -/
+/-- Delegation clears the grantee's labels, pending records, and grants, making its held-label
+gate obligations vacuous immediately after delegation. -/
 theorem audit_fresh_compartment (grantor grantee : KAgent) (s s' : KSt)
     (hn : (delegate grantor grantee).next s s') :
     (∀ L, ¬ s'.taint_levels grantee L)
@@ -220,13 +211,10 @@ theorem audit_fresh_compartment (grantor grantee : KAgent) (s s' : KSt)
 
 #print axioms audit_fresh_compartment
 
-/-! ## T-13 — replay-equivalence statement
+/-! ## Replay-equivalence statement
 
-The kernel model has relational actions and no serialized event type. This transition-level
-statement is therefore deliberately recorded as the executable adapter's proof obligation,
-not asserted as a kernel theorem. The parent conformance corpus supplies concrete events and
-checks this determinism condition against the Rust/Elixir replay path.
--/
+`Replays` records a fixed sequence of registered closed actions. The statement below expresses
+determinism for one such sequence from one starting state. -/
 
 /-- Replay a fixed list of registered closed actions from a fixed starting state. -/
 inductive Replays {σ : Type} (ts : Kav.TransitionSystem σ) :
@@ -236,9 +224,8 @@ inductive Replays {σ : Type} (ts : Kav.TransitionSystem σ) :
       (hmem : na ∈ ts.actions) (hguard : na.2.guard s) (hnext : na.2.next s s₁)
       (htail : Replays ts rest s₁ s₂) : Replays ts (na :: rest) s s₂
 
-/-- **T-13 statement.** Replaying the same registered transition sequence from the same
-state reaches one state. This remains an external conformance obligation because closed
-Kav actions existentially hide their serialized parameters. -/
+/-- The same registered transition sequence from the same state reaches one state.
+Closed action parameters are existential, so this is stated as a property rather than proved here. -/
 def replay_equivalence_statement : Prop :=
   ∀ (start out₁ out₂ : KSt) (trace : List (String × Kav.Action KSt)),
     Replays ksystem trace start out₁ → Replays ksystem trace start out₂ → out₁ = out₂

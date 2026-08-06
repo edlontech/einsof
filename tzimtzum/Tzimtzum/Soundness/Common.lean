@@ -6,27 +6,11 @@ import Kav.Engine
 import Lean
 
 /-!
-# TzimtzumV4 — shared soundness infrastructure
+# Shared soundness infrastructure
 
-The discharge machinery every `Check*.lean` module uses, ported from the Task 0 spike
-(which measured it) and V3's `Soundness/Common.lean` (which invented it):
-
-* `all_goals_fresh` — run a tactic on each goal under a FRESH heartbeat budget
-  (`Core.withCurrHeartbeats`); one saturating conjunct must never starve the others.
-* `kav_discharge` — split a (sub-)bundle goal into atomic conjuncts
-  (`repeat' apply And.intro` stops exactly at the opaque conjunct names, so the split never
-  needs renumbering), then run the pinned cascade per conjunct with the **full** unfold set
-  (gate predicates exposed) — for the conjuncts the gate makes inductive.
-* `kav_discharge_lite` — same split, but the gate predicates (`beginAllow`,
-  `beginAdmissible`, the `check*`s, `authorizeAdmits`, `endorsedOK`, the holds) stay
-  **atoms**. Frame-ish conjuncts pay nothing for the gate structure. This is the V4
-  analogue of `ceilingAdmits` irreducibility: keep out of the unfold set anything the
-  cascade does not need. Which cascade — and whether `cases` on a branch parameter comes
-  first — is a **per-conjunct** property, measured, not assumed (spike finding 4:
-  `cases v` rescues `bypass_mode_sound` and times out `pending_flow_compat`).
-
-`ksystem` monomorphises the 12-action system at the opaque audit sorts; the concrete-sort
-refinement instantiates the polymorphic bundle directly, as V3's `kav_soundP` did.
+The macros split invariant conjunctions and run each resulting goal with a fresh heartbeat budget.
+The full cascade unfolds admission gates; the lite cascade keeps them opaque for frame-preservation
+obligations. `ksystem` instantiates the protocol transition system at the opaque verification sorts.
 -/
 
 set_option maxHeartbeats 8000000

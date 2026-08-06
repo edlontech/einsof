@@ -1,6 +1,6 @@
 import Tzimtzum.Soundness.Common
 
-/-! # Task 8 — `authorize_inspected` preserves the bundle (one theorem per sub-bundle). -/
+/-! `authorize_inspected` preserves the bundle (one theorem per sub-bundle). -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true
@@ -269,7 +269,7 @@ theorem presC_authorize_inspected (inv : InvocationId)
     (hn : (authorize_inspected inv sc att admit).next s s') : invC s' := by
   kav_discharge_lite authorize_inspected
 
-/-- The full-bundle preservation lemma Tasks 11+ and the soundness assembly consume. -/
+/-- Combines preservation of all invariant sub-bundles. -/
 theorem pres_authorize_inspected (inv : InvocationId)
     (sc : ChallengeScope AgentId ToolId CapKind EgressKind ChallengeId PolicyDigest ContentHash)
     (att : InspectionAttestation InvocationId ChallengeId AttestationId PolicyDigest ContentHash)

@@ -1,53 +1,13 @@
 import Tzimtzum.Actions.Ingest
 
 /-!
-# TzimtzumV4 — `cross_output`
+# TzimtzumV4 `cross_output`
 
-The single atomic boundary crossing ([[2026-07-24-tzimtzum-v4/architecture|architecture]]
-§6.5): the integrity dual of declassification, the only transition that may produce output
-more trusted than its source, and the only sanctioned downward confidentiality step. It
-binds contract, assignment, evidence, grant and release in one decision — there is no
-endorse-then-fallback sequence for a crash to split. Definitions only — proofs are Task 10.
-
-## Inputs
-
-All frozen at the command and bundled into one `CrossInput` record (its Rust image is a
-request struct): the exact contract revision (descriptor hash + declared `Fallback`), the
-exact assignment (`t_integ`, optional declassification bound `t_conf`, digest), conformance
-evidence or its absence, the fresh crossing id, and the released label pair (E19: computed
-outside, bounded by guard). The record *is* the authenticated revision — a missing or
-mismatched revision/assignment/pin never reaches the kernel (there is then no authenticated
-fallback authority either), which is §6.5's "missing contract authority always fails",
-realised as a boundary rejection.
-
-## The trichotomy
-
-`branch` is an action parameter (E8/E19) and `endorsedOK` is the **transparent**
-branch-selection predicate (§12.1): its positive and negated forms partition the trichotomy
-totally (`cross_branch_total`), so each Rust `if/else` arm refines exactly one spec branch.
-
-1. **endorsed** — scope-exact positive unconsumed conformance evidence + a grant with uses
-   remaining. Consumes the attestation, decrements the grant, releases at
-   `(released_conf, released_integ)` with `released_integ ≤ t_integ` and, if declassifying,
-   `released_conf` within `t_conf`; without a declassifying contract the released
-   confidentiality must dominate the source's held taint (no silent downward step). The
-   receiver takes the min per dimension by *inserting* into its label sets; the source is
-   framed — endorsement never cleans anybody.
-2. **unendorsed** — branch 1 unavailable and the contract declares `release_unendorsed`.
-   Ordinary source-level release: the receiver's sets absorb the source's sets, exactly an
-   `ingest` from agent state (E21's domination is the identity here — the labels *are* the
-   source's). No consumption, no decrement, no endorsement.
-3. **fail** — branch 1 unavailable and the declared fallback is `fail`. No release, no
-   label change; the crossing id is still consumed (freshness is never given back).
-
-## The receiver is protected by the ingest holds (E18/E20 carried)
-
-§6.5 is silent about the receiver's own pending permits, but both release branches degrade
-the receiver's labels exactly as `ingest` does, with the same consequence: a live permit of
-the *receiver* could be broken mid-flight. So both release branches carry the three ingest
-holds on the receiver (for the released pair, or for every source level), `dispo` selects
-the enforcement axis per E19, and a monitor-mode bypass demotes the receiver's permits
-(E18). `fail` moves no labels and needs no holds.
+`cross_output` performs one atomic boundary crossing. An endorsed branch requires fresh,
+scope-matching positive evidence and a remaining receiver grant, then consumes the evidence and
+decrements the grant. If endorsement is unavailable, the frozen fallback selects either an
+unendorsed source-label release or no release. Release branches satisfy receiver ingestion holds
+or, in monitor mode, demote the receiver's pending records.
 -/
 
 namespace Tzimtzum
@@ -73,7 +33,7 @@ inductive CrossBranch where
   | endorsed | unendorsed | fail
   deriving DecidableEq, Repr
 
-/-- The frozen inputs of one crossing (see module docs). -/
+/-- The source, receiver, evidence, assignment, fallback, and released labels of one crossing. -/
 structure CrossInput (AgentId AttestationId CrossingId AssignmentDigest ContentHash : Type)
     where
   src            : AgentId
@@ -88,16 +48,15 @@ structure CrossInput (AgentId AttestationId CrossingId AssignmentDigest ContentH
   t_integ        : IntegLevel
   /-- Assignment: most-public target confidentiality; `some` iff the contract declassifies. -/
   t_conf         : Option ConfLevel
-  /-- Assignment digest — the grant key. -/
+  /-- Assignment digest; the grant key. -/
   assignment     : AssignmentDigest
   evidence       : Option (ConformanceAttestation AgentId AttestationId AssignmentDigest
     ContentHash)
   released_conf  : ConfLevel
   released_integ : IntegLevel
 
-/-- The transparent branch-selection predicate (§12.1): branch 1 is available iff the
-evidence is present, positive, unconsumed and scope-exact, AND the receiver holds a grant
-for the exact assignment with uses remaining. -/
+/-- `endorsedOK` holds exactly when evidence is positive, fresh, scope-matching, and paired
+with a receiver grant for the exact assignment that has a remaining use. -/
 def endorsedOK
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -107,7 +66,7 @@ def endorsedOK
     ∧ e.descriptor = q.descriptor ∧ e.assignment = q.assignment)
   ∧ (∃ g, s.crossing_grants q.rcv q.assignment = some g ∧ 0 < g.remaining)
 
-/-- The receiver-side holds, per branch (module docs). `fail` moves no labels. -/
+/-- Holds that protect receiver pending records for each label-releasing branch. -/
 def crossHolds
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -125,31 +84,29 @@ kav_action cross_output
     (branch : CrossBranch) (dispo : Disposition) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  -- `src = rcv` is deliberately not excluded: the no-in-flight-source guard then empties
-  -- the receiver's pending set, every hold is vacuous, and min-semantics keeps the label
-  -- insertions monotone-safe.
+ -- `src = rcv` is deliberately not excluded: the no-in-flight-source guard then empties
+ -- the receiver's pending set, every hold is vacuous, and min-semantics keeps the label
+ -- insertions monotone-safe.
   require s.agent_active q.src
   require s.agent_active q.rcv
-  -- The carried V3 `return_endorsed` guard: a source with in-flight invocations has
-  -- undetermined worst-case labels.
+ -- A source with pending work has speculative labels, so it cannot cross output.
   require ∀ (I : InvocationId)
       (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
       s.pending I = some J → J.agent ≠ q.src
-  -- Crossing-id freshness (E16); consumed on every arm, never returned.
+ -- A crossing identifier is consumed exactly once, regardless of branch.
   require ¬ s.consumed_crossings q.crossing
-  -- Branch selection: a total complementary partition over (endorsedOK, declared fallback).
+ -- Branch selection: a total complementary partition over (endorsedOK, declared fallback).
   require branch = CrossBranch.endorsed → endorsedOK s q
   require branch = CrossBranch.unendorsed →
     ¬ endorsedOK s q ∧ q.fallback = Fallback.release_unendorsed
   require branch = CrossBranch.fail → ¬ endorsedOK s q ∧ q.fallback = Fallback.fail
-  -- Release bounds (T-6): endorsement bounded by the exact assignment; no downward
-  -- confidentiality step without a declassifying contract.
+ -- Endorsement obeys the frozen integrity and optional confidentiality bounds.
   require branch = CrossBranch.endorsed → le_integ q.released_integ q.t_integ
   require branch = CrossBranch.endorsed →
     ∀ (c : ConfLevel), q.t_conf = some c → le_conf q.released_conf c
   require branch = CrossBranch.endorsed → q.t_conf = none →
     ∀ (L : ConfLevel), s.taint_levels q.src L → le_conf L q.released_conf
-  -- Receiver-side enforcement (E18/E19/E20).
+ -- Permitted releases satisfy receiver holds; monitor bypasses demote receiver records.
   require dispo ≠ Disposition.blocked
   require dispo = Disposition.permitted → crossHolds s q branch
   require dispo = Disposition.monitor_bypassed →
@@ -172,11 +129,11 @@ kav_action cross_output
   pending :=
     if dispo = Disposition.monitor_bypassed then demoteAllOf s.pending q.rcv else s.pending
 
-/-! ## Non-vacuity (E12) -/
+/-! ## Non-vacuity -/
 
 open Classical in
 /-- The trichotomy is total: some branch always satisfies the selection guards. Mutual
-exclusivity is by construction — `endorsedOK` vs `¬ endorsedOK`, and the two fallback
+exclusivity is by construction; `endorsedOK` vs `¬ endorsedOK`, and the two fallback
 values are distinct constructors. -/
 theorem cross_branch_total
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
@@ -194,7 +151,7 @@ theorem cross_branch_total
     | fail => exact ⟨CrossBranch.fail, by simp, by simp, fun _ => ⟨h, rfl⟩⟩
 
 /-- The three selection guards are pairwise disjoint, so with `cross_branch_total` exactly
-one branch fires per invocation (the acceptance criterion, proved rather than asserted). -/
+one branch fires per invocation. -/
 theorem cross_branch_exclusive
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -209,7 +166,7 @@ theorem cross_branch_exclusive
 
 open Classical in
 /-- Some disposition always satisfies the enforcement clauses, provided the holds pass or
-the mode is `monitor` — the same shape as `ingest_disposition_total`. -/
+the mode is `monitor`; the same shape as `ingest_disposition_total`. -/
 theorem cross_disposition_total
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)

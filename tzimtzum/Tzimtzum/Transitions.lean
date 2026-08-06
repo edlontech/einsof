@@ -2,12 +2,11 @@ import Tzimtzum.Soundness
 import Tzimtzum.GrantConservation
 
 /-!
-# Task 11 — named per-transition theorems (T-3–T-6, T-8–T-10)
+# Per-transition safety theorems
 
-These properties live outside `allInv`: they relate a pre-state to a post-state rather than
-classifying one state. Lifecycle monotonicity is stated for agents active on both sides of
-the transition, exactly capturing the `delegate` initialization and `revoke` clearing
-exceptions without exposing action parameters from the closed transition system.
+These theorems relate pre-states and post-states rather than classifying one state. They prove
+surviving-agent label monotonicity, identifier-history persistence, crossing update bounds,
+pending-gate stability, and quarantine settlement requirements.
 -/
 
 set_option maxHeartbeats 8000000
@@ -212,7 +211,7 @@ private theorem transition_label_monotonicity :
     obtain ⟨q, branch, dispo, -, hn'⟩ := hn
     exact labels_cross_output q branch dispo s s' hn'
 
-/-- **T-3 integrity monotonicity.** Every old integrity observation remains for agents that
+/-- **integrity monotonicity.** Every old integrity observation remains for agents that
 survive any registered transition. Adding observations can only lower effective trust. -/
 theorem integrity_monotonicity :
     ∀ na ∈ ksystem.actions, ∀ s s' : KSt,
@@ -222,8 +221,8 @@ theorem integrity_monotonicity :
 
 #print axioms integrity_monotonicity
 
-/-- **T-4 confidentiality no-descent.** Every old taint observation remains for agents that
-survive any registered transition. Data-label declassification is isolated in T-6. -/
+/-- **confidentiality no-descent.** Every old taint observation remains for agents that
+survive any registered transition. -/
 theorem confidentiality_no_descent :
     ∀ na ∈ ksystem.actions, ∀ s s' : KSt,
       na.2.guard s → na.2.next s s' → survivingConfMonotone s s' := by
@@ -232,7 +231,7 @@ theorem confidentiality_no_descent :
 
 #print axioms confidentiality_no_descent
 
-/-- **T-5 inspection non-restoration.** Challenge resolution frames both label dimensions
+/-- **inspection non-restoration.** Challenge resolution frames both label dimensions
 and no use of its attestation id can appear on a different invocation. -/
 theorem inspection_non_restoration (inv : KInv) (sc : KChallengeScope)
     (att : InspectionAttestation KInv KChallenge KAttest KPolicy KContentHash) (admit : Bool)
@@ -261,7 +260,7 @@ theorem inspection_non_restoration (inv : KInv) (sc : KChallengeScope)
 
 #print axioms inspection_non_restoration
 
-/-- **T-6 crossing frame and bound (E25).** The exact receiver-label, pending-demotion,
+/-- **crossing frame and bound.** The exact receiver-label, pending-demotion,
 history and grant updates are exposed together with all endorsed release bounds. -/
 theorem crossing_frame_and_bound
     (q : CrossInput KAgent KAttest KCrossing KAssignment KContentHash)
@@ -320,7 +319,7 @@ theorem crossing_frame_and_bound
 
 #print axioms crossing_frame_and_bound
 
-/-- **T-8 permit stability — ingestion.** Both pending-gate bundles survive every branch;
+/-- **permit stability; ingestion.** Both pending-gate bundles survive every branch;
 monitor bypass does so by demoting affected records rather than retaining false claims. -/
 theorem permit_stability_ingest (a : KAgent) (src : Option KAgent) (pconf : ConfLevel)
     (pinteg : IntegLevel) (dispo : Disposition) (s s' : KSt)
@@ -331,7 +330,7 @@ theorem permit_stability_ingest (a : KAgent) (src : Option KAgent) (pconf : Conf
 
 #print axioms permit_stability_ingest
 
-/-- **T-8 permit stability — settlement.** Frozen pairwise checks make free absorption safe;
+/-- **permit stability; settlement.** Frozen pairwise checks make free absorption safe;
 non-contained settlement demotes siblings instead of invalidating their claimed gates. -/
 theorem permit_stability_settlement (inv : KInv) (a : KAgent) (dispo : Disposition)
     (outcome : Outcome) (clvl : ConfLevel) (ilvl : IntegLevel)
@@ -345,7 +344,7 @@ theorem permit_stability_settlement (inv : KInv) (a : KAgent) (dispo : Dispositi
 
 #print axioms permit_stability_settlement
 
-/-- **T-8 permit stability — crossing.** Receiver-side holds or monitor demotion preserve
+/-- **permit stability; crossing.** Receiver-side holds or monitor demotion preserve
 all retained pending and pairwise gate claims. -/
 theorem permit_stability_crossing
     (q : CrossInput KAgent KAttest KCrossing KAssignment KContentHash)
@@ -423,7 +422,7 @@ private theorem consumed_ids_action_monotone :
     obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
     exact consumed_ids_frame s s' hids
 
-/-- **T-9 freshness subsumption, persistence half.** Invocation-id history is monotone
+/-- **freshness subsumption, persistence half.** Invocation-id history is monotone
 across every registered action, including revocation and re-delegation. -/
 theorem consumed_ids_monotone :
     ∀ na ∈ ksystem.actions, ∀ s s' : KSt,
@@ -433,7 +432,7 @@ theorem consumed_ids_monotone :
 
 #print axioms consumed_ids_monotone
 
-/-- **T-9 freshness subsumption, burn half.** Beginning requires a never-used id and burns
+/-- **freshness subsumption, burn half.** Beginning requires a never-used id and burns
 it on every verdict branch, so persistence rules out any later replay. -/
 theorem invocation_freshness_subsumption (a : KAgent) (inv : KInv) (chal : KChallenge)
     (snap : KSnapshot) (egr : KEgress → Prop) (ah : KContentHash) (authorized : Prop)
@@ -450,7 +449,7 @@ theorem invocation_freshness_subsumption (a : KAgent) (inv : KInv) (chal : KChal
 
 #print axioms invocation_freshness_subsumption
 
-/-- **T-10 quarantine resolution safety.** A quarantined record can settle only through a
+/-- **quarantine resolution safety.** A quarantined record can settle only through a
 fresh attestation scoped to this invocation and outcome, and that exact id is consumed. -/
 theorem quarantine_resolution_safety (inv : KInv) (a : KAgent) (dispo : Disposition)
     (outcome : Outcome) (clvl : ConfLevel) (ilvl : IntegLevel)
@@ -473,7 +472,7 @@ theorem quarantine_resolution_safety (inv : KInv) (a : KAgent) (dispo : Disposit
 
 #print axioms quarantine_resolution_safety
 
-/-- **T-10 quarantine participation.** The flag never removes a pending record from the
+/-- **quarantine participation.** The flag never removes a pending record from the
 unrestricted speculative sets; when contained, it also participates in clearance and both
 self-pair gate obligations. -/
 theorem quarantine_participates (s : KSt) (inv : KInv) (J : KPending)

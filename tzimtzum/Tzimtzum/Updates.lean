@@ -1,23 +1,11 @@
 import Tzimtzum.State
 
 /-!
-# TzimtzumV4 — shared point-update helpers
+# TzimtzumV4 update helpers
 
-`pending` and `challenges` are keyed by invocation but *owned* by an agent, so an
-agent-scoped edit is an `Option`-filtering traversal rather than V3's pointwise conjunction
-on a curried relation. These helpers are shared by every action that performs one, so the
-actions cannot drift, and they are the exact shape the Rust `VecMap` retain/update loops
-refine to (explicit index loop, no closure, no early `return`).
-
-Each helper ships directed `@[simp]` characterization lemmas. Without them the discharge
-cascade cannot see through the `Classical.propDecidable` instance on the `ite` — `grind`
-stalls on it rather than splitting — and roughly ten conjuncts across five actions would
-re-derive the same case analysis per goal.
-
-The `ite` conditions here are all *small*: a single equality on an opaque sort or on a
-three-constructor inductive. Architecture E8's blow-up is about `ite` over a large `Prop`
-(the nine-check gate), whose decidability instance the cascade must `whnf` at every step;
-that hazard does not apply to these.
+These helpers remove agent-owned pending records, challenges, and grants; demote pending records;
+settle one invocation; and decrement one crossing grant. Their characterization lemmas expose the
+pointwise effects needed by preservation proofs.
 -/
 
 namespace Tzimtzum
@@ -122,11 +110,11 @@ noncomputable def dropGrantsOf (g : AgentId → AssignmentDigest → Option Cros
 
 /-! ## Demotion
 
-A pending record whose gates the environment has broken under it — a monitor-mode
+A pending record whose gates the environment has broken under it; a monitor-mode
 ingestion, or a settlement that launders a bypassed record's provenance into the agent's
-held labels — stops being *claimed* gated. `contained` is exactly that claim, so the honest
+held labels; stops being *claimed* gated. `contained` is exactly that claim, so the honest
 edit is to demote the agent's live permits to `monitor_bypassed` rather than to weaken the
-confinement conjuncts (E18). `admission` is deliberately left alone: it records how the
+confinement conjuncts. `admission` is deliberately left alone: it records how the
 invocation was *admitted*, which is history and does not change. Only `bypass_mode_sound`'s
 second clause reads `admission`, and demotion never sets it to `bypassed`. -/
 
@@ -146,7 +134,7 @@ noncomputable def demoteAllOf
 
 /-- The firing form: the LHS is `demoteAllOf p a I = some K` with `K` in head position, so
 `simp` can match it against an opaque `s.pending`. The directed lemmas below are the
-convenient form once the pre-record is known, but they must NOT be `@[simp]` — their `J`
+convenient form once the pre-record is known, but they must NOT be `@[simp]`; their `J`
 occurs only in hypotheses, so `simp` would have to solve `p I = some ?J` with `?J`
 unassigned and would silently never fire. -/
 @[simp] theorem demoteAllOf_eq_some

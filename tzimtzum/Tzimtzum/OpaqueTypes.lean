@@ -1,22 +1,11 @@
 import Tzimtzum.State
 
 /-!
-# Shared opaque sort aliases for the TzimtzumV4 check modules
+# Opaque sort aliases for verification modules
 
-Every `Check*.lean` monomorphises the parametric state at the same opaque sorts and the
-corresponding `KSt` abbreviation. Defined once here so each check module can import it
-rather than re-declaring them (which conflicts when several check modules are co-imported
-in the aggregator or in `Audit.lean`).
-
-The sorts stay **type parameters** on `St` rather than being declared opaque globally: the
-Aeneas/Charon-extracted refinement (`argus/formal-lean/`) lives over concrete
-`String`-backed id types and instantiates the sort-polymorphic soundness bundle at *its*
-sorts. Monomorphising at `KSt` is just one instantiation, the one the `#kav_check` audit
-prints axioms for.
-
-Two V3 sorts are gone — `KIssuer` with the retired issuer relations (architecture §9) and
-`KInstr` with `load_instruction` — and six are new: challenges, attestations, crossings,
-assignment digests, policy digests, and content hashes.
+The `K*` types instantiate the polymorphic state with opaque identifiers for closed-system
+verification. `KSt`, `KSnapshot`, `KPending`, and `KChallengeScope` are abbreviations at that
+instantiation; the generic soundness theorems apply to any choice of sort parameters.
 -/
 
 namespace Tzimtzum

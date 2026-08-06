@@ -1,11 +1,11 @@
 import Tzimtzum.Soundness.Common
 
 /-!
-# Task 11 — crossing-grant conservation (T-7)
+# Crossing-grant conservation
 
-`grant_crossing` is the sole faucet. Every other registered action leaves each grant's
-remaining uses unchanged, deletes a grant, or (for endorsed `cross_output`) decrements it.
-Absent grants read as zero, so deletion is naturally non-increasing.
+`grant_crossing` is the only registered action that can increase remaining crossing uses. Every
+other registered action preserves, deletes, or decrements each grant, so remaining uses are
+pointwise non-increasing outside that provisioning action.
 -/
 
 set_option maxHeartbeats 8000000
@@ -134,7 +134,7 @@ private theorem grant_noninc_cross_output
   · simp only [if_neg hb]
     exact Nat.le_refl _
 
-/-- **T-7 grant non-increase.** Every registered action except the root-only
+/-- **grant non-increase.** Every registered action except the root-only
 `grant_crossing` faucet is pointwise non-increasing in remaining uses. -/
 theorem grant_conservation :
     ∀ na ∈ ksystem.actions, na.1 ≠ "grant_crossing" →

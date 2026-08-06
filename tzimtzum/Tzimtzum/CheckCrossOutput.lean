@@ -1,12 +1,10 @@
 import Tzimtzum.Soundness.Common
 
 /-!
-# Task 10 — `cross_output` preserves the bundle
+# `cross_output` invariant preservation
 
-The crossing update combines three branch shapes with optional receiver demotion. Broad
-cascades saturate on the semantic confinement VCs, so this module keeps the framed VCs on
-the shared cascades and proves the label/pending/grant obligations through small preimage
-and branch arguments, following `CheckIngest`.
+The crossing update has three branches and may demote the receiver. This module proves the
+label, pending, and grant obligations by explicit preimage and branch arguments.
 -/
 
 set_option maxHeartbeats 8000000
@@ -443,7 +441,7 @@ theorem presC_cross_output
   · intro A D g1 g2 h1 h2
     exact Option.some.inj (h1.symm.trans h2)
 
-/-- The full-bundle preservation lemma consumed by Tasks 11+ and the soundness assembly. -/
+/-- Combines preservation of all invariant sub-bundles. -/
 theorem pres_cross_output
     (q : CrossInput AgentId AttestationId CrossingId AssignmentDigest ContentHash)
     (branch : CrossBranch) (dispo : Disposition)

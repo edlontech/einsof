@@ -14,10 +14,11 @@ import Tzimtzum.CheckBeginInvocation
 import Tzimtzum.CheckCrossOutput
 
 /-!
-# TzimtzumV4 — soundness aggregator (Tasks 7–10)
+# TzimtzumV4 soundness
 
-Init VCs plus full-bundle preservation for all twelve actions, assembled through
-`Kav.reachable_sound` as `kav_sound` and its sort-polymorphic counterpart `kav_soundP`.
+This module combines initial-state establishment and preservation of every registered action.
+`kav_sound` proves the invariant bundle for reachable opaque-sort states, and `kav_soundP` proves
+the same result for arbitrary sort parameters.
 -/
 
 namespace Tzimtzum

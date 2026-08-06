@@ -2,23 +2,10 @@ import Tzimtzum.Invariants
 import Kav.Core
 
 /-!
-# TzimtzumV4 — the destructured invariant bundle
+# TzimtzumV4 invariant bundle
 
-The five named sub-bundles of [[2026-07-24-tzimtzum-v4/architecture|architecture]] §8,
-joined by a *definitional* conjunction lemma (`allInv_iff` is `Iff.rfl`), exactly as the
-Task 0 spike recorded: per-action checks discharge sub-bundles (and, for the expensive
-ones, single conjuncts) independently and reassemble for free. The monolithic V3 26-conjunct
-`allInv` was already at the cascade's saturation edge; destructuring is designed in from
-day one.
-
-Count: S 9 + P 12 + P′ 2 + E 6 + C 3 = **32 conjuncts**. The §8 candidate list said ~31;
-the delta is `challenges_enforce_only`, added by E23 (challenges are enforce-only, which is
-what makes `authorize_inspected`'s monitor arm dead code rather than missing code). Every
-other deviation from the candidate list is a *statement* amendment recorded in §14
-(E10 clearance reads the contained speculative set, E11 `bypass_mode_sound` over
-`¬ contained`, E14 `challenge_unique` restated as map functionality under invocation
-keying, E15 `grant_bounded` against the per-grant provisioned bound, E22 pairwise vouch on
-the constrained party), not an addition or deletion.
+`allInv` is the conjunction of structural, pending, pairwise, evidence, and crossing invariant
+sub-bundles. The named lists expose the same predicates to action-preservation checks.
 -/
 
 namespace Tzimtzum
@@ -26,7 +13,7 @@ namespace Tzimtzum
 variable {AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
   CrossingId AssignmentDigest PolicyDigest ContentHash : Type}
 
-/-- S — structural (9). -/
+/-- Structural invariants. -/
 def invS
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -34,7 +21,7 @@ def invS
   ∧ root_no_parent s ∧ capability_subsumption s ∧ root_all_caps s ∧ revocation_clean s
   ∧ pending_active s
 
-/-- P — pending / gates (12). -/
+/-- Pending and gate invariants. -/
 def invP
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -43,20 +30,20 @@ def invP
   ∧ flow_confinement s ∧ flow_confinement_weak s
   ∧ integrity_confinement s ∧ integrity_confinement_weak s ∧ clearance_confinement s
 
-/-- P′ — pairwise (2). -/
+/-- Pairwise invariants. -/
 def invPP
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
   pending_flow_compat s ∧ pending_integ_compat s
 
-/-- E — evidence (6). -/
+/-- Evidence invariants. -/
 def invE
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
   challenge_scoped s ∧ challenges_enforce_only s ∧ challenge_unique s
   ∧ inspected_evidence_consumed s ∧ bypass_mode_sound s ∧ quarantine_pending s
 
-/-- C — crossing (3). -/
+/-- Crossing invariants. -/
 def invC
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -68,7 +55,7 @@ def allInv
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
   invS s ∧ invP s ∧ invPP s ∧ invE s ∧ invC s
 
-/-- The conjunction lemma composing the sub-bundles — definitional, so per-action checks
+/-- The conjunction lemma composing the sub-bundles; definitional, so per-action checks
 reassemble without glue. -/
 theorem allInv_iff
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
@@ -78,9 +65,8 @@ theorem allInv_iff
 
 /-! ## Named lists, one per sub-bundle
 
-For `#kav_check_action` triage during Tasks 7–10 (small groups only — the command shares
-one heartbeat budget across a whole invocation, so grouped VCs starve; the per-conjunct
-`all_goals_fresh` theorems are what carries the record). -/
+The lists expose small invariant groups to action-preservation checks. Each proof goal receives
+its own heartbeat budget through `all_goals_fresh`. -/
 
 def invariantsS :
     List (Kav.Invariant

@@ -2,67 +2,14 @@ import Tzimtzum.Updates
 import Kav.Action
 
 /-!
-# TzimtzumV4 — `begin_invocation` and `authorize_inspected`
+# TzimtzumV4 invocation admission and inspection resolution
 
-The invoke gate and its asynchronous inspection resolution
-([[2026-07-24-tzimtzum-v4/architecture|architecture]] §6.2–6.3 as amended by E8, E9, E13,
-E14, E19, E22, E23). Definitions only — proofs are Task 9 (`begin`) and Task 8
-(`authorize`).
-
-## The gate, shared by both actions
-
-Nine checks over a frozen snapshot and live state. Two predicates, not a `Verdict`-valued
-function (E8): `beginAllow` (every conjunct on its strict ALLOW arm) and `beginAdmissible`
-(ALLOW-or-INSPECT). `inspection_required` is exactly `admissible ∧ ¬ allow`; `deny` is
-`¬ admissible`; the two are a total complementary partition (`beginAllow_admissible`),
-which is also the branch structure the Rust refinement dispatches on (§13).
-
-**Vouch keying (E22).** The inspect arms of the pairwise checks 3b/5b require the *pending*
-party's vouch — `allows ∨ (inspects ∧ vouched J)` — because the pairwise invariant is keyed
-on the constrained party and an already-admitted unvouched record can never be retroactively
-inspected (E2). The newcomer-constrained arms 3a/3c/5a/5c carry no vouch term: acquiring
-that vouch is exactly what the challenge does, and the admission it produces
-(`inspected att`) is what discharges the invariant's arm. Consequence: an inspect-band pair
-against an unvouched pending record is a **deny** at begin, not a challenge — no later
-attestation could make it lawful.
-
-**The gate reads unrestricted speculative state (E10).** Monitor-bypassed records really
-run, so they really constrain the next decision; only the *invariant* filters to contained
-records.
-
-## Effects by (verdict, mode) — E1(b) + E23
-
-| verdict | `enforce` | `monitor` |
-| --- | --- | --- |
-| `allow` | pend `plain`/`permitted` | pend `plain`/`permitted` |
-| `inspection_required` | create challenge, pend **nothing** | pend `bypassed` |
-| `deny` | **not a transition** | pend `bypassed` |
-
-A challenge is a *blocking* construct and monitor mode never blocks, so challenges are
-enforce-only (E23); an unresolved enforce-mode challenge has produced no effect and ingested
-nothing, so it pends nothing (E1(b)) and every quantifier over `pending` keeps meaning "may
-actually execute". `inv` is consumed into `consumed_ids` on every arm that is a transition.
-
-## `authorize_inspected` re-evaluates the gate against live state (E13)
-
-Scope equality is necessary but nothing like sufficient: P, P′ and `clearance_confinement`
-are statements about the *current* state, which may have moved between challenge and
-resolution — new pending records, new taint, revocations. So resolution re-runs the
-admissible gate (the newcomer's vouch is the admission being granted; the pending-party
-arms of 3b/5b are re-checked per E22) and **can deny a positively attested invocation**.
-The structural conjuncts (`agent_active`, `tool_registered`, narrowing, coverage,
-snapshot coherence, `pending inv = none`) are re-required rather than derived from
-`challenge_scoped`, fail-closed: the action does not lean on the bundle for its own safety.
-
-Under monitor mode this action is dead code — no challenge is ever created there (E23), so
-the `∃`-guard is unsatisfiable; §6.3's monitor arm is deleted rather than modelled.
-
-One deliberate deviation from §6.3: a **scope-mismatched** attestation is a boundary
-rejection (guard failure — no transition), not a challenge-closing deny. Burning the
-challenge on a mismatch would let one garbage attestation kill a legitimate pending
-inspection; the challenge stays open for the correct attestation, and operator recourse for
-a wedged challenge is `revoke` (which resolves it fail-closed). A scope-*matching* negative
-attestation does close the challenge, consuming the attestation.
+`begin_invocation` classifies capability, authorization, clearance, flow, and integrity checks as
+`allow`, `inspection_required`, or `deny`. The guard ties the supplied verdict to those checks.
+An enforce-mode inspection requirement creates a challenge without a pending record; monitor mode
+records a bypassed pending invocation. `authorize_inspected` consumes a scope-matching attestation,
+rechecks admission against the current state, and creates a permitted pending record only when the
+attestation is positive and the live gate admits it.
 -/
 
 namespace Tzimtzum
@@ -77,7 +24,7 @@ structure InspectionAttestation (InvocationId ChallengeId AttestationId PolicyDi
   id            : AttestationId
   /-- Scope: the invocation whose challenge this resolves. -/
   inv           : InvocationId
-  /-- Scope: the challenge it answers (attribution — the map is keyed by `inv`, E14). -/
+  /-- Challenge identifier; the challenge map is keyed by `inv`. -/
   challenge     : ChallengeId
   /-- Scope: unchanged arguments. -/
   args_hash     : ContentHash
@@ -88,17 +35,15 @@ structure InspectionAttestation (InvocationId ChallengeId AttestationId PolicyDi
 
 /-! ## The nine checks -/
 
-/-- CHECK 1 — capability. Two-valued: no inspect band on capabilities. -/
+/-- Capability check. Capabilities have only allow or deny outcomes. -/
 def checkCapability
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
     (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) : Prop :=
   ∀ (C : CapKind), snap.required_caps C → s.agent_cap a C
 
-/-- CHECK 2a/2b/2c — confidentiality clearance (E9). Two-valued. 2a reads the
-*unrestricted* speculative taint (E10); 2b/2c are what make `clearance_confinement`
-inductive — the new `output_conf` joins the agent's speculative taint post-state, so it
-must clear every pending record's frozen clearance and its own. -/
+/-- Clearance check for the current speculative taint and for the new output provenance.
+The new output must clear both each existing pending record and its own snapshot ceiling. -/
 def checkClearance
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -123,9 +68,8 @@ def checkFlowStrict
       s.pending I = some J → J.agent = a → J.egress E → s.flow_allows snap.output_conf E)
   ∧ (∀ (E : EgressKind), egr E → s.flow_allows snap.output_conf E)
 
-/-- CHECK 3a/3b/3c on ALLOW-or-INSPECT. 3a/3c (newcomer-constrained) carry no vouch term —
-the challenge supplies it (E22). 3b (pending-party-constrained) requires the pending
-record's vouch: an unvouched pending record in an inspect-band pair is a deny. -/
+/-- Flow admissibility check. A pending record in the inspect band must already be vouched;
+the newcomer receives its vouch only through inspection resolution. -/
 def checkFlowAdmissible
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -154,7 +98,7 @@ def checkIntegStrict
       s.pending I = some J → J.agent = a → integ_allows snap.output_integ J.policy)
   ∧ integ_allows snap.output_integ snap
 
-/-- CHECK 5a/5b/5c on ALLOW-or-INSPECT, vouch keying as in `checkFlowAdmissible` (E22). -/
+/-- Integrity admissibility check with the same pending-record vouch rule as flow admission. -/
 def checkIntegAdmissible
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -167,8 +111,7 @@ def checkIntegAdmissible
         ∨ (integ_inspects snap.output_integ J.policy ∧ vouched J))
   ∧ (integ_allows snap.output_integ snap ∨ integ_inspects snap.output_integ snap)
 
-/-- Verdict `allow`: every check on its strict ALLOW arm. CHECK 4 is the `authorized`
-conjunct — the per-invocation authorizer verdict, two-valued. -/
+/-- Strict admission: capabilities, authorization, clearance, flow, and integrity all allow. -/
 def beginAllow
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -204,10 +147,8 @@ theorem beginAllow_admissible
 
 /-! ## `begin_invocation`
 
-Parameters: the acting agent, the fresh invocation id, the challenge attribution id, the
-frozen snapshot, the attested egress set, the arguments hash, the authorizer verdict, and
-the computed canonical `Verdict` (E8) — related to the checks by guard, so it is canonical
-rather than a free choice. -/
+The parameters include the requested verdict. Guard clauses require it to match the computed
+checks, so update selection cannot choose a different result. -/
 
 open Classical in
 kav_action begin_invocation (a : AgentId) (inv : InvocationId) (chal : ChallengeId)
@@ -218,30 +159,23 @@ kav_action begin_invocation (a : AgentId) (inv : InvocationId) (chal : Challenge
   require s.agent_active a
   require a ≠ s.root_agent
   require s.tool_registered snap.tool
-  -- Snapshot coherence: an incoherent band is a boundary rejection, never a kernel branch.
+ -- Snapshot coherence: an incoherent band is a boundary rejection, never a kernel branch.
   require le_integ snap.integ_inspect snap.integ_floor
-  -- Freshness (T-9): `pending` + `consumed_ids` replace V3's `invocation_used`.
+ -- The invocation slot, consumed identifier history, and challenge slot must all be fresh.
   require s.pending inv = none
   require ¬ s.consumed_ids inv
   require s.challenges inv = none
-  -- Narrowing.
+ -- Narrowing.
   require ∀ (E : EgressKind), egr E → snap.declared_egress E
-  -- Coverage: an egress-bearing action cannot be admitted on an empty attestation.
+ -- Coverage: an egress-bearing action cannot be admitted on an empty attestation.
   require (∃ (E : EgressKind), snap.declared_egress E) → (∃ (E : EgressKind), egr E)
-  -- Verdict correctness (the worst-of-classification rule, E8).
+ -- Each verdict must agree with the admission predicates; denial can transition only in monitor mode.
   require v = Verdict.allow → beginAllow s a snap egr authorized
   require v = Verdict.inspection_required →
     beginAdmissible s a snap egr authorized ∧ ¬ beginAllow s a snap egr authorized
   require v = Verdict.deny → ¬ beginAdmissible s a snap egr authorized
-  -- An enforce-mode hard deny is not a transition; a monitor-mode one is (and pends).
   require v = Verdict.deny → s.mode = Mode.monitor
-  -- The (verdict, mode) dispatch is a `match` on two small inductives, NOT nested `ite`s:
-  -- an `ite` condition like `v = inspection_required ∧ s.mode = enforce` carries a
-  -- `Classical.propDecidable` instance over an `And` with a state projection, and the
-  -- discharge cascade `whnf`s that instance at every congruence step — measured at Task 7
-  -- as the difference between a 3 s discharge and an 8M-heartbeat timeout (the same
-  -- failure class as E8, one level down). A constructor `match` needs no `Decidable` at
-  -- all and `grind` splits it natively.
+ -- Match on verdict and mode constructors so each update branch has a direct case split.
   pending := fun I =>
     if I = inv then
       (match v, s.mode with
@@ -249,10 +183,10 @@ kav_action begin_invocation (a : AgentId) (inv : InvocationId) (chal : Challenge
           some { agent := a, policy := snap, egress := egr, admission := Admission.plain,
                  disposition := Disposition.permitted, authorized := authorized,
                  quarantined := False }
-        -- E1(b): an unresolved enforce-mode challenge pends nothing.
+       -- An unresolved enforce-mode challenge creates no pending record.
         | Verdict.inspection_required, Mode.enforce => none
-        -- Monitor-mode inspection_required or deny (E23): the effect really runs, so it
-        -- really constrains. The canonical verdict stays in the event.
+       -- Monitor-mode non-allow outcomes remain pending as bypassed records so they constrain
+       -- later admissions.
         | Verdict.inspection_required, Mode.monitor =>
           some { agent := a, policy := snap, egress := egr, admission := Admission.bypassed,
                  disposition := Disposition.monitor_bypassed, authorized := authorized,
@@ -270,16 +204,14 @@ kav_action begin_invocation (a : AgentId) (inv : InvocationId) (chal : Challenge
                  args_hash := ah, authorized := authorized }
         | _, _ => s.challenges I)
     else s.challenges I
-  -- Consumed on every arm that is a transition: freshness and `challenge_unique` both
-  -- lean on it.
+ -- Consumed on every arm that is a transition: freshness and `challenge_unique` both
+ -- lean on it.
   consumed_ids := fun I => s.consumed_ids I ∨ I = inv
 
 /-! ## `authorize_inspected` -/
 
-/-- The full live admission condition for challenge resolution (E13): the structural
-re-checks, fail-closed, then the admissible gate. One named predicate so the admit and deny
-guards are exact complements — anything less and the branch decision stops being canonical
-(a state could satisfy neither guard, or the adapter could pick). -/
+/-- Live challenge-resolution admission: structural conditions and the current admissible gate.
+The positive and negative branches use complementary conditions. -/
 def authorizeAdmits
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
@@ -295,9 +227,8 @@ def authorizeAdmits
   ∧ ((∃ (E : EgressKind), sc.policy.declared_egress E) → (∃ (E : EgressKind), sc.egress E))
   ∧ beginAdmissible s sc.agent sc.policy sc.egress sc.authorized
 
-/-! The scope is a *parameter* pinned to the challenge map by guard (E19), so the update
-expressions can read it. `admit` is the branch decision, related to the attestation verdict
-and the live gate by guard — canonical, not a free choice. -/
+/-! `sc` is checked against the stored challenge before updates read it. `admit` is constrained
+by the attestation verdict and the live admission predicate. -/
 
 open Classical in
 kav_action authorize_inspected (inv : InvocationId)
@@ -308,25 +239,20 @@ kav_action authorize_inspected (inv : InvocationId)
     (admit : Bool) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  -- The challenge exists and `sc` is it (E14: keyed by invocation).
+ -- The challenge map contains exactly this scope at the invocation key.
   require s.challenges inv = some sc
-  -- Exact scope equality: invocation, challenge attribution, arguments, policy.
+ -- Exact scope equality: invocation, challenge attribution, arguments, policy.
   require att.inv = inv
   require att.challenge = sc.challenge
   require att.args_hash = sc.args_hash
   require att.policy_digest = sc.policy.policy_digest
-  -- One-use.
+ -- One-use.
   require ¬ s.consumed_attestations att.id
-  -- Freshness history (both arms): the new pending record must satisfy
-  -- `pending_ids_consumed`, and this action adds nothing to `consumed_ids` — `inv` was
-  -- consumed when the challenge was created. Re-required fail-closed rather than derived
-  -- from `challenge_scoped`, like every other structural conjunct here.
+ -- The invocation identifier was consumed when the challenge was created.
   require s.consumed_ids inv
-  -- Admission requires a positive verdict AND the live gate (E13): the newcomer's vouch is
-  -- the admission being granted, the pending-party arms re-check per E22. State may have
-  -- moved since the challenge was created; a positively attested invocation can be denied.
+ -- Admission needs both a positive attestation and current live admission.
   require admit = true → att.positive ∧ authorizeAdmits s inv sc
-  -- Denial is the exact complement, so the branch decision is canonical.
+ -- Denial is the complementary branch.
   require admit = false → ¬ att.positive ∨ ¬ authorizeAdmits s inv sc
   pending := fun I =>
     if I = inv ∧ admit = true then
@@ -335,11 +261,11 @@ kav_action authorize_inspected (inv : InvocationId)
              disposition := Disposition.permitted, authorized := sc.authorized,
              quarantined := False }
     else s.pending I
-  -- The challenge closes on both arms; T-5 frames every label for every agent.
+ -- Both branches close the challenge and leave labels unchanged.
   challenges := fun I => if I = inv then none else s.challenges I
   consumed_attestations := fun X => s.consumed_attestations X ∨ X = att.id
 
-/-! ## Non-vacuity (E12) -/
+/-! ## Non-vacuity -/
 
 open Classical in
 /-- Some canonical verdict always satisfies `begin_invocation`'s verdict clauses, provided

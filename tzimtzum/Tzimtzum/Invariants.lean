@@ -1,51 +1,12 @@
 import Tzimtzum.State
 
 /-!
-# TzimtzumV4 — safety properties and strengthening invariants
+# TzimtzumV4 invariants
 
-The conjuncts of [[2026-07-24-tzimtzum-v4/architecture|architecture]] §8 as amended
-(E10, E11, E14, E15, E20, E22, E23), adopting the Task 0 spike's five-sub-bundle split.
-Definitions only; the sub-bundles and conjunction lemma live in `Soundness/Bundle.lean`,
-and proving is Tasks 7–10.
-
-## Conventions (both load-bearing, both spike findings)
-
-1. **`contained J` gating.** Every conjunct that *claims a gate passed* is conditioned on
-   `contained J` (`disposition = permitted`). Monitor-bypassed records really run, so they
-   really constrain future decisions — they appear in `speculative_*` and in the fail-closed
-   gate quantifiers — but they cannot themselves be claimed gated. `bypass_mode_sound`
-   (stated over `¬ contained`, E11, so `blocked` cannot slip through unconstrained) confines
-   them to `mode = monitor`, which makes the enforce-mode reading full strength.
-2. **Vouch keying (E22).** The pairwise inspect arms name the *constrained* party's vouch —
-   `vouched J2`, the record whose egress/floor is being crossed — not a disjunction. The
-   disjunction was not settlement-stable: when `J1` settles, its frozen `output_conf`
-   becomes held taint while `J2` still pends, and `flow_confinement` then demands
-   `vouched J2` specifically.
-
-## Deliberately encoding-trivial conjuncts
-
-`pending_unique`, `challenge_unique`, `quarantine_pending` and `grant_pinned` are true by
-the `Option`-map encodings. They are kept as *named* conjuncts because they are exactly the
-properties the Rust `VecMap` refinement (a `Vec` of pairs, where duplicate keys are
-representable) must actually prove — visible obligations at that boundary, free here.
-
-## Recorded non-obligation: `challenge_id_unique`
-
-Under E14 the challenge map is keyed by invocation and the `ChallengeId` is attribution
-inside the scope; nothing forces two open challenges to carry distinct ids. This is
-deliberate: scope match at resolution includes the invocation key, so no soundness property
-depends on id uniqueness, and T-11's one-to-one accounting keys on *attestation* ids
-(consumed one-use), not challenge ids. Challenge-id attribution quality is an event-log
-concern, not kernel state.
-
-## `grant_bounded` is not a finite meter
-
-Under E15's set-to-`n` provisioning, `remaining ≤ provisioned` is trivially true *at
-provisioning*; its content lives entirely in T-7 — no action other than `grant_crossing`
-ever raises `remaining` — which together with the decrement on each endorsed crossing gives
-the oracle-independent crossing ceiling between operator provisioning actions. It is kept in
-the bundle because T-11's per-grant accounting reads it, not because it plays V3's
-`budget_bounded` role.
+The invariants constrain the agent tree, pending admissions, pairwise pending compatibility,
+evidence consumption, and crossing grants. Gate-claiming invariants apply only to `contained`
+pending records. Monitor-bypassed records remain in unrestricted speculative state so later
+admissions account for effects that execute in monitor mode.
 -/
 
 namespace Tzimtzum
@@ -53,7 +14,7 @@ namespace Tzimtzum
 variable {AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
   CrossingId AssignmentDigest PolicyDigest ContentHash : Type}
 
-/-! ## S — structural -/
+/-! ## Structural invariants -/
 
 /-- **root_always_active**: the root agent can never be deactivated. -/
 def root_always_active
@@ -86,9 +47,8 @@ def root_no_parent
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
   ∀ (P : AgentId), ¬ s.agent_parent s.root_agent P
 
-/-- **capability_subsumption**: for any active parent-child pair, the child's capabilities
-are a subset of the parent's. The `agent_active P` hypothesis is load-bearing (`revoke`
-breaks the conjunct outright without it — the Task 2 review's constraint). -/
+/-- **capability_subsumption**: an active child can hold only capabilities held by its active
+parent. The active-parent premise excludes revoked parents whose capabilities were removed. -/
 def capability_subsumption
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -101,9 +61,8 @@ def root_all_caps
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
   ∀ (C : CapKind), s.agent_cap s.root_agent C
 
-/-- **revocation_clean** (widened per §7): inactive agents leave no residue — no labels, no
-pending invocations, no open challenges, no crossing grants. Consumed histories are *not*
-agent state and survive. -/
+/-- **revocation_clean**: inactive agents have no labels, pending records, open challenges,
+or crossing grants. Consumed identifier and attestation histories are not agent-owned state. -/
 def revocation_clean
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -127,9 +86,9 @@ def pending_active
     (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
     s.pending I = some J → s.agent_active J.agent
 
-/-! ## P — pending / gates -/
+/-! ## Pending and gate invariants -/
 
-/-- **pending_unique**: the pending map is functional. Encoding-trivial (module docs). -/
+/-- **pending_unique**: each invocation key maps to at most one pending record. -/
 def pending_unique
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -154,8 +113,7 @@ def root_no_pending
     (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
     s.pending I = some J → J.agent ≠ s.root_agent
 
-/-- **pending_ids_consumed**: freshness inductiveness — every pending id is in the
-never-cleared history (T-9's subsumption of V3's `invocation_used`). -/
+/-- **pending_ids_consumed**: every pending invocation identifier is in the consumed history. -/
 def pending_ids_consumed
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -173,11 +131,7 @@ def pending_egress_attested
       (∀ (E : EgressKind), J.egress E → J.policy.declared_egress E)
       ∧ ((∃ (E : EgressKind), J.policy.declared_egress E) → (∃ (E : EgressKind), J.egress E))
 
-/-- **pending_snapshot_coherent**: every admitted snapshot has a well-formed band. §8's
-"canonical labels" clause is deleted with justification: under the concrete
-`ConfLevel`/`IntegLevel` inductives every label value IS canonical — non-canonical label
-representations are unrepresentable, so the clause is content-free here (it existed for
-encodings where labels carry a normal form). -/
+/-- **pending_snapshot_coherent**: every pending snapshot has its inspect floor at or below its allow floor. -/
 def pending_snapshot_coherent
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -195,8 +149,8 @@ def default_deny
     s.pending I = some J → contained J →
       J.authorized ∧ (∀ (C : CapKind), J.policy.required_caps C → s.agent_cap J.agent C)
 
-/-- **flow_confinement**: a tainted agent's contained pending egress is permitted — ALLOW,
-or INSPECT with the pending party vouched. No override arm exists in V4. -/
+/-- **flow_confinement**: every held taint level of a contained invocation owner is allowed
+on its egress, or is in the inspect band with that invocation vouched. -/
 def flow_confinement
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -206,8 +160,8 @@ def flow_confinement
     s.taint_levels J.agent L → s.pending I = some J → contained J → J.egress E →
       s.flow_allows L E ∨ (s.flow_inspects L E ∧ vouched J)
 
-/-- **flow_confinement_weak**: oracle-independent — DENY-band pairs are structurally
-impossible regardless of inspector behaviour. -/
+/-- **flow_confinement_weak**: every held taint level of a contained invocation owner is in
+its egress allow or inspect band, independent of attestation availability. -/
 def flow_confinement_weak
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -217,9 +171,8 @@ def flow_confinement_weak
     s.taint_levels J.agent L → s.pending I = some J → contained J → J.egress E →
       s.flow_allows L E ∨ s.flow_inspects L E
 
-/-- **integrity_confinement** (headline): an agent holding integrity level `L` has no
-contained pending invocation whose frozen floor `L` fails to clear outside the vouched
-inspect band. -/
+/-- **integrity_confinement**: every held integrity level of a contained invocation owner
+clears its frozen floor, or is in its inspect band with that invocation vouched. -/
 def integrity_confinement
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -237,9 +190,8 @@ def integrity_confinement_weak
     s.integ_levels J.agent L → s.pending I = some J → contained J →
       integ_allows L J.policy ∨ integ_inspects L J.policy
 
-/-- **clearance_confinement** (new in V4, E9/E10/E20): no contained pending invocation
-while the agent's *contained* speculative taint exceeds the invocation's frozen clearance.
-The invariant reads the contained-filtered set; the gates read the unrestricted one. -/
+/-- **clearance_confinement**: every contained speculative taint level of a contained
+invocation owner clears that invocation's frozen confidentiality ceiling. -/
 def clearance_confinement
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -248,13 +200,11 @@ def clearance_confinement
     s.pending I = some J → contained J → speculative_taint_contained s J.agent L →
       clearance_admits L J.policy
 
-/-! ## P′ — pairwise -/
+/-! ## Pairwise invariants -/
 
-/-- **pending_flow_compat** (E22 keying): any two contained pending invocations of one
-agent — the self-pair and quarantined records included — are flow-compatible: `J1`'s frozen
-output clears `J2`'s attested egress, or the pair sits in the inspect band with the
-*constrained* party (`J2`, the egress-bearer) vouched. Why a durable permit is never
-invalidated by a later settlement. -/
+/-- **pending_flow_compat**: two contained records of one agent are compatible when the first
+record's output is allowed on the second record's egress, or the second record is vouched in the
+inspect band. -/
 def pending_flow_compat
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -266,8 +216,9 @@ def pending_flow_compat
       s.flow_allows J1.policy.output_conf E
       ∨ (s.flow_inspects J1.policy.output_conf E ∧ vouched J2)
 
-/-- **pending_integ_compat** (E22 keying): the integrity dual — `J1`'s frozen emission
-clears `J2`'s frozen floor, or the inspect band with `J2` (the floor-bearer) vouched. -/
+/-- **pending_integ_compat**: two contained records of one agent are compatible when the first
+record's output integrity clears the second record's floor, or the second record is vouched in the
+inspect band. -/
 def pending_integ_compat
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -278,11 +229,10 @@ def pending_integ_compat
       integ_allows J1.policy.output_integ J2.policy
       ∨ (integ_inspects J1.policy.output_integ J2.policy ∧ vouched J2)
 
-/-! ## E — evidence -/
+/-! ## Evidence invariants -/
 
-/-- **challenge_scoped**: every open challenge binds a well-formed scope referencing a
-real, undecided invocation — not yet pending (E1(b)), freshness burned at creation, an
-active non-root agent, a registered tool, a coherent band, and narrowing/coverage. -/
+/-- **challenge_scoped**: every open challenge has an unused pending slot, a consumed invocation
+identifier, an active non-root owner, a registered tool, coherent floors, and valid egress scope. -/
 def challenge_scoped
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -299,9 +249,7 @@ def challenge_scoped
       ∧ (∀ (E : EgressKind), sc.egress E → sc.policy.declared_egress E)
       ∧ ((∃ (E : EgressKind), sc.policy.declared_egress E) → (∃ (E : EgressKind), sc.egress E))
 
-/-- **challenges_enforce_only** (E23): challenges are a blocking construct, and monitor
-mode never blocks — under `monitor` the challenge map is empty in every reachable state,
-which is what makes §6.3's monitor arm dead code. -/
+/-- **challenges_enforce_only**: every open challenge exists only in enforce mode. -/
 def challenges_enforce_only
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -310,8 +258,7 @@ def challenges_enforce_only
       ContentHash),
     s.challenges I = some sc → s.mode = Mode.enforce
 
-/-- **challenge_unique**: the challenge map is functional. Encoding-trivial under E14
-(module docs; V3-style at-most-one-per-invocation is the keying itself). -/
+/-- **challenge_unique**: each invocation key maps to at most one challenge scope. -/
 def challenge_unique
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -320,8 +267,7 @@ def challenge_unique
       ContentHash),
     s.challenges I = some sc1 → s.challenges I = some sc2 → sc1 = sc2
 
-/-- **inspected_evidence_consumed**: a lever used is a lever recorded — every inspected
-admission's attestation is in the one-use history. -/
+/-- **inspected_evidence_consumed**: each inspected admission records its attestation as consumed. -/
 def inspected_evidence_consumed
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -331,9 +277,8 @@ def inspected_evidence_consumed
     s.pending I = some J → J.admission = Admission.inspected att →
       s.consumed_attestations att
 
-/-- **bypass_mode_sound** (E11): every non-contained pending record — and every bypassed
-admission — implies `mode = monitor`. Stated over `¬ contained`, not the bypass
-constructor, so `blocked` cannot satisfy the bundle with every gate conjunct vacuous. -/
+/-- **bypass_mode_sound**: non-contained records and bypassed admissions occur only in
+monitor mode. -/
 def bypass_mode_sound
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -343,13 +288,8 @@ def bypass_mode_sound
       (¬ contained J → s.mode = Mode.monitor)
       ∧ (J.admission = Admission.bypassed → s.mode = Mode.monitor)
 
-/-- **quarantine_pending**: a quarantined invocation is pending. This is a *tautology* —
-provable with `K := J` in any state under any encoding, including a Rust kernel that stores
-quarantine in a side table — so unlike `pending_unique`/`grant_pinned` it is NOT a
-refinement obligation. It is kept as pure nomenclature: the named record, citable from the
-docs, that V4 encodes quarantine as a flag *on* the pending record (so it participates in
-every P/P′ quantifier by construction) rather than as a separate state component. Costs the
-discharge nothing. -/
+/-- **quarantine_pending**: a quarantined record remains present in `pending` at its invocation
+key, so it participates in the same quantifiers as other pending records. -/
 def quarantine_pending
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=
@@ -359,10 +299,9 @@ def quarantine_pending
       ∃ (K : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
         s.pending I = some K ∧ K.quarantined
 
-/-! ## C — crossing -/
+/-! ## Crossing invariants -/
 
-/-- **grant_bounded** (E15): remaining uses never exceed the provisioned bound. See the
-module docs — the content lives in T-7, not here. -/
+/-- **grant_bounded**: every crossing grant has no more remaining uses than provisioned uses. -/
 def grant_bounded
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash) : Prop :=

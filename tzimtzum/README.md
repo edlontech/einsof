@@ -164,20 +164,6 @@ and bounds, receiver assignment pin, and applicable identity/tenant binding. Mis
 stale, or mismatched authority is rejected at the boundary and never reaches
 `cross_output`; the kernel therefore does not authenticate those fields itself.
 
-## V4 kernel/refinement handoff
-
-The abstract V4 proof is complete. The current files under
-[`argus/formal-lean/`](../argus/formal-lean/) still document and prove the **V3 baseline**;
-they must not be cited as a completed V4 refinement until the parent campaign's Task 8
-regenerates the model and proves the V4 action bundle. The handoff surface is:
-
-- action registry: [`Tzimtzum/Actions.lean`](Tzimtzum/Actions.lean);
-- state and frozen record shapes: [`Tzimtzum/State.lean`](Tzimtzum/State.lean);
-- branch definitions: `Actions/{Invoke,Settle,Cross}.lean`;
-- invariant contract: [`Tzimtzum/Invariants.lean`](Tzimtzum/Invariants.lean);
-- final action checks and crowns: `Tzimtzum/Check*.lean`, `Soundness.lean`,
-  `Transitions.lean`, and `Audit.lean`.
-
 ### State shapes the kernel must reproduce
 
 V4 has 11 abstract sorts. Mutable state contains the agent tree/capabilities, dual label
@@ -227,26 +213,3 @@ Each `begin_invocation` call also supplies two fresh-call predictions:
 - the abstract frozen snapshot/tool binding equals the concrete exact composite tool
   binding; and
 - `∀ E, abstractEgress E ↔ VecSet.mem attested_egress E`.
-
-Parent Task 6 consumes the action/state/partition handoff. Parent Task 8 consumes these
-assumption shapes and the theorem names above.
-
-## File layout
-
-```text
-tzimtzum/
-  Tzimtzum.lean                 abstract V4 root
-  TzimtzumTest.lean             explicit full-verification aggregator
-  Tzimtzum/
-    State.lean                  state, labels, snapshots, pending/challenge records
-    Actions.lean                complete 12-action registry
-    Actions/                    action definitions and branch partitions
-    Invariants.lean             32 invariant predicates
-    Soundness/                  shared bundle/discharge infrastructure
-    Check*.lean                 init and per-action preservation proofs
-    Soundness.lean              reachable-state assembly, kav_sound/kav_soundP
-    GrantConservation.lean      T-7
-    Transitions.lean            T-3–T-10
-    Audit.lean                  T-1/T-2/T-11/T-12 and T-13 statement
-  archive/v3/                   historical only; not a Lean build target
-```

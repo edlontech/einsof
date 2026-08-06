@@ -1,8 +1,7 @@
--- TzimtzumV4 protocol — root module (the verified specification).
--- Built on the Kav transition-system framework (`require kav`).
+-- TzimtzumV4 protocol root module.
 --
--- V3 is archived under `archive/v3/` and is NOT a build target; git history is the
--- authority for its evolution. See `README.md` for what V4 changes and why.
+-- Imports the protocol state, actions, invariants, soundness theorems, transition properties,
+-- audit theorems, and opaque-sort aliases.
 import Tzimtzum.State
 import Tzimtzum.Actions
 import Tzimtzum.Invariants

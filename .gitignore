@@ -373,3 +373,7 @@ time-of-build-pretty.log
 # Phase-0 Aeneas spike: external toolchain checkouts
 tools/
 *.llbc
+
+# Pix Agent
+.pi/
+.pi-lens/

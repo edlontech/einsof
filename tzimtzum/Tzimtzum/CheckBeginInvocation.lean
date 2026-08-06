@@ -1,9 +1,9 @@
 import Tzimtzum.Soundness.Common
 
-/-! # Task 9 — `begin_invocation` preserves the bundle (one theorem per sub-bundle).
+/-! `begin_invocation` preserves each invariant sub-bundle.
 
-The constructor-match dispatch mandated by E26 keeps the update elaborable. The remaining
-manual proofs below are per-conjunct saturation workarounds, not weakened statements.
+Constructor matching keeps the update definition direct; the explicit proofs handle the
+confinement obligations that require preimage reasoning.
 -/
 
 set_option maxHeartbeats 8000000
@@ -238,7 +238,7 @@ theorem presC_begin_invocation (a : AgentId) (inv : InvocationId) (chal : Challe
     (hn : (begin_invocation a inv chal snap egr ah authorized v).next s s') : invC s' := by
   kav_discharge_lite begin_invocation
 
-/-- The full-bundle preservation lemma Tasks 11+ and the soundness assembly consume. -/
+/-- Combines preservation of all invariant sub-bundles. -/
 theorem pres_begin_invocation (a : AgentId) (inv : InvocationId) (chal : ChallengeId)
     (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
     (egr : EgressKind → Prop) (ah : ContentHash) (authorized : Prop) (v : Verdict)

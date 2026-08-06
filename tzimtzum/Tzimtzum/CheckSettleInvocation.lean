@@ -1,6 +1,6 @@
 import Tzimtzum.Soundness.Common
 
-/-! # Task 8 — `settle_invocation` preserves the bundle (one theorem per sub-bundle). -/
+/-! `settle_invocation` preserves the bundle (one theorem per sub-bundle). -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true
@@ -537,7 +537,7 @@ theorem presC_settle_invocation (inv : InvocationId) (a : AgentId)
     (hn : (settle_invocation inv a dispo outcome clvl ilvl att).next s s') : invC s' := by
   kav_discharge_lite settle_invocation
 
-/-- The full-bundle preservation lemma Tasks 11+ and the soundness assembly consume. -/
+/-- Combines preservation of all invariant sub-bundles. -/
 theorem pres_settle_invocation (inv : InvocationId) (a : AgentId)
     (dispo : Disposition) (outcome : Outcome) (clvl : ConfLevel) (ilvl : IntegLevel)
     (att : Option (ResolutionAttestation InvocationId AttestationId))

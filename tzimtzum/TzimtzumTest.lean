@@ -1,8 +1,7 @@
 -- TzimtzumV4 verification aggregator.
--- Build with: lake build TzimtzumTest
 --
--- Every action check is imported explicitly so this target fails if any preservation
--- module, reachable-state crown, per-transition theorem, or audit theorem stops compiling.
+-- Imports every action-preservation module and every soundness, transition, grant, and audit
+-- theorem so this target typechecks the complete verification surface.
 import Tzimtzum.CheckInit
 import Tzimtzum.CheckRegisterTool
 import Tzimtzum.CheckUnregisterTool

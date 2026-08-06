@@ -6,16 +6,11 @@ import Tzimtzum.Actions.Cross
 import Kav.Transition
 
 /-!
-# TzimtzumV4 — the complete 12-action transition system
+# TzimtzumV4 transition system
 
-The registered surface of [[2026-07-24-tzimtzum-v4/architecture|architecture]] §6–§7:
-seven structural actions, `ingest`, `begin_invocation`, `authorize_inspected`,
-`settle_invocation`, `cross_output`. No V3 action is reachable — the archive is not a build
-target, and this list is the *only* place actions become transitions.
-
-Parameters are existentially closed by the `Kav.closeN` helpers, exactly as V3 did; the
-per-action check modules (Tasks 7–10) operate on the *unclosed* families, where the
-parameters stay universally quantified.
+`system` registers the twelve protocol actions and uses `Kav.closeN` to existentially close their
+parameters. The individual action definitions retain universally quantified parameters for their
+preservation theorems.
 -/
 
 namespace Tzimtzum
