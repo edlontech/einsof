@@ -2,6 +2,11 @@
 resolver = "2"
 members = [
     "crates/argus-kernel",
+]
+# argus-explain explains the V3 verdict surface (invoke/return/sentinel/levers) and is a separate
+# V4 port (parent campaign Task 10, "canonical Argus integrity explanations"). It is excluded from
+# the workspace until then so the kernel port's build/test/clippy stay green.
+exclude = [
     "crates/argus-explain",
 ]
 
