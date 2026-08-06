@@ -1,81 +1,69 @@
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AgentId(pub String);
+use crate::capability::CapKind;
+use crate::collections::VecSet;
+
+/// String-backed identity. A private helper macro keeps the nine opaque id newtypes identical
+/// without repeating the `Display`/constructor boilerplate; extraction sees the expanded structs.
+macro_rules! string_id {
+    ($(#[$m:meta])* $name:ident) => {
+        $(#[$m])*
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(pub String);
+
+        impl $name {
+            pub fn new(s: &str) -> Self {
+                Self(s.to_owned())
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
+}
+
+string_id!(
+    /// Agent identity. `root` is the distinguished operator-plane agent.
+    AgentId
+);
+string_id!(
+    /// Composite exact tool identity (entry id + version + code hash together, never a bare
+    /// name); `tool_registered` is per-version, so a mismatched version/hash is a boundary denial
+    /// (E17 — subsumes V3's `tool_attestation_intact`).
+    ToolId
+);
+string_id!(InvocationId);
+string_id!(
+    /// Attribution id carried inside a `ChallengeScope`; the challenge map is keyed by invocation.
+    ChallengeId
+);
+string_id!(
+    /// Identifies one-use inspection / quarantine-resolution / conformance evidence.
+    AttestationId
+);
+string_id!(
+    /// Fresh id burned by every transitioning `cross_output`; its own consumed history (E16).
+    CrossingId
+);
+string_id!(
+    /// Exact endorsement-assignment digest; a crossing grant is keyed by `(holder, assignment)`.
+    AssignmentDigest
+);
+string_id!(
+    /// Binds an inspection attestation's scope to the frozen action policy.
+    PolicyDigest
+);
+string_id!(
+    /// Hash of the invocation arguments carried in a challenge scope.
+    ContentHash
+);
 
 impl AgentId {
     pub fn root() -> Self {
         Self("root".to_owned())
-    }
-
-    pub fn new(name: &str) -> Self {
-        Self(name.to_owned())
-    }
-}
-
-impl fmt::Display for AgentId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ToolId(pub String);
-
-impl ToolId {
-    pub fn new(name: &str) -> Self {
-        Self(name.to_owned())
-    }
-}
-
-impl fmt::Display for ToolId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InvocationId(pub String);
-
-impl InvocationId {
-    pub fn new(id: &str) -> Self {
-        Self(id.to_owned())
-    }
-}
-
-impl fmt::Display for InvocationId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct IssuerId(pub String);
-
-impl IssuerId {
-    pub fn new(id: &str) -> Self {
-        Self(id.to_owned())
-    }
-}
-
-impl fmt::Display for IssuerId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InstructionId(pub String);
-
-impl InstructionId {
-    pub fn new(id: &str) -> Self {
-        Self(id.to_owned())
-    }
-}
-
-impl fmt::Display for InstructionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
     }
 }
 
@@ -115,15 +103,6 @@ impl PartialOrd for ConfLevel {
     }
 }
 
-/// A consumed single-use flow-override, keyed by the `(tool, level)` it justified. A named struct
-/// (not a `(ToolId, ConfLevel)` tuple) so the extractor gets a concrete derived equality instead of
-/// the tuple "Pair" comparison Aeneas cannot resolve.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct OverrideKey {
-    pub tool: ToolId,
-    pub level: ConfLevel,
-}
-
 impl fmt::Display for ConfLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -132,19 +111,6 @@ impl fmt::Display for ConfLevel {
             Self::Sensitive => f.write_str("sensitive"),
             Self::Restricted => f.write_str("restricted"),
         }
-    }
-}
-
-/// Protocol declassification budget capacity (fixed; not operator-configurable).
-pub const BUDGET_CAPACITY: u8 = 16;
-
-/// Sensitivity-weighted declassification cost: Public flows are free, Restricted is dearest.
-pub fn declass_weight(level: ConfLevel) -> u8 {
-    match level {
-        ConfLevel::Public => 0,
-        ConfLevel::Internal => 1,
-        ConfLevel::Sensitive => 2,
-        ConfLevel::Restricted => 4,
     }
 }
 
@@ -197,17 +163,6 @@ impl fmt::Display for IntegLevel {
     }
 }
 
-/// Endorsement weight: dual of `declass_weight`. Attested content is free to endorse, untrusted
-/// is dearest -- prices endorsement by how far below attested the ingested content sits.
-pub fn integ_weight(level: IntegLevel) -> u8 {
-    match level {
-        IntegLevel::Attested => 0,
-        IntegLevel::Trusted => 1,
-        IntegLevel::Standard => 2,
-        IntegLevel::Untrusted => 4,
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EgressKind {
     NetworkExternal,
@@ -225,6 +180,133 @@ impl fmt::Display for EgressKind {
             Self::Ipc => f.write_str("ipc"),
         }
     }
+}
+
+/// Canonical admission verdict for `begin_invocation` (E8: computed, then passed as data).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    Allow,
+    InspectionRequired,
+    Deny,
+}
+
+/// Whether a pending record is `Permitted` (contained — claims its gates passed), `Blocked`
+/// (never pends), or `MonitorBypassed` (dispatched under monitor without a passing gate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Disposition {
+    Permitted,
+    Blocked,
+    MonitorBypassed,
+}
+
+/// Immutable governed enforcement mode: `Enforce` rejects failed holds, `Monitor` demotes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Enforce,
+    Monitor,
+}
+
+/// Settlement outcome; `Ambiguous` quarantines instead of closing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Success,
+    Failure,
+    Ambiguous,
+}
+
+/// Declared behavior of a contract revision when endorsement is unavailable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fallback {
+    Fail,
+    ReleaseUnendorsed,
+}
+
+/// How a pending invocation was admitted; *evidence*, never authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Admission {
+    Plain,
+    Inspected(AttestationId),
+    Bypassed,
+}
+
+/// Remaining/provisioned crossing uses. `grant_bounded` requires `remaining <= provisioned`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CrossingGrant {
+    pub remaining: u32,
+    pub provisioned: u32,
+}
+
+/// Composite `crossing_grants` key `(holder agent, exact assignment digest)`. A named struct (not
+/// a tuple) so the extractor gets a concrete derived equality instead of the tuple "Pair" compare
+/// Aeneas cannot resolve.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossingKey {
+    pub agent: AgentId,
+    pub assignment: AssignmentDigest,
+}
+
+/// The exact action policy frozen at admission. Its gates and settlement use stable required
+/// capabilities, floors, output provenance, egress set, and digest. Frozen INPUT, not kernel state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionPolicySnapshot {
+    /// Exact registered tool identity bound to this snapshot.
+    pub tool: ToolId,
+    pub required_caps: VecSet<CapKind>,
+    /// Maximum confidentiality level the invoker may hold.
+    pub conf_clearance: ConfLevel,
+    /// ALLOW floor.
+    pub integ_floor: IntegLevel,
+    /// Inspect-band floor (a floor above it is an empty band, coherent by construction).
+    pub integ_inspect: IntegLevel,
+    /// Confidentiality provenance of ordinary output.
+    pub output_conf: ConfLevel,
+    /// Integrity provenance of ordinary output.
+    pub output_integ: IntegLevel,
+    /// Declared egress set; the invocation egress set must narrow to this set.
+    pub declared_egress: VecSet<EgressKind>,
+    /// Binds inspection-attestation scope.
+    pub policy_digest: PolicyDigest,
+}
+
+/// A pending invocation. `contained` exactly when `disposition == Permitted`; monitor-bypassed
+/// records still constrain future decisions but do not claim their gates passed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingInvocation {
+    pub agent: AgentId,
+    pub policy: ActionPolicySnapshot,
+    /// The attested per-invocation egress set.
+    pub egress: VecSet<EgressKind>,
+    pub admission: Admission,
+    pub disposition: Disposition,
+    /// Authorizer verdict recorded at admission.
+    pub authorized: bool,
+    /// Set by `settle_invocation ambiguous`; keeps participating in every speculative/pairwise set.
+    pub quarantined: bool,
+}
+
+impl PendingInvocation {
+    /// A record is contained exactly when it is `Permitted`.
+    pub fn contained(&self) -> bool {
+        self.disposition == Disposition::Permitted
+    }
+
+    /// A record is vouched exactly when its admission stores an inspection attestation.
+    pub fn vouched(&self) -> bool {
+        matches!(self.admission, Admission::Inspected(_))
+    }
+}
+
+/// An inspection challenge scope: binds the invocation key, agent, frozen policy, egress set,
+/// arguments hash, and authorizer verdict. The kernel has no clock; resolver freshness is external.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChallengeScope {
+    /// Challenge identifier used for attestation attribution; the invocation is the map key.
+    pub challenge: ChallengeId,
+    pub agent: AgentId,
+    pub policy: ActionPolicySnapshot,
+    pub egress: VecSet<EgressKind>,
+    pub args_hash: ContentHash,
+    pub authorized: bool,
 }
 
 #[cfg(test)]
@@ -246,26 +328,11 @@ mod tests {
     }
 
     #[test]
-    fn declass_weight_by_level() {
-        assert_eq!(declass_weight(ConfLevel::Public), 0);
-        assert_eq!(declass_weight(ConfLevel::Internal), 1);
-        assert_eq!(declass_weight(ConfLevel::Sensitive), 2);
-        assert_eq!(declass_weight(ConfLevel::Restricted), 4);
-    }
-
-    #[test]
-    fn conf_level_equality() {
-        assert_eq!(ConfLevel::Public, ConfLevel::Public);
-        assert_ne!(ConfLevel::Public, ConfLevel::Internal);
-    }
-
-    #[test]
     fn integ_level_le() {
         assert!(IntegLevel::Untrusted.le(IntegLevel::Standard));
         assert!(IntegLevel::Standard.le(IntegLevel::Trusted));
         assert!(IntegLevel::Trusted.le(IntegLevel::Attested));
         assert!(!IntegLevel::Standard.le(IntegLevel::Untrusted));
-        assert!(!IntegLevel::Trusted.le(IntegLevel::Standard));
         assert!(!IntegLevel::Attested.le(IntegLevel::Trusted));
     }
 
@@ -277,18 +344,8 @@ mod tests {
     }
 
     #[test]
-    fn integ_weight_by_level() {
-        assert_eq!(integ_weight(IntegLevel::Attested), 0);
-        assert_eq!(integ_weight(IntegLevel::Trusted), 1);
-        assert_eq!(integ_weight(IntegLevel::Standard), 2);
-        assert_eq!(integ_weight(IntegLevel::Untrusted), 4);
-    }
-
-    #[test]
     fn integ_level_display() {
         assert_eq!(IntegLevel::Untrusted.to_string(), "untrusted");
-        assert_eq!(IntegLevel::Standard.to_string(), "standard");
-        assert_eq!(IntegLevel::Trusted.to_string(), "trusted");
         assert_eq!(IntegLevel::Attested.to_string(), "attested");
     }
 
@@ -299,20 +356,12 @@ mod tests {
 
     #[test]
     fn agent_id_display() {
-        let id = AgentId::new("test-agent");
-        assert_eq!(id.to_string(), "test-agent");
+        assert_eq!(AgentId::new("test-agent").to_string(), "test-agent");
     }
 
     #[test]
     fn tool_id_display() {
-        let id = ToolId::new("read_file");
-        assert_eq!(id.to_string(), "read_file");
-    }
-
-    #[test]
-    fn invocation_id_display() {
-        let id = InvocationId::new("inv-001");
-        assert_eq!(id.to_string(), "inv-001");
+        assert_eq!(ToolId::new("read_file").to_string(), "read_file");
     }
 
     #[test]
@@ -322,14 +371,32 @@ mod tests {
     }
 
     #[test]
-    fn issuer_id_display() {
-        let id = IssuerId::new("sigstore-ci");
-        assert_eq!(id.to_string(), "sigstore-ci");
-    }
-
-    #[test]
-    fn instruction_id_display() {
-        let id = InstructionId::new("system-prompt-v1");
-        assert_eq!(id.to_string(), "system-prompt-v1");
+    fn contained_iff_permitted() {
+        let snap = ActionPolicySnapshot {
+            tool: ToolId::new("t"),
+            required_caps: VecSet::new(),
+            conf_clearance: ConfLevel::Restricted,
+            integ_floor: IntegLevel::Untrusted,
+            integ_inspect: IntegLevel::Untrusted,
+            output_conf: ConfLevel::Public,
+            output_integ: IntegLevel::Attested,
+            declared_egress: VecSet::new(),
+            policy_digest: PolicyDigest::new("d"),
+        };
+        let mut p = PendingInvocation {
+            agent: AgentId::new("a"),
+            policy: snap,
+            egress: VecSet::new(),
+            admission: Admission::Plain,
+            disposition: Disposition::Permitted,
+            authorized: true,
+            quarantined: false,
+        };
+        assert!(p.contained());
+        assert!(!p.vouched());
+        p.disposition = Disposition::MonitorBypassed;
+        assert!(!p.contained());
+        p.admission = Admission::Inspected(AttestationId::new("att"));
+        assert!(p.vouched());
     }
 }

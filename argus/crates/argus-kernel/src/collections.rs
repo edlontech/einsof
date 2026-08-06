@@ -15,7 +15,9 @@ pub struct VecMap<K, V> {
 
 impl<K: Clone + PartialEq, V: Clone> VecMap<K, V> {
     pub fn new() -> Self {
-        VecMap { entries: Vec::new() }
+        VecMap {
+            entries: Vec::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
