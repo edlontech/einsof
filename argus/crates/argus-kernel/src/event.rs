@@ -2,7 +2,10 @@
 //! transitions land; the invocation/crossing variants arrive in Tasks A3–A5.
 
 use crate::capability::CapKind;
-use crate::types::{AgentId, AssignmentDigest, ToolId};
+use crate::types::{
+    AgentId, AssignmentDigest, AttestationId, ConfLevel, Disposition, IntegLevel, InvocationId,
+    Outcome, ToolId,
+};
 
 /// The recorded action of a committed transition.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +38,23 @@ pub enum KernelAction {
     CascadeRevoke {
         child: AgentId,
         parent: AgentId,
+    },
+    Ingest {
+        agent: AgentId,
+        src: Option<AgentId>,
+        pconf: ConfLevel,
+        pinteg: IntegLevel,
+        disposition: Disposition,
+    },
+    SettleInvocation {
+        inv: InvocationId,
+        agent: AgentId,
+        disposition: Disposition,
+        outcome: Outcome,
+        clvl: ConfLevel,
+        ilvl: IntegLevel,
+        /// The consumed resolution attestation id, if this was the quarantine-resolution arm.
+        resolution: Option<AttestationId>,
     },
 }
 

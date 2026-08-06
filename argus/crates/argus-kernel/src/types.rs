@@ -309,6 +309,15 @@ pub struct ChallengeScope {
     pub authorized: bool,
 }
 
+/// A quarantine-resolution attestation — an *input*, not state. The kernel checks its scope
+/// (`inv`, `outcome`) and one-use consumption; issuer truth is an external seam (no issuer field).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolutionAttestation {
+    pub id: AttestationId,
+    pub inv: InvocationId,
+    pub outcome: Outcome,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

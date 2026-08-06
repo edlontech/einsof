@@ -154,6 +154,24 @@ impl KernelState {
         self.challenges = kept;
     }
 
+    /// Demote every pending record owned by `agent` to `MonitorBypassed` (spec `demoteAllOf`).
+    /// `admission` is deliberately untouched (it records how the invocation was admitted, history).
+    pub fn demote_all_of(&mut self, agent: &AgentId) {
+        let mut rebuilt: VecMap<InvocationId, PendingInvocation> = VecMap::new();
+        let mut i = 0;
+        while i < self.pending.len() {
+            let inv = self.pending.key_at(i).clone();
+            if let Some(mut j) = self.pending.get_cloned(&inv) {
+                if j.agent == *agent {
+                    j.disposition = crate::types::Disposition::MonitorBypassed;
+                }
+                rebuilt.insert(inv, j);
+            }
+            i += 1;
+        }
+        self.pending = rebuilt;
+    }
+
     /// Drop every crossing grant held by `agent` (spec `dropGrantsOf`).
     pub fn drop_grants_of(&mut self, agent: &AgentId) {
         let mut kept: VecMap<CrossingKey, CrossingGrant> = VecMap::new();

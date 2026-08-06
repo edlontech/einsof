@@ -14,7 +14,10 @@ use crate::collections::VecMap;
 use crate::error::KernelError;
 use crate::event::KernelAction;
 use crate::state::KernelState;
-use crate::types::{AgentId, AssignmentDigest, CrossingGrant, CrossingKey, ToolId};
+use crate::types::{
+    AgentId, AssignmentDigest, ConfLevel, CrossingGrant, CrossingKey, Disposition, IntegLevel,
+    InvocationId, Mode, Outcome, ResolutionAttestation, ToolId,
+};
 
 /// `register_tool` — add an unregistered exact tool identity (E17: `ToolId` is the composite
 /// entry/version/hash identity, so registration is per-version).
@@ -258,4 +261,192 @@ fn clear_agent(s: &mut KernelState, agent: &AgentId) {
     s.drop_pending_of(agent);
     s.drop_challenges_of(agent);
     s.drop_grants_of(agent);
+}
+
+/// The three ingest holds against every pending record of `a`: flow (per egress channel),
+/// clearance (per target), and integrity (per target). Accumulator scan (no early return).
+fn ingest_holds(
+    s: &KernelState,
+    bg: &BackgroundTheory,
+    a: &AgentId,
+    pconf: ConfLevel,
+    pinteg: IntegLevel,
+) -> bool {
+    let mut holds = true;
+    let mut i = 0;
+    while i < s.pending.len() {
+        let inv = s.pending.key_at(i).clone();
+        if let Some(j) = s.pending.get_cloned(&inv) {
+            if j.agent == *a {
+                let vouched = j.vouched();
+                // Clearance hold: pconf clears the record's frozen clearance ceiling.
+                if !pconf.le(j.policy.conf_clearance) {
+                    holds = false;
+                }
+                // Integrity hold: ALLOW, or INSPECT with the pending party vouched.
+                let integ_allows = j.policy.integ_floor.le(pinteg);
+                let integ_inspects = j.policy.integ_inspect.le(pinteg);
+                if !(integ_allows || (integ_inspects && vouched)) {
+                    holds = false;
+                }
+                // Flow hold: for every attested egress channel, ALLOW or INSPECT+vouch.
+                let mut e = 0;
+                while e < j.egress.len() {
+                    let eg = *j.egress.at(e);
+                    let flow_allows = bg.flow_allows(pconf, eg);
+                    let flow_inspects = bg.flow_inspects(pconf, eg);
+                    if !(flow_allows || (flow_inspects && vouched)) {
+                        holds = false;
+                    }
+                    e += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    holds
+}
+
+/// `ingest` — add a frozen provenance pair `(pconf, pinteg)` to an active agent's labels. The
+/// enforcement disposition is COMPUTED (E19): permitted when the three holds pass; monitor-bypassed
+/// (demoting the agent's live permits) when a hold fails under monitor mode; otherwise refused. A2A
+/// provenance (`src = Some`) must dominate the source agent's held labels in both dimensions (E21).
+pub fn ingest(
+    mut s: KernelState,
+    bg: &BackgroundTheory,
+    a: AgentId,
+    src: Option<AgentId>,
+    pconf: ConfLevel,
+    pinteg: IntegLevel,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    if !s.agent_active.contains(&a) {
+        return Err(KernelError::AgentInactive);
+    }
+    if let Some(src_agent) = &src {
+        let mut dominated = true;
+        let src_taint = s.taint_levels.get_set_or_empty(src_agent);
+        let mut i = 0;
+        while i < src_taint.len() {
+            let l = *src_taint.at(i);
+            if !l.le(pconf) {
+                dominated = false;
+            }
+            i += 1;
+        }
+        let src_integ = s.integ_levels.get_set_or_empty(src_agent);
+        let mut i = 0;
+        while i < src_integ.len() {
+            let l = *src_integ.at(i);
+            if !pinteg.le(l) {
+                dominated = false;
+            }
+            i += 1;
+        }
+        if !dominated {
+            return Err(KernelError::ProvenanceNotDominated);
+        }
+    }
+
+    let holds = ingest_holds(&s, bg, &a, pconf, pinteg);
+    let disposition = if holds {
+        Disposition::Permitted
+    } else if bg.mode() == Mode::Monitor {
+        Disposition::MonitorBypassed
+    } else {
+        return Err(KernelError::IngestHoldFailed);
+    };
+
+    s.taint_levels.insert_into(a.clone(), pconf);
+    s.integ_levels.insert_into(a.clone(), pinteg);
+    if disposition == Disposition::MonitorBypassed {
+        s.demote_all_of(&a);
+    }
+    Ok((
+        s,
+        KernelAction::Ingest {
+            agent: a,
+            src,
+            pconf,
+            pinteg,
+            disposition,
+        },
+    ))
+}
+
+/// `settle_invocation` — close a pending record on `success`/`failure` (absorbing its frozen output
+/// provenance) or quarantine it on `ambiguous`. The owning agent, disposition, and absorbed pair
+/// are pinned to the record. A quarantined record settles only via a scoped one-use resolution
+/// attestation and a non-ambiguous outcome; a non-quarantined record forbids an attestation.
+/// Settling a non-contained (bypassed) record demotes the owner's remaining permits (E18).
+pub fn settle_invocation(
+    mut s: KernelState,
+    inv: InvocationId,
+    outcome: Outcome,
+    att: Option<ResolutionAttestation>,
+) -> Result<(KernelState, KernelAction), KernelError> {
+    let j = match s.pending.get_cloned(&inv) {
+        Some(j) => j,
+        None => return Err(KernelError::NotPending),
+    };
+    let a = j.agent.clone();
+    if !s.agent_active.contains(&a) {
+        return Err(KernelError::AgentInactive);
+    }
+    let disposition = j.disposition;
+    let clvl = j.policy.output_conf;
+    let ilvl = j.policy.output_integ;
+
+    if j.quarantined {
+        if outcome == Outcome::Ambiguous {
+            return Err(KernelError::QuarantineResolutionRequired);
+        }
+        let valid = match &att {
+            Some(r) => {
+                r.inv == inv && r.outcome == outcome && !s.consumed_attestations.contains(&r.id)
+            }
+            None => false,
+        };
+        if !valid {
+            return Err(KernelError::ResolutionAttestationInvalid);
+        }
+    } else if att.is_some() {
+        return Err(KernelError::NotQuarantined);
+    }
+
+    // settleAt: quarantine on ambiguous, else close.
+    if outcome == Outcome::Ambiguous {
+        let mut jq = j.clone();
+        jq.quarantined = true;
+        s.pending.insert(inv.clone(), jq);
+    } else {
+        s.pending.remove(&inv);
+    }
+    // Non-contained settlement demotes the owner's remaining permits (E18).
+    if disposition != Disposition::Permitted {
+        s.demote_all_of(&a);
+    }
+    // Ordinary outcomes absorb both frozen dimensions; ambiguous absorbs nothing.
+    if outcome != Outcome::Ambiguous {
+        s.taint_levels.insert_into(a.clone(), clvl);
+        s.integ_levels.insert_into(a.clone(), ilvl);
+    }
+    let resolution = match &att {
+        Some(r) => {
+            s.consumed_attestations.insert(r.id.clone());
+            Some(r.id.clone())
+        }
+        None => None,
+    };
+    Ok((
+        s,
+        KernelAction::SettleInvocation {
+            inv,
+            agent: a,
+            disposition,
+            outcome,
+            clvl,
+            ilvl,
+            resolution,
+        },
+    ))
 }
