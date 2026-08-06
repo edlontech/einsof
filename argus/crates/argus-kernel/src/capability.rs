@@ -18,14 +18,11 @@ pub enum CapKind {
     DatabaseRead,
     DatabaseWrite,
     Ipc,
-    Declassify,
-    CreditBudget,
-    GrantOverride,
 }
 
 impl CapKind {
     /// All capability kinds, as an owned array (extraction-friendly: no `&'static` slice).
-    pub const ALL: [CapKind; 18] = [
+    pub const ALL: [CapKind; 15] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::FilesystemDelete,
@@ -41,9 +38,6 @@ impl CapKind {
         Self::DatabaseRead,
         Self::DatabaseWrite,
         Self::Ipc,
-        Self::Declassify,
-        Self::CreditBudget,
-        Self::GrantOverride,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -63,9 +57,6 @@ impl CapKind {
             Self::DatabaseRead => "database_read",
             Self::DatabaseWrite => "database_write",
             Self::Ipc => "ipc",
-            Self::Declassify => "declassify",
-            Self::CreditBudget => "credit_budget",
-            Self::GrantOverride => "grant_override",
         }
     }
 
@@ -86,9 +77,6 @@ impl CapKind {
             "database_read" => Some(Self::DatabaseRead),
             "database_write" => Some(Self::DatabaseWrite),
             "ipc" => Some(Self::Ipc),
-            "declassify" => Some(Self::Declassify),
-            "credit_budget" => Some(Self::CreditBudget),
-            "grant_override" => Some(Self::GrantOverride),
             _ => None,
         }
     }
@@ -129,7 +117,7 @@ mod tests {
 
     #[test]
     fn cap_kind_all_variants_count() {
-        assert_eq!(CapKind::ALL.len(), 18);
+        assert_eq!(CapKind::ALL.len(), 15);
     }
 
     #[test]

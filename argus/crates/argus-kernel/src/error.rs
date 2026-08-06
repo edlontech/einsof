@@ -14,6 +14,8 @@ pub enum KernelError {
     RootNotAllowed,
     NotDirectChild,
     ParentStillActive,
+    /// `delegate` grantee id is already some active child's parent (would orphan them).
+    AgentHasChildren,
     CapabilityMissing,
     /// `grant_crossing` attempted by a non-root agent.
     NotRoot,

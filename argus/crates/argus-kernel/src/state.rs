@@ -120,6 +120,55 @@ impl KernelState {
         }
         taint
     }
+
+    /// Drop every pending record owned by `agent` (spec `dropPendingOf`). Extraction-safe rebuild:
+    /// index loop, owned accessors, no closures/early return.
+    pub fn drop_pending_of(&mut self, agent: &AgentId) {
+        let mut kept: VecMap<InvocationId, PendingInvocation> = VecMap::new();
+        let mut i = 0;
+        while i < self.pending.len() {
+            let inv = self.pending.key_at(i).clone();
+            if let Some(j) = self.pending.get_cloned(&inv) {
+                if j.agent != *agent {
+                    kept.insert(inv, j);
+                }
+            }
+            i += 1;
+        }
+        self.pending = kept;
+    }
+
+    /// Drop every open challenge owned by `agent` (spec `dropChallengesOf`).
+    pub fn drop_challenges_of(&mut self, agent: &AgentId) {
+        let mut kept: VecMap<InvocationId, ChallengeScope> = VecMap::new();
+        let mut i = 0;
+        while i < self.challenges.len() {
+            let inv = self.challenges.key_at(i).clone();
+            if let Some(sc) = self.challenges.get_cloned(&inv) {
+                if sc.agent != *agent {
+                    kept.insert(inv, sc);
+                }
+            }
+            i += 1;
+        }
+        self.challenges = kept;
+    }
+
+    /// Drop every crossing grant held by `agent` (spec `dropGrantsOf`).
+    pub fn drop_grants_of(&mut self, agent: &AgentId) {
+        let mut kept: VecMap<CrossingKey, CrossingGrant> = VecMap::new();
+        let mut i = 0;
+        while i < self.crossing_grants.len() {
+            let key = self.crossing_grants.key_at(i).clone();
+            if let Some(g) = self.crossing_grants.get_cloned(&key) {
+                if key.agent != *agent {
+                    kept.insert(key, g);
+                }
+            }
+            i += 1;
+        }
+        self.crossing_grants = kept;
+    }
 }
 
 #[cfg(test)]

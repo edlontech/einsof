@@ -1,10 +1,42 @@
-//! Canonical transition envelope. The `KernelAction` variants — one per V4 command, each carrying
-//! its canonical verdict/disposition/outcome payload — are added as the transitions land in Tasks
-//! A2–A5; the skeleton keeps the append-before-commit driver shape stable.
+//! Canonical transition envelope. `KernelAction` gains one variant per V4 command as the
+//! transitions land; the invocation/crossing variants arrive in Tasks A3–A5.
 
-/// The recorded action of a committed transition. Uninhabited until the first transition lands.
+use crate::capability::CapKind;
+use crate::types::{AgentId, AssignmentDigest, ToolId};
+
+/// The recorded action of a committed transition.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum KernelAction {}
+pub enum KernelAction {
+    RegisterTool {
+        tool: ToolId,
+    },
+    UnregisterTool {
+        tool: ToolId,
+    },
+    Delegate {
+        grantor: AgentId,
+        grantee: AgentId,
+    },
+    GrantCapability {
+        parent: AgentId,
+        child: AgentId,
+        cap: CapKind,
+    },
+    GrantCrossing {
+        grantor: AgentId,
+        agent: AgentId,
+        assignment: AssignmentDigest,
+        n: u32,
+    },
+    Revoke {
+        parent: AgentId,
+        target: AgentId,
+    },
+    CascadeRevoke {
+        child: AgentId,
+        parent: AgentId,
+    },
+}
 
 /// A durable, sequenced kernel event.
 #[derive(Clone, Debug, PartialEq, Eq)]
