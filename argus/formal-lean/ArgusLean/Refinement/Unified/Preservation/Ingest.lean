@@ -548,4 +548,110 @@ theorem ingestConfHold_bridge (st : state.KernelState) (bg : background.Backgrou
     · exact Or.inl ((hfa E).mp hh)
     · exact Or.inr ⟨(hfi E).mp h1, (vouchedC_bridge J p.2 hadm).mp h2⟩
 
+/-! ## `demote_all_of` -/
+
+/-- Re-key an entry, demoting the removed agent's records to `MonitorBypassed`. -/
+def demoteEntry (agent : types.AgentId) (p : types.InvocationId × types.PendingInvocation) :
+    types.InvocationId × types.PendingInvocation :=
+  (p.1, { p.2 with disposition :=
+    if p.2.agent = agent then types.Disposition.MonitorBypassed else p.2.disposition })
+
+theorem demoteAllLoop_spec (self : state.KernelState) (agent : types.AgentId)
+    (hnd : (self.pending.entries.val.map Prod.fst).Nodup)
+    (rebuilt : collections.VecMap types.InvocationId types.PendingInvocation) (i0 : Usize)
+    (hi0 : i0.val ≤ self.pending.entries.val.length)
+    (hr0 : rebuilt.entries.val = (self.pending.entries.val.take i0.val).map (demoteEntry agent)) :
+    state.KernelState.demote_all_of_loop self agent rebuilt i0 ⦃ out =>
+      ∃ r1, out = (self.agent_active, self.agent_parent, self.agent_cap, self.taint_levels,
+        self.integ_levels, self.challenges, self.consumed_ids, self.consumed_attestations,
+        self.consumed_crossings, self.crossing_grants, self.tool_registered, r1) ∧
+        r1.entries.val = self.pending.entries.val.map (demoteEntry agent) ⦄ := by
+  unfold state.KernelState.demote_all_of_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => self.pending.entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ self.pending.entries.val.length ∧
+      p.1.entries.val = (self.pending.entries.val.take p.2.val).map (demoteEntry agent))
+  · rintro ⟨reb, i⟩ ⟨hile, hreb⟩
+    simp only [state.KernelState.demote_all_of_loop.body, collections.VecMap.len,
+      alloc.vec.Vec.len, bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : i.val < self.pending.entries.val.length := by scalar_tac
+      obtain ⟨k, hkEq, hk⟩ := spec_imp_exists
+        (vecMapKeyAt_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+          types.PendingInvocation.Insts.CoreCloneClone self.pending i hlt)
+      rw [hkEq]; simp only [invocationId_clone_spec, bind_tc_ok]
+      obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+        (vecMapGetCloned_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
+          types.PendingInvocation.Insts.CoreCloneClone pendingInvocation_clone_spec self.pending k)
+      have hlast : vmLastEntry self.pending.entries.val k =
+          some ((self.pending.entries.val[i.val]'hlt).1, (self.pending.entries.val[i.val]'hlt).2) := by
+        rw [hk]; exact (vmLastEntry_nodup _ _ _ hnd).mpr (by simpa using List.getElem_mem hlt)
+      rw [hoEq, ho, hlast]
+      simp only [Option.map_some, agentId_eq_spec, bind_tc_ok]
+      set p := (self.pending.entries.val[i.val]'hlt) with hpdef
+      rw [show (if decide (p.2.agent = agent) = true then ok types.Disposition.MonitorBypassed
+            else ok p.2.disposition)
+          = ok (if p.2.agent = agent then types.Disposition.MonitorBypassed else p.2.disposition)
+          from by by_cases hag : p.2.agent = agent <;> simp [hag]]
+      simp only [bind_tc_ok]
+      have hget : self.pending.entries.val[i.val]? = some (p.1, p.2) := by
+        rw [List.getElem?_eq_getElem hlt]
+      have hcapk : reb.entries.val.length < Usize.max := by
+        have hle : reb.entries.val.length ≤ i.val := by
+          rw [hreb, List.length_map, List.length_take]; exact Nat.min_le_left _ _
+        scalar_tac
+      have hfresh : ∀ q ∈ reb.entries.val, q.1 ≠ k := by
+        have hni := fst_getElem_not_mem_map_take self.pending.entries.val i.val hlt hnd
+        rw [hreb]; intro q hq hqc
+        obtain ⟨q0, hq0, hq0e⟩ := List.mem_map.mp hq
+        have hq01 : q0.1 = k := by
+          have hqe : (demoteEntry agent q0).1 = q0.1 := rfl
+          rw [hq0e] at hqe; rw [← hqe]; exact hqc
+        have hmem : q0.1 ∈ (self.pending.entries.val.take i.val).map Prod.fst :=
+          List.mem_map.mpr ⟨q0, hq0, rfl⟩
+        rw [hq01, hk] at hmem
+        exact hni hmem
+      have hval : ({ p.2 with disposition :=
+            if p.2.agent = agent then types.Disposition.MonitorBypassed else p.2.disposition }) =
+          (demoteEntry agent p).2 := rfl
+      obtain ⟨r1, hr1Eq, hr1⟩ := spec_imp_exists
+        (vecMapInsert_append_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
+          types.PendingInvocation.Insts.CoreCloneClone reb k
+          { p.2 with disposition :=
+            if p.2.agent = agent then types.Disposition.MonitorBypassed else p.2.disposition }
+          hcapk hfresh)
+      rw [hr1Eq]; simp only [bind_tc_ok]
+      step*
+      refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+      rw [hr1, hreb, show i2.val = i.val + 1 from by scalar_tac, List.take_add_one, hget]
+      simp only [Option.toList_some, List.map_append, List.map_cons, List.map_nil, demoteEntry, hk]
+    case isFalse h =>
+      have heq' : i.val = self.pending.entries.val.length := by scalar_tac
+      simp only [spec_ok, heq', List.take_length] at hreb ⊢
+      exact ⟨reb, rfl, hreb⟩
+  · exact ⟨hi0, by simpa using hr0⟩
+
+theorem demoteAllOf_spec (self : state.KernelState) (agent : types.AgentId)
+    (hnd : (self.pending.entries.val.map Prod.fst).Nodup) :
+    state.KernelState.demote_all_of self agent ⦃ st' =>
+      st'.agent_active = self.agent_active ∧ st'.agent_parent = self.agent_parent ∧
+      st'.agent_cap = self.agent_cap ∧ st'.taint_levels = self.taint_levels ∧
+      st'.integ_levels = self.integ_levels ∧ st'.challenges = self.challenges ∧
+      st'.consumed_ids = self.consumed_ids ∧
+      st'.consumed_attestations = self.consumed_attestations ∧
+      st'.consumed_crossings = self.consumed_crossings ∧
+      st'.crossing_grants = self.crossing_grants ∧ st'.tool_registered = self.tool_registered ∧
+      st'.pending.entries.val = self.pending.entries.val.map (demoteEntry agent) ⦄ := by
+  unfold state.KernelState.demote_all_of
+  simp only [collections.VecMap.new, bind_tc_ok]
+  obtain ⟨out, houtEq, r1, houtVal, hrVal⟩ := spec_imp_exists
+    (demoteAllLoop_spec self agent hnd { entries := alloc.vec.Vec.new _ } 0#usize (by scalar_tac)
+      (by simp))
+  rw [houtEq]; simp only [bind_tc_ok, houtVal, spec_ok]
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, hrVal⟩
+
 end ArgusLean.Refinement
