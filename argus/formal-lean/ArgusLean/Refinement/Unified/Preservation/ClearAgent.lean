@@ -19,6 +19,50 @@ open Aeneas.Std.WP
 set_option maxHeartbeats 1000000
 set_option maxRecDepth 8000
 
+/-- Last-match read through a value-filter, under key-uniqueness: the live `I`-entry survives iff it
+    passes `keep`. The pending/challenge/grant `R`-clause mediator for `clear_agent`. -/
+theorem vmLastEntry_filter_keep {K V : Type} [DecidableEq K] (l : List (K × V))
+    (keep : K × V → Bool) (hnd : (l.map Prod.fst).Nodup) (I : K) :
+    vmLastEntry (l.filter keep) I =
+      match vmLastEntry l I with
+      | some p => if keep p then some p else none
+      | none => none := by
+  have hndf : ((l.filter keep).map Prod.fst).Nodup :=
+    List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hnd
+  cases hL : vmLastEntry l I with
+  | none =>
+    simp only
+    apply vmLastEntry_eq_none
+    intro p hp hpI
+    have hpmem : p ∈ l := List.mem_of_mem_filter hp
+    obtain ⟨pk, pv⟩ := p
+    have hsome : vmLastEntry l I = some (I, pv) :=
+      (vmLastEntry_nodup l I pv hnd).mpr (by rw [← (hpI : pk = I)]; exact hpmem)
+    rw [hL] at hsome; exact absurd hsome (by simp)
+  | some p =>
+    have hp1 : p.1 = I := vmLastEntry_fst _ _ _ hL
+    have hpmem : p ∈ l := vmLastEntry_mem _ _ _ hL
+    simp only
+    by_cases hk : keep p = true
+    · rw [if_pos hk]
+      have hpf : p ∈ l.filter keep := List.mem_filter.mpr ⟨hpmem, hk⟩
+      obtain ⟨pk, pv⟩ := p
+      have hpk : pk = I := hp1
+      subst hpk
+      exact (vmLastEntry_nodup (l.filter keep) pk pv hndf).mpr hpf
+    · rw [if_neg hk]
+      apply vmLastEntry_eq_none
+      intro q hq hqI
+      have hqmem : q ∈ l := List.mem_of_mem_filter hq
+      have hqkeep : keep q = true := (List.mem_filter.mp hq).2
+      obtain ⟨qk, qv⟩ := q
+      have hqk : qk = I := hqI
+      have hqsome : vmLastEntry l qk = some (qk, qv) := (vmLastEntry_nodup l qk qv hnd).mpr hqmem
+      rw [hqk] at hqsome hqkeep
+      rw [hL] at hqsome
+      have hpq : p = (I, qv) := Option.some.inj hqsome
+      rw [hpq] at hk; exact hk hqkeep
+
 /-- Keep predicate for `drop_pending_of` / `drop_challenges_of`: the record's `agent` field differs
     from the removed agent (works for any struct with an `agent : AgentId` field). -/
 abbrev keepAgentP {V : Type} (proj : V → types.AgentId) (agent : types.AgentId) :
@@ -434,5 +478,197 @@ theorem clearAgent_spec (self : state.KernelState) (agent : types.AgentId)
     rw [hs3cc, hs2cc, hs1cc]
   · -- tool_registered
     rw [hs3tr, hs2tr, hs1tr]
+
+/-! ## `vmsMemLast` under a key-filter -/
+
+theorem vmsMemLast_filter_removeKept {K T : Type} [DecidableEq K]
+    (vm' vm : collections.VecMap K (collections.VecSet T)) (key : K)
+    (h : vm'.entries.val = vm.entries.val.filter (removeKept key)) (N : K) (C : T) :
+    vmsMemLast vm' N C ↔ vmsMemLast vm N C ∧ N ≠ key := by
+  unfold vmsMemLast
+  rw [h, vmLastEntry_filter_removeKept]
+  by_cases hN : N = key
+  · simp [hN]
+  · rw [if_neg hN]
+    constructor
+    · rintro ⟨vs, hvs, hc⟩; exact ⟨⟨vs, hvs, hc⟩, hN⟩
+    · rintro ⟨⟨vs, hvs, hc⟩, _⟩; exact ⟨vs, hvs, hc⟩
+
+/-! ## The abstract cleared state and the generic R-transport -/
+
+open Classical in
+/-- The abstract state after clearing `agent` (the shared `revoke` / `cascade_revoke` post-image). -/
+noncomputable def clearAbs (a : AbsState) (agent : types.AgentId) : AbsState :=
+  { a with
+    agent_active := fun A => a.agent_active A ∧ A ≠ agent,
+    agent_parent := fun C P => a.agent_parent C P ∧ C ≠ agent,
+    agent_cap := fun A C => a.agent_cap A C ∧ A ≠ agent,
+    taint_levels := fun A L => a.taint_levels A L ∧ A ≠ agent,
+    integ_levels := fun A L => a.integ_levels A L ∧ A ≠ agent,
+    pending := Tzimtzum.dropPendingOf a.pending agent,
+    challenges := Tzimtzum.dropChallengesOf a.challenges agent,
+    crossing_grants := Tzimtzum.dropGrantsOf a.crossing_grants agent }
+
+/-- Generic R-transport: any `st'` matching the `clear_agent agent` characterization refines
+    `clearAbs a agent`. Consumed by `revoke` / `cascade_revoke` after inversion. -/
+theorem clear_preservesR (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState)
+    (agent : types.AgentId) (hR : R st bg a) (st' : state.KernelState)
+    (hactive : ∀ y, vsMem st'.agent_active y ↔ vsMem st.agent_active y ∧ y ≠ agent)
+    (hparent : st'.agent_parent.entries.val = st.agent_parent.entries.val.filter (removeKept agent))
+    (hcap : st'.agent_cap.entries.val = st.agent_cap.entries.val.filter (removeKept agent))
+    (htaint : st'.taint_levels.entries.val = st.taint_levels.entries.val.filter (removeKept agent))
+    (hinteg : st'.integ_levels.entries.val = st.integ_levels.entries.val.filter (removeKept agent))
+    (hpend : st'.pending.entries.val =
+      st.pending.entries.val.filter (keepAgentP (·.agent) agent))
+    (hchal : st'.challenges.entries.val =
+      st.challenges.entries.val.filter (keepAgentP (·.agent) agent))
+    (hgrant : st'.crossing_grants.entries.val =
+      st.crossing_grants.entries.val.filter (keepGrantP agent))
+    (hci : st'.consumed_ids = st.consumed_ids)
+    (hca : st'.consumed_attestations = st.consumed_attestations)
+    (hcc : st'.consumed_crossings = st.consumed_crossings)
+    (htr : st'.tool_registered = st.tool_registered) :
+    R st' bg (clearAbs a agent) := by
+  have hndParent' : vmNodupKeys st'.agent_parent := by
+    unfold vmNodupKeys; rw [hparent]
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hR.ndParent
+  have hndCap' : vmNodupKeys st'.agent_cap := by
+    unfold vmNodupKeys; rw [hcap]
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hR.ndCap
+  have hndTaint' : vmNodupKeys st'.taint_levels := by
+    unfold vmNodupKeys; rw [htaint]
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hR.ndTaint
+  have hndInteg' : vmNodupKeys st'.integ_levels := by
+    unfold vmNodupKeys; rw [hinteg]
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hR.ndInteg
+  have hndPending' : vmNodupKeys st'.pending := by
+    unfold vmNodupKeys; rw [hpend]
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hR.ndPending
+  have hndChal' : vmNodupKeys st'.challenges := by
+    unfold vmNodupKeys; rw [hchal]
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hR.ndChallenges
+  have hndGrant' : vmNodupKeys st'.crossing_grants := by
+    unfold vmNodupKeys; rw [hgrant]
+    exact List.Nodup.sublist (List.Sublist.map Prod.fst List.filter_sublist) hR.ndGrants
+  refine
+    { root := hR.root, mode := hR.mode
+      active := ?_, tool_reg := ?_, parent := ?_, cap := ?_, taint := ?_, integ := ?_
+      pending := ?_, challenges := ?_, grants := ?_
+      consumedIds := ?_, consumedAtt := ?_, consumedCross := ?_
+      flowAllows := hR.flowAllows, flowInspects := hR.flowInspects
+      ndParent := hndParent', ndCap := hndCap', ndTaint := hndTaint', ndInteg := hndInteg'
+      ndPending := hndPending', ndChallenges := hndChal', ndGrants := hndGrant' }
+  · -- active
+    intro y
+    show (a.agent_active y ∧ y ≠ agent) ↔ vsMem st'.agent_active y
+    rw [hactive y, ← hR.active y]
+  · -- tool_reg
+    intro t
+    show a.tool_registered t ↔ vsMem st'.tool_registered t
+    rw [show st'.tool_registered = st.tool_registered from htr, hR.tool_reg t]
+  · -- parent
+    intro C P
+    show (a.agent_parent C P ∧ C ≠ agent) ↔
+      vmLastEntry st'.agent_parent.entries.val C = some (C, P)
+    rw [hparent, vmLastEntry_filter_removeKept, hR.parent C P]
+    by_cases hC : C = agent <;> simp [hC]
+  · -- cap
+    intro N C
+    show (a.agent_cap N C ∧ N ≠ agent) ↔ vmsMemLast st'.agent_cap N C
+    rw [vmsMemLast_filter_removeKept st'.agent_cap st.agent_cap agent hcap, ← hR.cap N C]
+  · -- taint
+    intro ag L
+    show (a.taint_levels ag L ∧ ag ≠ agent) ↔ vmsMemLast st'.taint_levels ag (confC L)
+    rw [vmsMemLast_filter_removeKept st'.taint_levels st.taint_levels agent htaint, ← hR.taint ag L]
+  · -- integ
+    intro ag L
+    show (a.integ_levels ag L ∧ ag ≠ agent) ↔ vmsMemLast st'.integ_levels ag (integC L)
+    rw [vmsMemLast_filter_removeKept st'.integ_levels st.integ_levels agent hinteg, ← hR.integ ag L]
+  · -- pending
+    intro I
+    show optRel pendingRel (Tzimtzum.dropPendingOf a.pending agent I) (pendingC st' I)
+    have hRp := hR.pending I
+    unfold pendingC at hRp ⊢
+    rw [hpend, vmLastEntry_filter_keep _ _ hR.ndPending I]
+    cases hL : vmLastEntry st.pending.entries.val I with
+    | none =>
+      rw [hL] at hRp; simp only [Option.map_none] at hRp
+      cases haI : a.pending I with
+      | none => simp [Tzimtzum.dropPendingOf, haI, optRel]
+      | some J => rw [haI] at hRp; exact hRp.elim
+    | some p =>
+      rw [hL] at hRp; simp only [Option.map_some] at hRp
+      cases haI : a.pending I with
+      | none => rw [haI] at hRp; exact hRp.elim
+      | some J =>
+        rw [haI] at hRp
+        have hjt : J.agent = p.2.agent := hRp.1
+        simp only [Tzimtzum.dropPendingOf, haI]
+        by_cases hag : p.2.agent = agent
+        · rw [if_pos (by rw [hjt]; exact hag)]
+          simp only [keepAgentP, hag, ne_eq, not_true_eq_false, decide_false, Bool.false_eq_true,
+            if_false, Option.map_none, optRel]
+        · rw [if_neg (by rw [hjt]; exact hag)]
+          simp only [keepAgentP, hag, ne_eq, not_false_eq_true, decide_true, if_true,
+            Option.map_some]
+          exact hRp
+  · -- challenges
+    intro I
+    show optRel challengeRel (Tzimtzum.dropChallengesOf a.challenges agent I) (challengeC st' I)
+    have hRc := hR.challenges I
+    unfold challengeC at hRc ⊢
+    rw [hchal, vmLastEntry_filter_keep _ _ hR.ndChallenges I]
+    cases hL : vmLastEntry st.challenges.entries.val I with
+    | none =>
+      rw [hL] at hRc; simp only [Option.map_none] at hRc
+      cases haI : a.challenges I with
+      | none => simp [Tzimtzum.dropChallengesOf, haI, optRel]
+      | some sc => rw [haI] at hRc; exact hRc.elim
+    | some p =>
+      rw [hL] at hRc; simp only [Option.map_some] at hRc
+      cases haI : a.challenges I with
+      | none => rw [haI] at hRc; exact hRc.elim
+      | some sc =>
+        rw [haI] at hRc
+        have hjt : sc.agent = p.2.agent := hRc.2.1
+        simp only [Tzimtzum.dropChallengesOf, haI]
+        by_cases hag : p.2.agent = agent
+        · rw [if_pos (by rw [hjt]; exact hag)]
+          simp only [keepAgentP, hag, ne_eq, not_true_eq_false, decide_false, Bool.false_eq_true,
+            if_false, Option.map_none, optRel]
+        · rw [if_neg (by rw [hjt]; exact hag)]
+          simp only [keepAgentP, hag, ne_eq, not_false_eq_true, decide_true, if_true,
+            Option.map_some]
+          exact hRc
+  · -- grants
+    intro A D
+    show optRel crossingGrantRel (Tzimtzum.dropGrantsOf a.crossing_grants agent A D)
+      (crossingGrantC st' { agent := A, assignment := D })
+    have hRg := hR.grants A D
+    unfold crossingGrantC at hRg ⊢
+    rw [hgrant, vmLastEntry_filter_keep _ _ hR.ndGrants { agent := A, assignment := D }]
+    cases hL : vmLastEntry st.crossing_grants.entries.val { agent := A, assignment := D } with
+    | none =>
+      rw [hL] at hRg; simp only [Option.map_none] at hRg
+      cases haD : a.crossing_grants A D with
+      | none => simp [Tzimtzum.dropGrantsOf, haD, optRel]
+      | some g => rw [haD] at hRg; exact hRg.elim
+    | some p =>
+      rw [hL] at hRg; simp only [Option.map_some] at hRg
+      have hpk : p.1 = { agent := A, assignment := D } := vmLastEntry_fst _ _ _ hL
+      simp only [Tzimtzum.dropGrantsOf]
+      by_cases hA : A = agent
+      · rw [if_pos hA]
+        simp only [keepGrantP, hpk, hA, ne_eq, not_true_eq_false, decide_false, Bool.false_eq_true,
+          if_false, Option.map_none, optRel]
+      · rw [if_neg hA]
+        simp only [keepGrantP, hpk, hA, ne_eq, not_false_eq_true, decide_true, if_true,
+          Option.map_some]
+        exact hRg
+  · intro I; rw [show st'.consumed_ids = st.consumed_ids from hci]; exact hR.consumedIds I
+  · intro Att; rw [show st'.consumed_attestations = st.consumed_attestations from hca]
+    exact hR.consumedAtt Att
+  · intro X; rw [show st'.consumed_crossings = st.consumed_crossings from hcc]
+    exact hR.consumedCross X
 
 end ArgusLean.Refinement

@@ -1,256 +1,83 @@
-import ArgusLean.Refinement.Unified.Bridges
+import ArgusLean.Refinement.Unified.Preservation.ClearAgent
 
-/-! # Layer 1 — `revoke` preserves the unified `R`
+/-! # Layer 1 — `revoke` preserves the unified `R` (V4)
 
-`revoke prnt target` drops `target` from `agent_active`, `agent_parent`, `agent_cap`, and the six
-`clear_agent_state` fields (`taint_levels`, `integ_levels`, `in_flight`, `agent_instruction`,
-`override_used`, `flow_override` — the ghost maps are gone in V3) — every write is a **key-filter**,
-so nodup is preserved by `vmNodupKeys_filter` and no insert-nodup is needed. The view conversions go
-through the filter characterisations (`vmsMem_filter_removeKept` / `capMem_filter_removeKept` /
-`vmLastEntry_filter_removeKept`) bridged to `R`'s last-match views via the carried `vmNodupKeys`.
-`agent_budget` (Campaign B) is left entirely **framed** — `revoke` never writes it, so a revoked
-agent's budget cell is inert (the abstract `agent_budget` function agrees at every key including
-`target`, no active-guard needed). `invocation_used`/`invocation_egress` are likewise framed (global
-history, untouched by any agent-scoped action). -/
+`revoke parent target` gates on the parent edge (`get_cloned` + `AgentId.eq`), both agents active,
+and `target ≠ root`, then destroys `target` via `clear_agent`. The R-transport is the shared
+`clear_preservesR`; this module only inverts the guard and threads `clearAgent_spec`. -/
 
 namespace ArgusLean.Refinement
 
 open Aeneas Aeneas.Std Result argus_kernel
 open Aeneas.Std.WP
 
-set_option maxHeartbeats 2000000
+set_option maxHeartbeats 1000000
 
-/-- Comprehensive inversion: `revoke`'s structural frame plus the six-field `clear_agent_state`
-    filter, with `tool_registered`/`invocation_tool`/`invocation_used`/`invocation_egress`/
-    `agent_budget` all framed. -/
-theorem revoke_inv_full
-    (st : state.KernelState) (bg : background.BackgroundTheory)
-    (prnt target : types.AgentId)
-    (hNodupP : vmNodupKeys st.agent_parent)
-    (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.revoke st bg prnt target = .ok (.Ok (st', ev))) :
-    ∃ (rootVal : types.AgentId),
-      vmLastEntry st.agent_parent.entries.val target = some (target, prnt) ∧
-      vsMem st.agent_active prnt ∧ vsMem st.agent_active target ∧
-      types.AgentId.root = .ok rootVal ∧ target ≠ rootVal ∧
-      (∀ y, vsMem st'.agent_active y ↔ vsMem st.agent_active y ∧ y ≠ target) ∧
-      st'.tool_registered = st.tool_registered ∧ st'.invocation_tool = st.invocation_tool ∧
-      st'.invocation_used = st.invocation_used ∧ st'.invocation_egress = st.invocation_egress ∧
-      st'.agent_budget = st.agent_budget ∧
-      st'.agent_cap.entries.val = st.agent_cap.entries.val.filter (removeKept target) ∧
-      st'.agent_parent.entries.val = st.agent_parent.entries.val.filter (removeKept target) ∧
-      st'.taint_levels.entries.val = st.taint_levels.entries.val.filter (removeKept target) ∧
-      st'.integ_levels.entries.val = st.integ_levels.entries.val.filter (removeKept target) ∧
-      st'.in_flight.entries.val = st.in_flight.entries.val.filter (removeKept target) ∧
-      st'.agent_instruction.entries.val = st.agent_instruction.entries.val.filter (removeKept target) ∧
-      st'.override_used.entries.val = st.override_used.entries.val.filter (removeKept target) ∧
-      st'.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept target) := by
-  simp only [transitions.revoke] at hok
-  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
-    (vecMapGet_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      types.AgentId.Insts.CoreCloneClone st.agent_parent target)
-  rw [hoEq] at hok
-  simp only [bind_tc_ok] at hok
-  obtain ⟨b, hbEq, hbIff⟩ :
-      ∃ bb, core.cmp.PartialEq.ne.trait_default (core.option.Option.Insts.CoreCmpPartialEqOption
-        (core.cmp.PartialEqShared types.AgentId.Insts.CoreCmpPartialEqAgentId)) o (some prnt) =
-        .ok bb ∧ (bb = true ↔ o ≠ some prnt) :=
-    ⟨_, optionAgentId_ne_spec o (some prnt), by simp⟩
-  rw [hbEq] at hok
-  simp only [bind_tc_ok] at hok
-  have hb : b = false := by cases b with | false => rfl | true => simp at hok
-  simp only [hb, reduceIte, Bool.false_eq_true] at hok
-  have hoP : o = some prnt := by
-    by_contra hc; have := hbIff.mpr hc; rw [hb] at this; simp at this
-  have hlast : vmLastEntry st.agent_parent.entries.val target = some (target, prnt) := by
-    have hoP' : (vmLastEntry st.agent_parent.entries.val target).map Prod.snd = some prnt := by
-      rw [← ho]; exact hoP
-    cases hL : vmLastEntry st.agent_parent.entries.val target with
-    | none => rw [hL] at hoP'; simp at hoP'
-    | some p =>
-      have hp1 : p.1 = target := vmLastEntry_fst _ _ _ hL
-      rw [hL, Option.map_some] at hoP'
-      obtain ⟨x, y⟩ := p
-      simp only [Option.some_inj] at hoP'
-      simp_all
-  obtain ⟨b1, hb1Eq, hb1Iff⟩ :=
-    spec_imp_exists (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active prnt)
-  rw [hb1Eq] at hok
-  simp only [bind_tc_ok] at hok
-  have hb1 : b1 = true := by cases b1 with | true => rfl | false => simp at hok
-  simp only [hb1, reduceIte] at hok
-  obtain ⟨b2, hb2Eq, hb2Iff⟩ :=
-    spec_imp_exists (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active target)
-  rw [hb2Eq] at hok
-  simp only [bind_tc_ok] at hok
-  have hb2 : b2 = true := by cases b2 with | true => rfl | false => simp at hok
-  simp only [hb2, reduceIte] at hok
-  obtain ⟨rootVal, hrootEq⟩ : ∃ r, types.AgentId.root = .ok r := by
-    cases h : types.AgentId.root with
-    | ok r => exact ⟨r, rfl⟩
-    | fail e => rw [h] at hok; simp at hok
-    | div => rw [h] at hok; simp at hok
-  rw [hrootEq] at hok
-  simp only [bind_tc_ok] at hok
-  obtain ⟨b3, hb3Eq, hb3Iff⟩ :
-      ∃ bb, types.AgentId.Insts.CoreCmpPartialEqAgentId.eq target rootVal = .ok bb ∧
-        (bb = true ↔ target = rootVal) :=
-    ⟨_, agentId_eq_spec target rootVal, by simp⟩
-  rw [hb3Eq] at hok
-  simp only [bind_tc_ok] at hok
-  have hb3 : b3 = false := by cases b3 with | false => rfl | true => simp at hok
-  simp only [hb3, reduceIte, Bool.false_eq_true] at hok
-  obtain ⟨vs, hvsEq, hvsMem⟩ :=
-    spec_imp_exists (vecSetRemove_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec agentId_clone_spec
-      st.agent_active target)
-  rw [hvsEq] at hok
-  simp only [bind_tc_ok] at hok
-  obtain ⟨vm, hvmEq, hvmChar⟩ :=
-    spec_imp_exists (agentParentDropChild_spec st.agent_parent target hNodupP)
-  rw [hvmEq] at hok
-  simp only [bind_tc_ok] at hok
-  obtain ⟨vm1, hvm1Eq, hvm1Char⟩ :=
-    spec_imp_exists (vecMapRemove_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec
-      (collections.VecSet.Insts.CoreCloneClone capability.CapKind.Insts.CoreCloneClone)
-      st.agent_cap target)
-  rw [hvm1Eq] at hok
-  simp only [bind_tc_ok] at hok
-  obtain ⟨st1, hclearEq, hActiveF, hParentF, hCapF, hInvocF, hUsedF, hEgressF, hToolF, hBudgetF,
-    hTaint, hInteg, hInflight, hInstr, hOverride, hClrFlow⟩ :=
-    spec_imp_exists (clearAgentState_spec
-      { st with agent_active := vs, agent_parent := vm, agent_cap := vm1 } target)
-  rw [hclearEq] at hok
-  simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
-  obtain ⟨hst, _hev⟩ := hok
-  subst hst
-  exact ⟨rootVal, hlast, hb1Iff.mp hb1, hb2Iff.mp hb2, hrootEq,
-    (fun h => by simp [hb3Iff.mpr h] at hb3),
-    (fun y => by rw [hActiveF]; exact hvsMem y), hToolF, hInvocF, hUsedF, hEgressF, hBudgetF,
-    (by rw [hCapF]; exact hvm1Char), (by rw [hParentF]; exact hvmChar),
-    hTaint, hInteg, hInflight, hInstr, hOverride, hClrFlow⟩
-
-/-- `revoke` preserves the unified `R`. -/
 theorem revoke_preservesR
     (st : state.KernelState) (bg : background.BackgroundTheory)
-    (a : AbsState) (prnt target : types.AgentId)
+    (a : AbsState) (parent target : types.AgentId)
     (hR : R st bg a)
     (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.revoke st bg prnt target = .ok (.Ok (st', ev))) :
-    ∃ a', (Tzimtzum.revoke prnt target).guard a ∧
-          (Tzimtzum.revoke prnt target).next a a' ∧ R st' bg a' := by
-  obtain ⟨rootVal, hParentEdge, hPrntActive, hTargetActive, hrootEq, htargetNe, hActive, hToolF,
-      hInvocF, hUsedF, hEgressF, hBudgetF, hCap, hParent, hTaint, hInteg, hInflight, hInstr,
-      hOverride, hClrFlow⟩ :=
-    revoke_inv_full st bg prnt target hR.ndParent st' ev hok
-  have hrootId : a.root_agent = rootVal := by rw [hR.root] at hrootEq; exact Result.ok.inj hrootEq
-  refine ⟨{ a with
-      agent_active := fun A => a.agent_active A ∧ A ≠ target
-      agent_parent := fun C P => a.agent_parent C P ∧ C ≠ target
-      agent_cap := fun N C => a.agent_cap N C ∧ N ≠ target
-      agent_instruction := fun A I => a.agent_instruction A I ∧ A ≠ target
-      taint_levels := fun A L => a.taint_levels A L ∧ A ≠ target
-      integ_levels := fun A L => a.integ_levels A L ∧ A ≠ target
-      in_flight := fun A I => a.in_flight A I ∧ A ≠ target
-      override_used := fun A T L => a.override_used A T L ∧ A ≠ target
-      flow_override := fun A T L => a.flow_override A T L ∧ A ≠ target }, ?_, ?_, ?_⟩
-  · -- guard
-    simp only [Tzimtzum.revoke]
-    exact ⟨(hR.parent target prnt).mpr hParentEdge, (hR.active prnt).mpr hPrntActive,
-      (hR.active target).mpr hTargetActive, by rw [hrootId]; exact htargetNe⟩
-  · -- next
-    simp [Tzimtzum.revoke]
-  · -- R st' bg a'
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
-      ?_, ?_, ?_, ?_, ?_, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor,
-      hR.toolIntegInspectFloor, hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
-      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor, ?_,
-      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-    · -- active
-      intro x; show (a.agent_active x ∧ x ≠ target) ↔ vsMem st'.agent_active x
-      rw [hActive x, hR.active x]
-    · -- tool_reg
-      intro t; show a.tool_registered t ↔ vsMem st'.tool_registered t
-      rw [hToolF]; exact hR.tool_reg t
-    · -- parent
-      intro C P
-      show (a.agent_parent C P ∧ C ≠ target) ↔ vmLastEntry st'.agent_parent.entries.val C = some (C, P)
-      rw [hParent, vmLastEntry_filter_removeKept]
-      by_cases hC : C = target
-      · simp [hC]
-      · rw [if_neg hC, ← hR.parent C P]; simp [hC]
-    · -- cap
-      intro N C
-      show (a.agent_cap N C ∧ N ≠ target) ↔ vmsMemLast st'.agent_cap N C
-      rw [← capMem_iff_vmsMemLast, capMem_filter_removeKept st'.agent_cap st.agent_cap target hCap N C,
-        capMem_iff_vmsMemLast, ← hR.cap N C]
-    · -- instr
-      intro ag ins
-      show (a.agent_instruction ag ins ∧ ag ≠ target) ↔ vmsMemLast st'.agent_instruction ag ins
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hInstr hR.ndInstr),
-        vmsMem_filter_removeKept _ _ _ hInstr, vmsMem_iff_vmsMemLast _ hR.ndInstr, ← hR.instr]
-    · -- taint
-      intro ag L
-      show (a.taint_levels ag L ∧ ag ≠ target) ↔ vmsMemLast st'.taint_levels ag (confC L)
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hTaint hR.ndTaint),
-        vmsMem_filter_removeKept _ _ _ hTaint, vmsMem_iff_vmsMemLast _ hR.ndTaint, ← hR.taint]
-    · -- integ
-      intro ag L
-      show (a.integ_levels ag L ∧ ag ≠ target) ↔ vmsMemLast st'.integ_levels ag (integC L)
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hInteg hR.ndInteg),
-        vmsMem_filter_removeKept _ _ _ hInteg, vmsMem_iff_vmsMemLast _ hR.ndInteg, ← hR.integ]
-    · -- inflight
-      intro ag inv
-      show (a.in_flight ag inv ∧ ag ≠ target) ↔ vmsMemLast st'.in_flight ag inv
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hInflight hR.ndInflight),
-        vmsMem_filter_removeKept _ _ _ hInflight, vmsMem_iff_vmsMemLast _ hR.ndInflight, ← hR.inflight]
-    · -- override
-      intro ag t L
-      show (a.override_used ag t L ∧ ag ≠ target) ↔
-        vmsMemLast st'.override_used ag { tool := t, level := confC L }
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hOverride hR.ndOverride),
-        vmsMem_filter_removeKept _ _ _ hOverride, vmsMem_iff_vmsMemLast _ hR.ndOverride, ← hR.override]
-    · -- budget: fully framed (revoke never writes it, no active-guard needed)
-      intro G; show a.agent_budget G = (budgetReadC st'.agent_budget G).val
-      rw [hBudgetF]; exact hR.budget G
-    · -- invUsed (global history, untouched)
-      show RinvocationUsed st' a; rw [RinvocationUsed, hUsedF]; exact hR.invUsed
-    · -- invEgress (global history, untouched)
-      show RinvocationEgress st' a; rw [RinvocationEgress, hEgressF]; exact hR.invEgress
-    · -- flowOverride
-      intro ag t L
-      show (a.flow_override ag t L ∧ ag ≠ target) ↔
-        vmsMemLast st'.flow_override ag { tool := t, level := confC L }
-      rw [← vmsMem_iff_vmsMemLast _ (vmNodupKeysFilter hClrFlow hR.ndFlowOverride),
-        vmsMem_filter_removeKept _ _ _ hClrFlow, vmsMem_iff_vmsMemLast _ hR.ndFlowOverride, ← hR.flowOverride]
-    · -- invTool
-      intro I t; show invToolC st' I = some t → a.invocation_tool I = t
-      unfold invToolC; rw [hInvocF]; exact hR.invTool I t
-    · -- ndParent
-      show vmNodupKeys st'.agent_parent
-      unfold vmNodupKeys; rw [hParent]; exact vmNodupKeys_filter _ target hR.ndParent
-    · exact vmNodupKeysFilter hCap hR.ndCap
-    · exact vmNodupKeysFilter hInstr hR.ndInstr
-    · exact vmNodupKeysFilter hTaint hR.ndTaint
-    · exact vmNodupKeysFilter hInteg hR.ndInteg
-    · exact vmNodupKeysFilter hInflight hR.ndInflight
-    · exact vmNodupKeysFilter hOverride hR.ndOverride
-    · exact vmNodupKeysFilter hClrFlow hR.ndFlowOverride
-    · -- ndBudget: framed
-      show vmNodupKeys st'.agent_budget; rw [hBudgetF]; exact hR.ndBudget
-    · -- wfInflight
-      intro ag I hmem
-      have hmem' : vmsMemLast st.in_flight ag I := by
-        obtain ⟨vs, hve, hv⟩ := hmem
-        rw [hInflight, vmLastEntry_filter_removeKept] at hve
-        by_cases hag : ag = target
-        · rw [if_pos hag] at hve; exact absurd hve (by simp)
-        · rw [if_neg hag] at hve; exact ⟨vs, hve, hv⟩
-      obtain ⟨t, tmeta, ht, htm⟩ := hR.wfInflight ag I hmem'
-      exact ⟨t, tmeta, by unfold invToolC; rw [hInvocF]; exact ht, htm⟩
+    (hok : transitions.revoke st bg parent target = .ok (.Ok (st', ev))) :
+    ∃ a', (Tzimtzum.revoke parent target).guard a ∧
+          (Tzimtzum.revoke parent target).next a a' ∧ R st' bg a' := by
+  simp only [transitions.revoke] at hok
+  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+    (vecMapGetCloned_spec types.AgentId.Insts.CoreCloneClone
+      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
+      types.AgentId.Insts.CoreCloneClone agentId_clone_spec st.agent_parent target)
+  rw [hoEq] at hok
+  simp only [bind_tc_ok] at hok
+  cases hL : vmLastEntry st.agent_parent.entries.val target with
+  | none =>
+    rw [hL] at ho; simp only [Option.map_none] at ho; subst ho; simp at hok
+  | some p =>
+    obtain ⟨x, y⟩ := p
+    rw [hL] at ho; simp only [Option.map_some] at ho; subst ho
+    simp only [agentId_eq_spec, bind_tc_ok] at hok
+    split at hok
+    · rename_i hpe
+      have hyp : y = parent := by simpa using hpe
+      have hx : x = target := vmLastEntry_fst _ _ _ hL
+      -- active parent
+      obtain ⟨bp, hbpEq, hbpIff⟩ := spec_imp_exists
+        (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active parent)
+      rw [hbpEq] at hok; simp only [bind_tc_ok] at hok
+      have hbp : bp = true := by cases bp with | true => rfl | false => simp at hok
+      simp only [hbp, reduceIte] at hok
+      -- active target
+      obtain ⟨bt, hbtEq, hbtIff⟩ := spec_imp_exists
+        (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
+          types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active target)
+      rw [hbtEq] at hok; simp only [bind_tc_ok] at hok
+      have hbt : bt = true := by cases bt with | true => rfl | false => simp at hok
+      simp only [hbt, reduceIte] at hok
+      -- target ≠ root
+      simp only [background.BackgroundTheory.impl.root_agent, agentId_eq_spec, bind_tc_ok] at hok
+      split at hok
+      · rename_i hroot; simp at hok
+      · rename_i hroot
+        have htne : target ≠ bg.root_agent := by simpa using hroot
+        -- clear_agent target
+        obtain ⟨s1, hs1Eq, hs1a, hs1p, hs1c, hs1t, hs1i, hs1pend, hs1chal, hs1grant, hs1ci, hs1ca,
+            hs1cc, hs1tr⟩ := spec_imp_exists
+          (clearAgent_spec st target hR.ndPending hR.ndChallenges hR.ndGrants)
+        rw [hs1Eq] at hok
+        simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
+        obtain ⟨hStateEq, _hEv⟩ := hok
+        subst hStateEq
+        refine ⟨clearAbs a target, ?_, ?_, clear_preservesR st bg a target hR s1 hs1a hs1p hs1c
+          hs1t hs1i hs1pend hs1chal hs1grant hs1ci hs1ca hs1cc hs1tr⟩
+        · -- guard
+          have hpar : vmLastEntry st.agent_parent.entries.val target = some (target, parent) := by
+            rw [hx, hyp] at hL; exact hL
+          simp only [Tzimtzum.revoke]
+          refine ⟨(hR.parent target parent).mpr hpar,
+            (hR.active parent).mpr (hbpIff.mp hbp), (hR.active target).mpr (hbtIff.mp hbt), ?_⟩
+          rw [hR.root]; exact htne
+        · -- next
+          simp [Tzimtzum.revoke, clearAbs]
+    · rename_i hpe; simp at hok
 
 end ArgusLean.Refinement
