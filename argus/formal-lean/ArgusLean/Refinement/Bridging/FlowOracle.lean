@@ -41,6 +41,58 @@ deriving instance DecidableEq for types.EgressKind
 @[simp] theorem egressKind_clone_spec (a : types.EgressKind) :
     types.EgressKind.Insts.CoreCloneClone.clone a = .ok a := rfl
 
+/-! ## Record clone-identity specs
+
+The struct-valued maps (`pending` / `challenges` / `crossing_grants`) are read via `get_cloned`,
+whose faithful spec needs the value clone to be the identity. Every V4 record clones field-wise to
+identity (its fields are `String`-ids, nullary enums, `VecSet`s of them, or `Bool`s). -/
+
+/-- `ActionPolicySnapshot.clone` is the identity (field-wise). -/
+@[simp] theorem actionPolicySnapshot_clone_spec (p : types.ActionPolicySnapshot) :
+    types.ActionPolicySnapshot.Insts.CoreCloneClone.clone p = .ok p := by
+  obtain ⟨tool, rc, cc, if_, ii, oc, oi, de, pd⟩ := p
+  simp only [types.ActionPolicySnapshot.Insts.CoreCloneClone.clone, toolId_clone_spec,
+    vecSetClone_spec capability.CapKind.Insts.CoreCloneClone capKind_clone_spec,
+    confLevel_clone_spec, integLevel_clone_spec,
+    vecSetClone_spec types.EgressKind.Insts.CoreCloneClone egressKind_clone_spec,
+    policyDigest_clone_spec, bind_tc_ok]
+
+/-- `Admission.clone` is the identity. -/
+@[simp] theorem admission_clone_spec (adm : types.Admission) :
+    types.Admission.Insts.CoreCloneClone.clone adm = .ok adm := by
+  cases adm with
+  | Plain => rfl
+  | Inspected att =>
+    simp only [types.Admission.Insts.CoreCloneClone.clone, attestationId_clone_spec, bind_tc_ok]
+  | Bypassed => rfl
+
+/-- `Disposition.clone` is the identity (nullary enum). -/
+@[simp] theorem disposition_clone_spec (d : types.Disposition) :
+    types.Disposition.Insts.CoreCloneClone.clone d = .ok d := rfl
+
+/-- `CrossingGrant.clone` is the identity. -/
+@[simp] theorem crossingGrant_clone_spec (g : types.CrossingGrant) :
+    types.CrossingGrant.Insts.CoreCloneClone.clone g = .ok g := rfl
+
+/-- `PendingInvocation.clone` is the identity (field-wise). -/
+@[simp] theorem pendingInvocation_clone_spec (p : types.PendingInvocation) :
+    types.PendingInvocation.Insts.CoreCloneClone.clone p = .ok p := by
+  obtain ⟨ag, pol, eg, adm, disp, auth, quar⟩ := p
+  simp only [types.PendingInvocation.Insts.CoreCloneClone.clone, agentId_clone_spec,
+    actionPolicySnapshot_clone_spec,
+    vecSetClone_spec types.EgressKind.Insts.CoreCloneClone egressKind_clone_spec,
+    admission_clone_spec, disposition_clone_spec, core.clone.impls.CloneBool.clone, lift,
+    bind_tc_ok]
+
+/-- `ChallengeScope.clone` is the identity (field-wise). -/
+@[simp] theorem challengeScope_clone_spec (c : types.ChallengeScope) :
+    types.ChallengeScope.Insts.CoreCloneClone.clone c = .ok c := by
+  obtain ⟨chal, ag, pol, eg, ah, auth⟩ := c
+  simp only [types.ChallengeScope.Insts.CoreCloneClone.clone, challengeId_clone_spec,
+    agentId_clone_spec, actionPolicySnapshot_clone_spec,
+    vecSetClone_spec types.EgressKind.Insts.CoreCloneClone egressKind_clone_spec,
+    contentHash_clone_spec, core.clone.impls.CloneBool.clone, lift, bind_tc_ok]
+
 /-! ## `ConfLevel.le` (transparent confidentiality order) -/
 
 /-- The pure rank-compare behind `ConfLevel::le` (the kernel's trait-free total order). -/

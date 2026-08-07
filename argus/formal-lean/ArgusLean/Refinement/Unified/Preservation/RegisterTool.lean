@@ -1,12 +1,12 @@
 import ArgusLean.Refinement.Unified.Bridges
 
-/-! # Layer 1 — `register_tool` preserves the unified `R`
+/-! # Layer 1 — `register_tool` preserves the unified `R` (V4)
 
-`register_tool` writes only `tool_registered` (a `VecSet`), framing every other field as a record
-update `{ st with tool_registered := vs }`. So all of `R`'s conjuncts except `tool_reg` transport by
-definitional reduction of the record projection (and the nested-map `vmNodupKeys` invariants carry over
-because those maps are untouched). The combined inversion `register_tool_inv_full` exposes the full
-structural frame (which `register_tool_ok_inv` substitutes away). -/
+The V4 `register_tool` has no issuer guard (`ToolId` is the composite exact identity): it writes only
+`tool_registered` (a `VecSet`), framing every other field as a record update
+`{ st with tool_registered := vs }`. Every `R` conjunct except `tool_reg` transports by definitional
+reduction of the record projection, and the nested-map `vmNodupKeys` invariants carry over because
+those maps are untouched. -/
 
 namespace ArgusLean.Refinement
 
@@ -15,41 +15,18 @@ open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
-/-- Comprehensive inversion: like `register_tool_ok_inv` but keeps the structural post-state
-    `st' = { st with tool_registered := vs }` (and the membership characterisation of `vs`). -/
+/-- Inversion: `register_tool` succeeds iff `tool` was unregistered, and then the post-state is the
+    record update inserting `tool` into `tool_registered`. -/
 theorem register_tool_inv_full
-    (st : state.KernelState) (bg : background.BackgroundTheory) (tool : types.ToolId)
+    (st : state.KernelState) (tool : types.ToolId)
     (hcap : st.tool_registered.items.val.length < Usize.max)
     (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.register_tool st bg tool = .ok (.Ok (st', ev))) :
-    ∃ toolMeta vs,
-      bg.tool_metadata tool = .ok (some toolMeta) ∧
-      vsMem bg.trusted_issuers toolMeta.issuer ∧
+    (hok : transitions.register_tool st tool = .ok (.Ok (st', ev))) :
+    ∃ vs,
       ¬ vsMem st.tool_registered tool ∧
       st' = { st with tool_registered := vs } ∧
       (∀ y, vsMem vs y ↔ vsMem st.tool_registered y ∨ y = tool) := by
   simp only [transitions.register_tool] at hok
-  obtain ⟨metaOpt, hMetaEq⟩ : ∃ o, bg.tool_metadata tool = .ok o := by
-    cases h : bg.tool_metadata tool with
-    | ok o => exact ⟨o, rfl⟩
-    | fail e => rw [h] at hok; simp at hok
-    | div => rw [h] at hok; simp at hok
-  rw [hMetaEq] at hok
-  simp only [bind_tc_ok] at hok
-  obtain ⟨toolMeta, rfl⟩ : ∃ tm, metaOpt = some tm := by
-    cases metaOpt with
-    | none => simp at hok
-    | some tm => exact ⟨tm, rfl⟩
-  simp only [issuerId_clone_spec, bind_tc_ok] at hok
-  obtain ⟨issuerTrusted, hIssuerTrustedEq, hIssuerTrustedIff⟩ :=
-    spec_imp_exists (isTrustedIssuer_spec bg toolMeta.issuer)
-  rw [hIssuerTrustedEq] at hok
-  simp only [bind_tc_ok] at hok
-  have hTrusted : issuerTrusted = true := by
-    cases issuerTrusted with
-    | true => rfl
-    | false => simp at hok
-  simp only [hTrusted, reduceIte] at hok
   obtain ⟨alreadyRegistered, hContainsEq, hContainsIff⟩ :=
     spec_imp_exists (vecSetContains_spec types.ToolId.Insts.CoreCloneClone
       types.ToolId.Insts.CoreCmpPartialEqToolId toolId_eq_spec st.tool_registered tool)
@@ -67,8 +44,7 @@ theorem register_tool_inv_full
   rw [hInsertEq] at hok
   simp only [bind_tc_ok, Result.ok.injEq, core.result.Result.Ok.injEq, Prod.mk.injEq] at hok
   obtain ⟨hStateEq, _hEventEq⟩ := hok
-  refine ⟨toolMeta, registeredAfter, hMetaEq, hIssuerTrustedIff.mp hTrusted, ?_, hStateEq.symm,
-    hInsertMem⟩
+  refine ⟨registeredAfter, ?_, hStateEq.symm, hInsertMem⟩
   intro hmem
   have hc := hContainsIff.mpr hmem
   rw [hNotReg] at hc
@@ -81,28 +57,21 @@ theorem register_tool_preservesR
     (hR : R st bg a)
     (hcap : st.tool_registered.items.val.length < Usize.max)
     (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : transitions.register_tool st bg tool = .ok (.Ok (st', ev))) :
+    (hok : transitions.register_tool st tool = .ok (.Ok (st', ev))) :
     ∃ a', (Tzimtzum.register_tool tool).guard a ∧
           (Tzimtzum.register_tool tool).next a a' ∧ R st' bg a' := by
-  obtain ⟨toolMeta, vs, hMeta, hIssuerTrusted, hNotRegistered, rfl, hNewReg⟩ :=
-    register_tool_inv_full st bg tool hcap st' ev hok
+  obtain ⟨vs, hNotRegistered, rfl, hNewReg⟩ := register_tool_inv_full st tool hcap st' ev hok
   refine ⟨{ a with tool_registered := fun T => a.tool_registered T ∨ T = tool }, ?_, ?_, ?_⟩
-  · -- guard
+  · -- guard: `¬ a.tool_registered tool`
     simp only [Tzimtzum.register_tool]
-    refine ⟨?_, ?_⟩
-    · rw [hR.tool_reg]; exact hNotRegistered
-    · rw [hR.toolIssuer tool toolMeta (toolMetaC_of_metadata hMeta), hR.trustedIss]
-      exact hIssuerTrusted
+    rw [hR.tool_reg]; exact hNotRegistered
   · -- next
     simp [Tzimtzum.register_tool]
   · -- R st' bg a' — every field but tool_reg transports definitionally (record update)
-    refine ⟨hR.root, hR.cap_declass, hR.cap_refresh, hR.cap_grantov, hR.active, ?_, hR.parent,
-      hR.cap, hR.instr, hR.taint, hR.integ, hR.inflight, hR.override, hR.budget, hR.invUsed,
-      hR.invEgress, hR.toolCap, hR.toolEgress, hR.toolFloor, hR.toolIntegFloor,
-      hR.toolIntegInspectFloor, hR.toolOutputInteg, hR.toolBounded, hR.toolIssuer, hR.trustedIss,
-      hR.instrIssuer, hR.flowAllows, hR.flowInspects, hR.leverFloor, hR.leverInspectFloor,
-      hR.flowOverride, hR.invTool, hR.ndParent, hR.ndCap, hR.ndInstr, hR.ndTaint, hR.ndInteg,
-      hR.ndInflight, hR.ndOverride, hR.ndFlowOverride, hR.ndBudget, hR.wfInflight⟩
+    refine ⟨hR.root, hR.mode, hR.active, ?_, hR.parent, hR.cap, hR.taint, hR.integ, hR.pending,
+      hR.challenges, hR.grants, hR.consumedIds, hR.consumedAtt, hR.consumedCross, hR.flowAllows,
+      hR.flowInspects, hR.ndParent, hR.ndCap, hR.ndTaint, hR.ndInteg, hR.ndPending, hR.ndChallenges,
+      hR.ndGrants⟩
     -- tool_reg
     intro t
     show (a.tool_registered t ∨ t = tool) ↔ vsMem _ t
