@@ -1,41 +1,35 @@
 import ArgusLean.Refinement.Bridging.Collections
 import Tzimtzum
 
-/-! # C1 refinement spike — state relation
+/-! # Refinement — state relation (V4)
 
-The abstract TzimtzumV3 state (`Tzimtzum.St`) instantiated at the kernel's concrete
-sorts, plus the relation `Rtool` capturing exactly the fields the `register_tool`
-transition reads or writes. (The full state relation `R` over all V3 fields lives in
-`Unified/Relation.lean`; `Rtool` is the per-action slice the spike's simulation needs.) -/
+The abstract TzimtzumV4 state (`Tzimtzum.St`) instantiated at the kernel's concrete sorts, plus the
+level-lattice correspondences and the record-correspondence predicates the unified relation `R`
+(`Unified/Relation.lean`) is built from. V4 replaces the V3 declassification economy (budget /
+overrides / instruction provenance) with the invocation domain: struct-valued `pending` /
+`challenges` maps, a composite-key `crossing_grants` map, and three consumed-id histories. The
+per-record correspondence between the abstract `Prop`-valued fields and the extracted `VecSet` / `Bool`
+fields lives here (`snapshotRel` / `pendingRel` / `challengeRel` / `crossingGrantRel`), as do the pure
+get-style views the kernel actually reads (`pendingC` / `challengeC` / `crossingGrantC`). -/
 
 namespace ArgusLean.Refinement
 
 open Aeneas Aeneas.Std Result argus_kernel
-open Aeneas.Std.WP
 
 set_option maxHeartbeats 1000000
 
-/-- The abstract TzimtzumV3 state at the kernel's concrete sorts. `ConfLevel` and `IntegLevel`
-    are concrete inductives baked into `St` (the declassification budget is a plain `Nat`); the
-    remaining seven sorts are the extracted `String`/inductive types. -/
+/-- The abstract TzimtzumV4 state at the kernel's concrete sorts. `ConfLevel` and `IntegLevel` are
+    concrete inductives baked into `St`; the remaining sorts are the extracted `String`/inductive
+    types. -/
 abbrev AbsState := Tzimtzum.St types.AgentId types.ToolId types.InvocationId
-  capability.CapKind types.EgressKind types.IssuerId types.InstructionId
-
-/-- State relation for the fields `register_tool` touches:
-    * the mutable `tool_registered` set ↔ the concrete `VecSet`;
-    * the background `trusted_issuer` predicate ↔ the `trusted_issuers` `VecSet`;
-    * the background `tool_issuer` function ↔ the registered tools' metadata issuer. -/
-def Rtool (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState) : Prop :=
-  (∀ t, a.tool_registered t ↔ vsMem st.tool_registered t) ∧
-  (∀ i, a.trusted_issuer i ↔ vsMem bg.trusted_issuers i) ∧
-  (∀ t tm, bg.tool_metadata t = .ok (some tm) → a.tool_issuer t = tm.issuer)
+  capability.CapKind types.EgressKind types.ChallengeId types.AttestationId
+  types.CrossingId types.AssignmentDigest types.PolicyDigest types.ContentHash
 
 /-! ## Confidentiality correspondence
 
 `ConfLevel` is a baked-in inductive of the abstract `St` (not a type parameter), so the taint
 fields cross from the abstract lattice to the extracted `types.*` lattice. The two are
-constructor-for-constructor identical; `confC` / `confA` are the obvious total maps. (The budget is
-now a plain `Nat`/`u8` numeric cell — no level map; see the budget section below.) -/
+constructor-for-constructor identical; `confC` / `confA` are the obvious total maps. -/
 
 /-- Abstract → concrete confidentiality level. -/
 def confC : Tzimtzum.ConfLevel → types.ConfLevel
@@ -52,25 +46,12 @@ def confA : types.ConfLevel → Tzimtzum.ConfLevel
   | .Restricted => .restricted
 
 @[simp] theorem confC_confA (l : types.ConfLevel) : confC (confA l) = l := by cases l <;> rfl
-
-/-- The kernel's `declass_weight` over a concrete level computes (as a total `.ok`) the abstract
-    sensitivity weight as its `Nat` value. The bridge `invoke_complete`'s weighted debit needs to relate
-    the concrete `weight ← declass_weight conf_floor` to the abstract `declass_weight floor`. -/
-theorem declassWeight_spec (L : Tzimtzum.ConfLevel) :
-    ∃ w : Std.U8, types.declass_weight (confC L) = .ok w ∧ w.val = Tzimtzum.declass_weight L := by
-  cases L <;> exact ⟨_, rfl, by rfl⟩
-
 @[simp] theorem confA_confC (l : Tzimtzum.ConfLevel) : confA (confC l) = l := by cases l <;> rfl
 
 theorem confC_injective : Function.Injective confC :=
   fun a b h => by have := congrArg confA h; simpa using this
 
-/-! ## Integrity correspondence (dual of confidentiality)
-
-`IntegLevel` mirrors `ConfLevel` exactly: a concrete four-constructor inductive baked into `St`
-(not a type parameter), so the integrity taint fields (`integ_levels`, and the levers'
-`tool_integ_floor`/`lever_integ_floor` family via `le_integ`) cross from the abstract lattice to
-the extracted `types.*` lattice with the same constructor-for-constructor total maps. -/
+/-! ## Integrity correspondence (dual of confidentiality) -/
 
 /-- Abstract → concrete integrity level. -/
 def integC : Tzimtzum.IntegLevel → types.IntegLevel
@@ -87,49 +68,123 @@ def integA : types.IntegLevel → Tzimtzum.IntegLevel
   | .Attested  => .attested
 
 @[simp] theorem integC_integA (l : types.IntegLevel) : integC (integA l) = l := by cases l <;> rfl
-
 @[simp] theorem integA_integC (l : Tzimtzum.IntegLevel) : integA (integC l) = l := by cases l <;> rfl
 
 theorem integC_injective : Function.Injective integC :=
   fun a b h => by have := congrArg integA h; simpa using this
 
-/-- The kernel's `integ_weight` over a concrete level computes (as a total `.ok`) the abstract
-    endorsement weight as its `Nat` value — the dual of `declassWeight_spec`, needed to relate the
-    weighted `return_endorsed`/crossing debit `integ_weight ilvl` (spec) to the concrete
-    `weight ← integ_weight ilvl` the kernel computes. -/
-theorem integWeight_spec (L : Tzimtzum.IntegLevel) :
-    ∃ w : Std.U8, types.integ_weight (integC L) = .ok w ∧ w.val = Tzimtzum.integ_weight L := by
-  cases L <;> exact ⟨_, rfl, by rfl⟩
+/-! ## Verdict / disposition / mode / outcome correspondence
 
-/-! ## Global invocation-history correspondence: `invocation_used`, `invocation_egress`
+The enums cross constructor-for-constructor. `dispA` and `modeA` are the concrete → abstract maps
+`R` reads (disposition on pending records, mode in background); `verdictA` / `outcomeA` /
+`fallbackA` support the action-argument correspondences the preservation proofs consume. -/
 
-Both are new V3 mutable `KernelState` fields tracking per-invocation facts that, once written by
-`invoke_start`, are never cleared (not by `revoke`/`cascade_revoke`/`delegate` — this is history
-of invocation ids, not agent state). On the abstract side `invocation_used` is likewise a mutable
-relation, but `invocation_egress` is a **background** field of `St` (Section "Immutable
-background" — actions never update it): the oracle-attested egress-kind classification of an
-invocation is fixed for all time, the same way `tool_conf_floor` is defined for every `ToolId`
-whether or not it is registered.
+/-- Concrete → abstract disposition. -/
+def dispA : types.Disposition → Tzimtzum.Disposition
+  | .Permitted       => .permitted
+  | .Blocked         => .blocked
+  | .MonitorBypassed => .monitor_bypassed
 
-This is the same state-vs-background seam `Rtool`'s `tool_issuer` clause already crosses (a
-background function read through the *materialised* metadata, guarded by `tool_metadata ... =
-some tm`): the concrete `KernelState.invocation_egress` only carries an entry once `invoke_start`
-has copied the attested set in, so its correspondence to the abstract background function is
-truthful **only for used invocations** — an unused invocation's abstract `invocation_egress` may
-already hold (it is a fixed total function, like `tool_conf_floor`) with no concrete entry yet to
-witness it. Hence `RinvocationEgress` is restricted to `invocation_used`, not a global
-biconditional. -/
+/-- Concrete → abstract enforcement mode. -/
+def modeA : types.Mode → Tzimtzum.Mode
+  | .Enforce => .enforce
+  | .Monitor => .monitor
 
-/-- Freshness-history correspondence: an invocation is used abstractly iff its id is a member of
-    the kernel's `invocation_used` set. -/
-def RinvocationUsed (st : state.KernelState) (a : AbsState) : Prop :=
-  ∀ I, a.invocation_used I ↔ vsMem st.invocation_used I
+/-- Concrete → abstract verdict. -/
+def verdictA : types.Verdict → Tzimtzum.Verdict
+  | .Allow              => .allow
+  | .InspectionRequired => .inspection_required
+  | .Deny               => .deny
 
-/-- Attested-egress correspondence, restricted to invocations that have actually been started:
-    the kernel's persisted per-invocation egress-kind set agrees with the abstract background
-    `invocation_egress` relation. -/
-def RinvocationEgress (st : state.KernelState) (a : AbsState) : Prop :=
-  ∀ I, a.invocation_used I → ∀ E, a.invocation_egress I E ↔ vmsMemLast st.invocation_egress I E
+/-- Concrete → abstract outcome. -/
+def outcomeA : types.Outcome → Tzimtzum.Outcome
+  | .Success   => .success
+  | .Failure   => .failure
+  | .Ambiguous => .ambiguous
+
+/-- Concrete → abstract fallback. -/
+def fallbackA : types.Fallback → Tzimtzum.Fallback
+  | .Fail              => .fail
+  | .ReleaseUnendorsed => .release_unendorsed
+
+/-! ## Record correspondence
+
+Each abstract record has `Prop`-valued set fields (`required_caps`, `declared_egress`, `egress`)
+and `Prop`-valued verdict fields (`authorized`, `quarantined`); the extracted record carries
+`VecSet`s and `Bool`s. These predicates pin the field-by-field correspondence, crossing the level
+enums via `confA` / `integA` and the disposition/admission enums via `dispA` / `admissionRel`. -/
+
+/-- Abstract ↔ concrete frozen `ActionPolicySnapshot`. -/
+def snapshotRel (ap : Tzimtzum.ActionPolicySnapshot types.ToolId capability.CapKind
+    types.EgressKind types.PolicyDigest) (cp : types.ActionPolicySnapshot) : Prop :=
+  ap.tool = cp.tool
+  ∧ (∀ C, ap.required_caps C ↔ C ∈ cp.required_caps.items.val)
+  ∧ ap.conf_clearance = confA cp.conf_clearance
+  ∧ ap.integ_floor = integA cp.integ_floor
+  ∧ ap.integ_inspect = integA cp.integ_inspect
+  ∧ ap.output_conf = confA cp.output_conf
+  ∧ ap.output_integ = integA cp.output_integ
+  ∧ (∀ E, ap.declared_egress E ↔ E ∈ cp.declared_egress.items.val)
+  ∧ ap.policy_digest = cp.policy_digest
+
+/-- Abstract ↔ concrete `Admission` evidence. -/
+def admissionRel (aa : Tzimtzum.Admission types.AttestationId) (ca : types.Admission) : Prop :=
+  match aa, ca with
+  | .plain, .Plain => True
+  | .inspected att, .Inspected att' => att = att'
+  | .bypassed, .Bypassed => True
+  | _, _ => False
+
+/-- Abstract ↔ concrete `PendingInvocation` record. -/
+def pendingRel (aj : Tzimtzum.PendingInvocation types.AgentId types.ToolId capability.CapKind
+    types.EgressKind types.AttestationId types.PolicyDigest) (cj : types.PendingInvocation) : Prop :=
+  aj.agent = cj.agent
+  ∧ snapshotRel aj.policy cj.policy
+  ∧ (∀ E, aj.egress E ↔ E ∈ cj.egress.items.val)
+  ∧ admissionRel aj.admission cj.admission
+  ∧ aj.disposition = dispA cj.disposition
+  ∧ (aj.authorized ↔ cj.authorized = true)
+  ∧ (aj.quarantined ↔ cj.quarantined = true)
+
+/-- Abstract ↔ concrete `ChallengeScope` record. -/
+def challengeRel (ac : Tzimtzum.ChallengeScope types.AgentId types.ToolId capability.CapKind
+    types.EgressKind types.ChallengeId types.PolicyDigest types.ContentHash)
+    (cc : types.ChallengeScope) : Prop :=
+  ac.challenge = cc.challenge
+  ∧ ac.agent = cc.agent
+  ∧ snapshotRel ac.policy cc.policy
+  ∧ (∀ E, ac.egress E ↔ E ∈ cc.egress.items.val)
+  ∧ ac.args_hash = cc.args_hash
+  ∧ (ac.authorized ↔ cc.authorized = true)
+
+/-- Abstract ↔ concrete `CrossingGrant` record (the `u32` counters carry their `Nat` values). -/
+def crossingGrantRel (ag : Tzimtzum.CrossingGrant) (cg : types.CrossingGrant) : Prop :=
+  ag.remaining = cg.remaining.val ∧ ag.provisioned = cg.provisioned.val
+
+/-- Lift a record relation over the `Option` view: absent ↔ absent, present ↔ present-and-related. -/
+def optRel {α β : Type} (rel : α → β → Prop) : Option α → Option β → Prop
+  | none, none => True
+  | some a, some b => rel a b
+  | _, _ => False
+
+/-! ## Get-style views
+
+The kernel reads its struct-valued maps through the last-match `get_cloned` (identity clone), so the
+faithful abstraction is the last-match value view. -/
+
+/-- Live (last-match) pending record bound to `I`, or `none`. -/
+def pendingC (st : state.KernelState) (I : types.InvocationId) : Option types.PendingInvocation :=
+  (vmLastEntry st.pending.entries.val I).map Prod.snd
+
+/-- Live (last-match) challenge scope bound to `I`, or `none`. -/
+def challengeC (st : state.KernelState) (I : types.InvocationId) : Option types.ChallengeScope :=
+  (vmLastEntry st.challenges.entries.val I).map Prod.snd
+
+/-- Live (last-match) crossing grant bound to the composite `(agent, assignment)` key, or `none`. -/
+def crossingGrantC (st : state.KernelState) (key : types.CrossingKey) : Option types.CrossingGrant :=
+  (vmLastEntry st.crossing_grants.entries.val key).map Prod.snd
+
+/-! ## `agent_cap` last-match membership + key-uniqueness (unchanged substrate) -/
 
 /-- Get-style membership for the cap map: `C` is a cap of `N` iff the *last* `N`-keyed entry
     (the live one under `VecMap` last-match semantics) holds `C`. Survives duplicate keys, so
@@ -139,16 +194,12 @@ def capMem (vm : collections.VecMap types.AgentId (collections.VecSet capability
   ∃ p, vmLastEntry vm.entries.val N = some p ∧ C ∈ p.2.items.val
 
 /-- Key-uniqueness well-formedness for a `VecMap`: the entry keys are `Nodup`. The invariant that
-    makes the get-style reading of a *functional* map (`agent_parent`) faithful — without it the
-    last-match rebuild in `agent_parent_drop_endpoint` disagrees with the abstract post-image
-    (the counterexample the Plausible harness pins). `delegate` preserves it (it rebuilds
-    `agent_parent` from an empty map). -/
+    makes the get-style reading of a *functional* map faithful. -/
 def vmNodupKeys {K V : Type} (vm : collections.VecMap K V) : Prop :=
   (vm.entries.val.map Prod.fst).Nodup
 
 /-- `VecMap.remove key` read through `capMem`: the removed key resolves to no caps, every other
-    agent's caps are untouched. The `agent_cap` counterpart of `vmsMem_filter_removeKept`, built on
-    the pure `vmLastEntry_filter_removeKept`. -/
+    agent's caps are untouched. -/
 theorem capMem_filter_removeKept
     (vm' vm : collections.VecMap types.AgentId (collections.VecSet capability.CapKind))
     (key : types.AgentId)
@@ -163,215 +214,5 @@ theorem capMem_filter_removeKept
     constructor
     · rintro ⟨p, hp, hC⟩; exact ⟨⟨p, hp, hC⟩, hN⟩
     · rintro ⟨⟨p, hp, hC⟩, _⟩; exact ⟨p, hp, hC⟩
-
-/-! ## Shared transition helper: `clear_agent_state`
-
-`clear_agent_state st agent` deletes `agent`'s key from the six per-agent maps (`taint_levels`,
-`integ_levels`, `in_flight`, `agent_instruction`, `override_used`, `flow_override`) and frames
-everything else — the ghost taint maps (`gh_taint_invoked`/`gh_taint_received`) are gone in V3,
-and `agent_budget` is no longer cleared (Campaign B: `revoke`/`cascade_revoke` leave a revoked
-agent's budget entry framed/inert). Each delete is a `VecMap.remove`, so each touched field
-becomes the key-filtered entry list. Shared by `delegate` / `revoke` / `cascade_revoke`. -/
-theorem clearAgentState_spec (st : state.KernelState) (agent : types.AgentId) :
-    transitions.clear_agent_state st agent ⦃ st1 =>
-      st1.agent_active = st.agent_active ∧
-      st1.agent_parent = st.agent_parent ∧
-      st1.agent_cap = st.agent_cap ∧
-      st1.invocation_tool = st.invocation_tool ∧
-      st1.invocation_used = st.invocation_used ∧
-      st1.invocation_egress = st.invocation_egress ∧
-      st1.tool_registered = st.tool_registered ∧
-      st1.agent_budget = st.agent_budget ∧
-      st1.taint_levels.entries.val = st.taint_levels.entries.val.filter (removeKept agent) ∧
-      st1.integ_levels.entries.val = st.integ_levels.entries.val.filter (removeKept agent) ∧
-      st1.in_flight.entries.val = st.in_flight.entries.val.filter (removeKept agent) ∧
-      st1.agent_instruction.entries.val = st.agent_instruction.entries.val.filter (removeKept agent) ∧
-      st1.override_used.entries.val = st.override_used.entries.val.filter (removeKept agent) ∧
-      st1.flow_override.entries.val = st.flow_override.entries.val.filter (removeKept agent) ⦄ := by
-  unfold transitions.clear_agent_state
-  obtain ⟨vm0, h0Eq, h0⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.taint_levels agent)
-  rw [h0Eq]; simp only [bind_tc_ok]
-  obtain ⟨vm1, h1Eq, h1⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.integ_levels agent)
-  rw [h1Eq]; simp only [bind_tc_ok]
-  obtain ⟨vm2, h2Eq, h2⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.in_flight agent)
-  rw [h2Eq]; simp only [bind_tc_ok]
-  obtain ⟨vm3, h3Eq, h3⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.agent_instruction agent)
-  rw [h3Eq]; simp only [bind_tc_ok]
-  obtain ⟨vm4, h4Eq, h4⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.override_used agent)
-  rw [h4Eq]; simp only [bind_tc_ok]
-  obtain ⟨vm5, h5Eq, h5⟩ := spec_imp_exists
-    (vecMapRemove_spec _ types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_ne_spec _
-      st.flow_override agent)
-  rw [h5Eq]; simp only [bind_tc_ok]
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, h0, h1, h2, h3, h4, h5⟩
-
-/-! ## Budget reads/writes: `budget`, `affordable`, `debit_budget`, `credit_budget`
-
-The declassification meter is now a numeric `u8` cell (Campaign B). The kernel reads the budget
-through `VecMap.get` (last-match, absent ⇒ full = `BUDGET_CAPACITY = 16`), tests affordability with
-`>=`, and writes it back via `VecMap.insert` after a saturating `u8` step: `debit_budget` subtracts a
-sensitivity weight `w` (`saturating_sub`), `credit_budget` adds `n` then caps at `BUDGET_CAPACITY`
-(`saturating_add` then `min`). The faithful state-relation view of `agent_budget` is therefore the
-*get-style* read `budgetReadC` (none ⇒ `16`) — the read the kernel literally computes, needing no
-key-uniqueness side condition. The post-values are stated with the same saturating ops the kernel
-runs; `scalar_tac`/`omega` discharge the `u8`↔`Nat` arithmetic downstream. -/
-
-/-- Get-style budget read: the live (last) `G`-keyed budget cell, defaulting to full
-    (`BUDGET_CAPACITY = 16`) when `G` is absent — exactly what the kernel's `KernelState.budget`
-    computes. -/
-def budgetReadC (vm : collections.VecMap types.AgentId Std.U8) (G : types.AgentId) : Std.U8 :=
-  match vmLastEntry vm.entries.val G with
-  | none => types.BUDGET_CAPACITY
-  | some p => p.2
-
-/-- The kernel's `BUDGET_CAPACITY` cell (`16#u8`) carries the abstract `budget_capacity = 16` as its
-    `Nat` value. Both sides are `@[irreducible]` literals, so `simp` (not `rfl`) discharges them. The
-    bridge for the "absent ⇒ full" budget convention (delegate grantee, init root). -/
-@[simp] theorem budgetCapacity_val : (types.BUDGET_CAPACITY).val = Tzimtzum.budget_capacity := by
-  simp [types.BUDGET_CAPACITY, Tzimtzum.budget_capacity]
-
-/-- The `Nat` value of a saturating `u8` subtraction is the (clamped-at-0) `Nat` subtraction. The
-    numeric bridge that lets the abstract `b - w` (`Nat`) debit match the kernel's `saturating_sub`
-    over the `u8` budget cell; `omega` then collapses the abstract/concrete budget posts. -/
-@[simp] theorem saturatingSub_val (x w : Std.U8) :
-    (core.num.U8.saturating_sub x w).val = x.val - w.val := by
-  have hx : x.bv.toNat < 256 := x.bv.isLt
-  show (BitVec.ofNat (UScalarTy.U8.numBits) (max 0 (x.bv.toNat - w.bv.toNat))).toNat = x.bv.toNat - w.bv.toNat
-  rw [BitVec.toNat_ofNat]
-  have hlt : (max 0 (x.bv.toNat - w.bv.toNat)) < 2 ^ 8 := by omega
-  rw [show (2 : Nat) ^ (UScalarTy.U8.numBits) = 2 ^ 8 from rfl, Nat.mod_eq_of_lt hlt]
-  omega
-
-/-- The `Nat` value of a `u8` `saturating_add` then `min BUDGET_CAPACITY` is the saturating credit
-    `min budget_capacity (x.val + n.val)`. Bridges the kernel's `credit_budget` write to the abstract
-    `budget_saturating_credit`. -/
-@[simp] theorem saturatingAddMin_val (x n : Std.U8) :
-    (core.cmp.impls.OrdU8.min (core.num.U8.saturating_add x n) types.BUDGET_CAPACITY).val
-      = min Tzimtzum.budget_capacity (x.val + n.val) := by
-  have hx : x.bv.toNat < 256 := x.bv.isLt
-  have hn : n.bv.toNat < 256 := n.bv.isLt
-  have hmax : (UScalar.max UScalarTy.U8) = 255 := by
-    rw [UScalar.max_UScalarTy_U8_eq, U8.max_eq]
-  have hadd : (core.num.U8.saturating_add x n).val = min (x.val + n.val) 255 := by
-    show (BitVec.ofNat (UScalarTy.U8.numBits)
-        (min (UScalar.max UScalarTy.U8) (x.bv.toNat + n.bv.toNat))).toNat = min (x.val + n.val) 255
-    rw [BitVec.toNat_ofNat, hmax]
-    have hb : min 255 (x.bv.toNat + n.bv.toNat) < 2 ^ 8 := by omega
-    rw [show (2 : Nat) ^ (UScalarTy.U8.numBits) = 2 ^ 8 from rfl, Nat.mod_eq_of_lt hb]
-    show min 255 (x.bv.toNat + n.bv.toNat) = min (x.bv.toNat + n.bv.toNat) 255
-    omega
-  rw [core.cmp.impls.OrdU8.min_val, hadd, budgetCapacity_val, Tzimtzum.budget_capacity]
-  omega
-
-/-- `KernelState.budget` computes the get-style read `budgetReadC`. -/
-theorem budget_spec (st : state.KernelState) (agent : types.AgentId) :
-    state.KernelState.budget st agent ⦃ b => b = budgetReadC st.agent_budget agent ⦄ := by
-  unfold state.KernelState.budget
-  obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
-    (vecMapGet_spec types.AgentId.Insts.CoreCloneClone types.AgentId.Insts.CoreCmpPartialEqAgentId
-      agentId_eq_spec core.clone.CloneU8 st.agent_budget agent)
-  rw [hoEq]; simp only [bind_tc_ok]
-  unfold budgetReadC
-  cases hL : vmLastEntry st.agent_budget.entries.val agent with
-  | none => rw [hL] at ho; subst ho; simp
-  | some p => rw [hL] at ho; subst ho; simp
-
-/-- `affordable agent w` is the concrete affordability test `w ≤ budgetReadC agent`. The abstract
-    `∃ b, agent_budget a b ∧ w ≤ b` connection is made downstream (via `R`'s budget clause +
-    `active_has_budget`); here we only bridge the concrete side, built on `budget_spec`. -/
-theorem affordable_spec (st : state.KernelState) (agent : types.AgentId) (w : Std.U8) :
-    state.KernelState.affordable st agent w ⦃ r =>
-      r = true ↔ w ≤ budgetReadC st.agent_budget agent ⦄ := by
-  unfold state.KernelState.affordable
-  obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (budget_spec st agent)
-  rw [hbEq]; simp only [bind_tc_ok, spec_ok, hb, ge_iff_le, decide_eq_true_eq]
-
-/-- `debit_budget agent w` subtracts the sensitivity weight `w` from `agent`'s budget cell
-    (saturating at `0`) and frames everything else: the post-state's get-style read maps `agent` to
-    `saturating_sub` of its old cell, all other agents unchanged. The capacity bound feeds the
-    underlying `VecMap.insert`. -/
-theorem debitBudget_spec (st : state.KernelState) (agent : types.AgentId) (w : Std.U8)
-    (hcap : st.agent_budget.entries.val.length < Usize.max) :
-    state.KernelState.debit_budget st agent w ⦃ st1 =>
-      st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
-      st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
-      st1.taint_levels = st.taint_levels ∧ st1.integ_levels = st.integ_levels ∧
-      st1.override_used = st.override_used ∧
-      st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
-      st1.invocation_used = st.invocation_used ∧ st1.invocation_egress = st.invocation_egress ∧
-      st1.tool_registered = st.tool_registered ∧ st1.flow_override = st.flow_override ∧
-      (∀ G, budgetReadC st1.agent_budget G =
-        if G = agent then core.num.U8.saturating_sub (budgetReadC st.agent_budget agent) w
-        else budgetReadC st.agent_budget G) ⦄ := by
-  unfold state.KernelState.debit_budget
-  obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (budget_spec st agent)
-  rw [hbEq]; simp only [bind_tc_ok, core.num.U8.saturating_sub, lift, agentId_clone_spec]
-  obtain ⟨vm, hvmEq, hvm⟩ := spec_imp_exists
-    (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec
-      core.clone.CloneU8 st.agent_budget agent (UScalar.saturating_sub b w) hcap)
-  rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
-  refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
-    trivial, trivial, trivial, fun G => ?_⟩
-  show budgetReadC vm G = _
-  by_cases hG : G = agent
-  · have hread : budgetReadC vm G = UScalar.saturating_sub b w := by
-      unfold budgetReadC; rw [hvm G, if_pos hG]
-    rw [hread, hb, hG, if_pos rfl]
-  · have hread : budgetReadC vm G = budgetReadC st.agent_budget G := by
-      unfold budgetReadC; rw [hvm G, if_neg hG]
-    rw [hread, if_neg hG]
-
-/-- `credit_budget agent n` adds `n` to `agent`'s budget cell (saturating at `255`) then caps it at
-    `BUDGET_CAPACITY = 16`, framing everything else: the post-state's get-style read maps `agent` to
-    `min (saturating_add old n) BUDGET_CAPACITY`, all other agents unchanged. The capacity bound feeds
-    the underlying `VecMap.insert`. -/
-theorem creditBudget_spec (st : state.KernelState) (agent : types.AgentId) (n : Std.U8)
-    (hcap : st.agent_budget.entries.val.length < Usize.max) :
-    state.KernelState.credit_budget st agent n ⦃ st1 =>
-      st1.agent_active = st.agent_active ∧ st1.agent_parent = st.agent_parent ∧
-      st1.agent_cap = st.agent_cap ∧ st1.in_flight = st.in_flight ∧
-      st1.taint_levels = st.taint_levels ∧ st1.integ_levels = st.integ_levels ∧
-      st1.override_used = st.override_used ∧
-      st1.agent_instruction = st.agent_instruction ∧ st1.invocation_tool = st.invocation_tool ∧
-      st1.invocation_used = st.invocation_used ∧ st1.invocation_egress = st.invocation_egress ∧
-      st1.tool_registered = st.tool_registered ∧ st1.flow_override = st.flow_override ∧
-      (∀ G, budgetReadC st1.agent_budget G =
-        if G = agent then
-          core.cmp.impls.OrdU8.min (core.num.U8.saturating_add (budgetReadC st.agent_budget agent) n)
-            types.BUDGET_CAPACITY
-        else budgetReadC st.agent_budget G) ⦄ := by
-  unfold state.KernelState.credit_budget
-  obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (budget_spec st agent)
-  rw [hbEq]
-  simp only [bind_tc_ok, core.num.U8.saturating_add, lift, agentId_clone_spec]
-  step*
-  rw [next_post]
-  obtain ⟨vm, hvmEq, hvm⟩ := spec_imp_exists
-    (vecMapInsert_vmLast_spec types.AgentId.Insts.CoreCloneClone
-      types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec core.clone.CloneU8 st.agent_budget
-      agent (core.cmp.impls.OrdU8.min (UScalar.saturating_add b n) types.BUDGET_CAPACITY) hcap)
-  rw [hvmEq]; simp only [bind_tc_ok, spec_ok]
-  refine ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial,
-    trivial, trivial, trivial, fun G => ?_⟩
-  show budgetReadC vm G = _
-  by_cases hG : G = agent
-  · have hread : budgetReadC vm G =
-        core.cmp.impls.OrdU8.min (UScalar.saturating_add b n) types.BUDGET_CAPACITY := by
-      unfold budgetReadC; rw [hvm G, if_pos hG]
-    rw [hread, hb, hG, if_pos rfl]
-  · have hread : budgetReadC vm G = budgetReadC st.agent_budget G := by
-      unfold budgetReadC; rw [hvm G, if_neg hG]
-    rw [hread, if_neg hG]
 
 end ArgusLean.Refinement
