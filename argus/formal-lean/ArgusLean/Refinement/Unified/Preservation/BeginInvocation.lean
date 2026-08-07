@@ -14,6 +14,9 @@ open Aeneas Aeneas.Std Result ControlFlow argus_kernel
 open Aeneas.Std.WP
 
 -- The extracted gate contains several nested linear scans. These bounds keep elaboration stable.
+/- The extracted gate contains nested vector scans followed by a seven-boolean dispatch. Keeping the
+   atom, loop, and post-state proofs staged avoids the simplifier saturation seen when that tree is
+   unfolded as one term; the remaining branch normalization still needs a larger elaboration budget. -/
 set_option maxHeartbeats 4000000
 set_option maxRecDepth 1000000
 

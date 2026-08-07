@@ -12,6 +12,9 @@ namespace ArgusLean.Refinement
 open Aeneas Aeneas.Std Result argus_kernel
 open Aeneas.Std.WP
 
+/- Reuse the staged begin-admissible bridge rather than saturating the extracted live-gate tree.
+   The main proof then normalizes only the positive-admit, positive-deny, and negative branches.
+   `challenge_scoped` supplies the consumed-invocation fact deliberately not rechecked by Rust. -/
 set_option maxHeartbeats 4000000
 set_option maxRecDepth 1000000
 
@@ -78,7 +81,7 @@ theorem authorizeAdmits_spec (st : state.KernelState) (bg : background.Backgroun
                   rw [hlast] at this
                   contradiction
                 have hbpF : bp = false := by
-                  cases bp <;> simp_all [hbp]
+                  cases bp <;> simp_all
                 rw [hbpF] at hp
                 contradiction
               | some p => simp [hlast] at hpC
@@ -278,7 +281,7 @@ theorem authorizePostR (st st' : state.KernelState) (bg : background.BackgroundT
       exact hR.challenges I
   · intro X
     rw [hattA X, hats]
-    exact or_congr (hR.consumedAtt X) (by simp [attestationId_eq_spec])
+    exact or_congr (hR.consumedAtt X) (by simp)
   · exact hndPending
   · change vmNodupKeys ch
     unfold vmNodupKeys
