@@ -337,4 +337,88 @@ theorem ingestConfInnerLoop_spec (bg : background.BackgroundTheory) (pconf : typ
       exact hinv
   · exact ⟨rfl, he0, by simpa using hstart⟩
 
+/-- Per-pending confidentiality admissibility: every attested egress of `p` admits `pconf`. -/
+def confRecordC (bg : background.BackgroundTheory) (pconf : types.ConfLevel)
+    (p : types.InvocationId × types.PendingInvocation) : Prop :=
+  ∀ E ∈ p.2.egress.items.val, egressCondC bg pconf (vouchedC p.2) E
+
+theorem ingestConfHoldLoop_spec (s : state.KernelState) (bg : background.BackgroundTheory)
+    (a : types.AgentId) (pconf : types.ConfLevel)
+    (hnd : (s.pending.entries.val.map Prod.fst).Nodup)
+    (ok1 : Bool) (i0 : Usize) (hi0 : i0.val ≤ s.pending.entries.val.length)
+    (hstart : ok1 = true ↔ ∀ p ∈ s.pending.entries.val.take i0.val,
+      p.2.agent = a → confRecordC bg pconf p) :
+    transitions.ingest_conf_hold_loop0 s bg a pconf ok1 i0 ⦃ b =>
+      b = true ↔ ∀ p ∈ s.pending.entries.val, p.2.agent = a → confRecordC bg pconf p ⦄ := by
+  unfold transitions.ingest_conf_hold_loop0
+  apply loop.spec_decr_nat
+    (measure := fun p => s.pending.entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ s.pending.entries.val.length ∧
+      (p.1 = true ↔ ∀ q ∈ s.pending.entries.val.take p.2.val,
+        q.2.agent = a → confRecordC bg pconf q))
+  · rintro ⟨okc, i⟩ ⟨hile, hinv⟩
+    simp only [transitions.ingest_conf_hold_loop0.body, collections.VecMap.len, alloc.vec.Vec.len,
+      bind_tc_ok]
+    split
+    case isTrue h =>
+      have hlt : i.val < s.pending.entries.val.length := by scalar_tac
+      obtain ⟨k, hkEq, hk⟩ := spec_imp_exists
+        (vecMapKeyAt_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+          types.PendingInvocation.Insts.CoreCloneClone s.pending i hlt)
+      rw [hkEq]; simp only [invocationId_clone_spec, bind_tc_ok]
+      obtain ⟨o, hoEq, ho⟩ := spec_imp_exists
+        (vecMapGetCloned_spec types.InvocationId.Insts.CoreCloneClone
+          types.InvocationId.Insts.CoreCmpPartialEqInvocationId invocationId_eq_spec
+          types.PendingInvocation.Insts.CoreCloneClone pendingInvocation_clone_spec s.pending k)
+      have hlast : vmLastEntry s.pending.entries.val k =
+          some ((s.pending.entries.val[i.val]'hlt).1, (s.pending.entries.val[i.val]'hlt).2) := by
+        rw [hk]; exact (vmLastEntry_nodup _ _ _ hnd).mpr (by simpa using List.getElem_mem hlt)
+      rw [hoEq, ho, hlast]
+      simp only [Option.map_some, agentId_eq_spec, vouched_eq, bind_tc_ok]
+      set p := (s.pending.entries.val[i.val]'hlt) with hpdef
+      have hget : s.pending.entries.val[i.val]? = some (p.1, p.2) := by
+        rw [List.getElem?_eq_getElem hlt]
+      have htk : (∀ q ∈ s.pending.entries.val.take (i.val + 1),
+            q.2.agent = a → confRecordC bg pconf q) ↔
+          ((∀ q ∈ s.pending.entries.val.take i.val, q.2.agent = a → confRecordC bg pconf q)
+            ∧ (p.2.agent = a → confRecordC bg pconf p)) := by
+        rw [List.take_add_one, List.getElem?_eq_getElem hlt]
+        simp only [Option.toList_some, List.mem_append, List.mem_singleton, ← hpdef]
+        constructor
+        · intro hh; exact ⟨fun q hq => hh q (Or.inl hq), hh p (Or.inr rfl)⟩
+        · rintro ⟨h1, h2⟩ q (hq | hq)
+          · exact h1 q hq
+          · subst hq; exact h2
+      by_cases hag : p.2.agent = a
+      · simp only [hag, decide_true, reduceIte]
+        obtain ⟨ok2, hok2Eq, hok2⟩ := spec_imp_exists
+          (ingestConfInnerLoop_spec (okStart := okc) bg pconf p.2.egress okc (vouchedC p.2)
+            0#usize (by simp) (by simp))
+        rw [hok2Eq]; simp only [bind_tc_ok]
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [show i2.val = i.val + 1 from by scalar_tac, htk, hok2, hinv]
+        constructor
+        · rintro ⟨h1, h2⟩; exact ⟨h1, fun _ => h2⟩
+        · rintro ⟨h1, h2⟩; exact ⟨h1, h2 hag⟩
+      · simp only [hag, decide_false, Bool.false_eq_true, reduceIte]
+        step*
+        refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+        rw [show i2.val = i.val + 1 from by scalar_tac, htk, hinv]
+        exact ⟨fun hh => ⟨hh, fun hc => absurd hc hag⟩, fun hh => hh.1⟩
+    case isFalse h =>
+      have heq' : i.val = s.pending.entries.val.length := by scalar_tac
+      simp only [spec_ok, heq', List.take_length] at hinv ⊢
+      exact hinv
+  · exact ⟨hi0, by simpa using hstart⟩
+
+theorem ingestConfHold_spec (s : state.KernelState) (bg : background.BackgroundTheory)
+    (a : types.AgentId) (pconf : types.ConfLevel)
+    (hnd : (s.pending.entries.val.map Prod.fst).Nodup) :
+    transitions.ingest_conf_hold s bg a pconf ⦃ b =>
+      b = true ↔ ∀ p ∈ s.pending.entries.val, p.2.agent = a → confRecordC bg pconf p ⦄ := by
+  unfold transitions.ingest_conf_hold
+  exact ingestConfHoldLoop_spec s bg a pconf hnd true 0#usize (by simp) (by simp)
+
 end ArgusLean.Refinement
