@@ -157,6 +157,18 @@ def challengeRel (ac : Tzimtzum.ChallengeScope types.AgentId types.ToolId capabi
   ∧ ac.args_hash = cc.args_hash
   ∧ (ac.authorized ↔ cc.authorized = true)
 
+/-- Abstract ↔ concrete inspection attestation input. -/
+def inspectionAttestationRel
+    (aa : Tzimtzum.InspectionAttestation types.InvocationId types.ChallengeId
+      types.AttestationId types.PolicyDigest types.ContentHash)
+    (ca : types.InspectionAttestation) : Prop :=
+  aa.id = ca.id
+  ∧ aa.inv = ca.inv
+  ∧ aa.challenge = ca.challenge
+  ∧ aa.args_hash = ca.args_hash
+  ∧ aa.policy_digest = ca.policy_digest
+  ∧ (aa.positive ↔ ca.positive = true)
+
 /-- Abstract ↔ concrete `CrossingGrant` record (the `u32` counters carry their `Nat` values). -/
 def crossingGrantRel (ag : Tzimtzum.CrossingGrant) (cg : types.CrossingGrant) : Prop :=
   ag.remaining = cg.remaining.val ∧ ag.provisioned = cg.provisioned.val

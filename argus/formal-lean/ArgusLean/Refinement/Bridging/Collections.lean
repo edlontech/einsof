@@ -1544,4 +1544,78 @@ theorem getSetOrEmptyLen_spec {K T : Type} [DecidableEq K]
       rw [hLk, Option.some_inj, Prod.mk.injEq] at hvs
       obtain ⟨_, rfl⟩ := hvs; exact hv
 
+/-! ## `VecMap.contains_key` -/
+
+/-- `VecMap.contains_key`'s fold decides whether any entry has the queried key. -/
+theorem containsKeyLoop_spec {K V : Type} [DecidableEq K]
+    (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (self : collections.VecMap K V) (key : K) (found : Bool) (i : Usize)
+    (hi : i.val ≤ self.entries.val.length)
+    (hf : found = true ↔ ∃ p ∈ self.entries.val.take i.val, p.1 = key) :
+    collections.VecMap.contains_key_loop eqK self key found i ⦃ b =>
+      b = true ↔ ∃ p ∈ self.entries.val, p.1 = key ⦄ := by
+  unfold collections.VecMap.contains_key_loop
+  apply loop.spec_decr_nat
+    (measure := fun p => self.entries.val.length - p.2.val)
+    (inv := fun p => p.2.val ≤ self.entries.val.length ∧
+      (p.1 = true ↔ ∃ q ∈ self.entries.val.take p.2.val, q.1 = key))
+  · rintro ⟨fnd, i'⟩ ⟨hile, hfL⟩
+    simp only [collections.VecMap.contains_key_loop.body, alloc.vec.Vec.len]
+    split
+    case isTrue h =>
+      have hlt : i'.val < self.entries.val.length := by scalar_tac
+      step as ⟨k, v, he⟩
+      rw [heq k key]
+      simp only [bind_tc_ok]
+      have hext : (∃ p ∈ self.entries.val.take (i'.val + 1), p.1 = key) ↔
+          (∃ p ∈ self.entries.val.take i'.val, p.1 = key) ∨ k = key := by
+        rw [List.take_add_one, List.getElem?_eq_getElem hlt]
+        simp only [Option.toList_some, List.mem_append, List.mem_singleton]
+        constructor
+        · rintro ⟨p, hp | hp, hpk⟩
+          · exact Or.inl ⟨p, hp, hpk⟩
+          · subst hp; rw [← he] at hpk; exact Or.inr hpk
+        · rintro (⟨p, hp, hpk⟩ | hk)
+          · exact ⟨p, Or.inl hp, hpk⟩
+          · exact ⟨(k, v), Or.inr he, hk⟩
+      have hval : (if decide (k = key) then (Result.ok true : Result Bool) else Result.ok fnd) =
+          Result.ok (fnd || decide (k = key)) := by by_cases hk : k = key <;> simp [hk]
+      rw [hval]
+      simp only [bind_tc_ok]
+      step*
+      refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+      rw [show i2.val = i'.val + 1 from i2_post, Bool.or_eq_true, decide_eq_true_eq, hfL, hext]
+    case isFalse h =>
+      have heq' : i'.val = self.entries.val.length := by scalar_tac
+      simp only [spec_ok, heq', List.take_length] at hfL ⊢
+      exact hfL
+  · exact ⟨hi, hf⟩
+
+/-- `VecMap.contains_key` decides raw key presence. Under `vmNodupKeys` this is also live-key
+    presence, but the raw form is what freshness gates require. -/
+theorem containsKey_spec {K V : Type} [DecidableEq K]
+    (cloneK : core.clone.Clone K) (eqK : core.cmp.PartialEq K K)
+    (heq : ∀ a b : K, eqK.eq a b = .ok (decide (a = b)))
+    (cloneV : core.clone.Clone V) (self : collections.VecMap K V) (key : K) :
+    collections.VecMap.contains_key cloneK eqK cloneV self key ⦃ b =>
+      b = true ↔ ∃ p ∈ self.entries.val, p.1 = key ⦄ := by
+  unfold collections.VecMap.contains_key
+  exact containsKeyLoop_spec eqK heq self key false 0#usize (by scalar_tac) (by simp)
+
+/-- Faithful disequality for challenge identifiers. -/
+@[simp] theorem challengeId_ne_spec (a b : types.ChallengeId) :
+    types.ChallengeId.Insts.CoreCmpPartialEqChallengeId.ne a b = .ok (decide (a ≠ b)) := by
+  simp [core.cmp.PartialEq.ne.default]
+
+/-- Faithful disequality for content hashes. -/
+@[simp] theorem contentHash_ne_spec (a b : types.ContentHash) :
+    types.ContentHash.Insts.CoreCmpPartialEqContentHash.ne a b = .ok (decide (a ≠ b)) := by
+  simp [core.cmp.PartialEq.ne.default]
+
+/-- Faithful disequality for policy digests. -/
+@[simp] theorem policyDigest_ne_spec (a b : types.PolicyDigest) :
+    types.PolicyDigest.Insts.CoreCmpPartialEqPolicyDigest.ne a b = .ok (decide (a ≠ b)) := by
+  simp [core.cmp.PartialEq.ne.default]
+
 end ArgusLean.Refinement
