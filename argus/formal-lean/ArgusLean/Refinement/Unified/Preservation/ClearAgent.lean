@@ -509,6 +509,105 @@ noncomputable def clearAbs (a : AbsState) (agent : types.AgentId) : AbsState :=
     challenges := Tzimtzum.dropChallengesOf a.challenges agent,
     crossing_grants := Tzimtzum.dropGrantsOf a.crossing_grants agent }
 
+/-- The `pending` `R`-clause under a `keepAgentP` value-filter (shared by clear + delegate). -/
+theorem pending_clause_filtered (st st' : state.KernelState) (a : AbsState) (agent : types.AgentId)
+    (hRpend : ∀ I, optRel pendingRel (a.pending I) (pendingC st I))
+    (hnd : vmNodupKeys st.pending)
+    (hpend : st'.pending.entries.val =
+      st.pending.entries.val.filter (keepAgentP (·.agent) agent)) :
+    ∀ I, optRel pendingRel (Tzimtzum.dropPendingOf a.pending agent I) (pendingC st' I) := by
+  intro I
+  have hRp := hRpend I
+  unfold pendingC at hRp ⊢
+  rw [hpend, vmLastEntry_filter_keep _ _ hnd I]
+  cases hL : vmLastEntry st.pending.entries.val I with
+  | none =>
+    rw [hL] at hRp; simp only [Option.map_none] at hRp
+    cases haI : a.pending I with
+    | none => simp [Tzimtzum.dropPendingOf, haI, optRel]
+    | some J => rw [haI] at hRp; exact hRp.elim
+  | some p =>
+    rw [hL] at hRp; simp only [Option.map_some] at hRp
+    cases haI : a.pending I with
+    | none => rw [haI] at hRp; exact hRp.elim
+    | some J =>
+      rw [haI] at hRp
+      have hjt : J.agent = p.2.agent := hRp.1
+      simp only [Tzimtzum.dropPendingOf, haI]
+      by_cases hag : p.2.agent = agent
+      · rw [if_pos (by rw [hjt]; exact hag)]
+        simp only [keepAgentP, hag, ne_eq, not_true_eq_false, decide_false, Bool.false_eq_true,
+          if_false, Option.map_none, optRel]
+      · rw [if_neg (by rw [hjt]; exact hag)]
+        simp only [keepAgentP, hag, ne_eq, not_false_eq_true, decide_true, if_true, Option.map_some]
+        exact hRp
+
+/-- The `challenges` `R`-clause under a `keepAgentP` value-filter. -/
+theorem challenges_clause_filtered (st st' : state.KernelState) (a : AbsState)
+    (agent : types.AgentId)
+    (hRchal : ∀ I, optRel challengeRel (a.challenges I) (challengeC st I))
+    (hnd : vmNodupKeys st.challenges)
+    (hchal : st'.challenges.entries.val =
+      st.challenges.entries.val.filter (keepAgentP (·.agent) agent)) :
+    ∀ I, optRel challengeRel (Tzimtzum.dropChallengesOf a.challenges agent I) (challengeC st' I) := by
+  intro I
+  have hRc := hRchal I
+  unfold challengeC at hRc ⊢
+  rw [hchal, vmLastEntry_filter_keep _ _ hnd I]
+  cases hL : vmLastEntry st.challenges.entries.val I with
+  | none =>
+    rw [hL] at hRc; simp only [Option.map_none] at hRc
+    cases haI : a.challenges I with
+    | none => simp [Tzimtzum.dropChallengesOf, haI, optRel]
+    | some sc => rw [haI] at hRc; exact hRc.elim
+  | some p =>
+    rw [hL] at hRc; simp only [Option.map_some] at hRc
+    cases haI : a.challenges I with
+    | none => rw [haI] at hRc; exact hRc.elim
+    | some sc =>
+      rw [haI] at hRc
+      have hjt : sc.agent = p.2.agent := hRc.2.1
+      simp only [Tzimtzum.dropChallengesOf, haI]
+      by_cases hag : p.2.agent = agent
+      · rw [if_pos (by rw [hjt]; exact hag)]
+        simp only [keepAgentP, hag, ne_eq, not_true_eq_false, decide_false, Bool.false_eq_true,
+          if_false, Option.map_none, optRel]
+      · rw [if_neg (by rw [hjt]; exact hag)]
+        simp only [keepAgentP, hag, ne_eq, not_false_eq_true, decide_true, if_true, Option.map_some]
+        exact hRc
+
+/-- The `crossing_grants` `R`-clause under a `keepGrantP` key-filter. -/
+theorem grants_clause_filtered (st st' : state.KernelState) (a : AbsState) (agent : types.AgentId)
+    (hRgrant : ∀ A D, optRel crossingGrantRel (a.crossing_grants A D)
+      (crossingGrantC st { agent := A, assignment := D }))
+    (hnd : vmNodupKeys st.crossing_grants)
+    (hgrant : st'.crossing_grants.entries.val =
+      st.crossing_grants.entries.val.filter (keepGrantP agent)) :
+    ∀ A D, optRel crossingGrantRel (Tzimtzum.dropGrantsOf a.crossing_grants agent A D)
+      (crossingGrantC st' { agent := A, assignment := D }) := by
+  intro A D
+  have hRg := hRgrant A D
+  unfold crossingGrantC at hRg ⊢
+  rw [hgrant, vmLastEntry_filter_keep _ _ hnd { agent := A, assignment := D }]
+  cases hL : vmLastEntry st.crossing_grants.entries.val { agent := A, assignment := D } with
+  | none =>
+    rw [hL] at hRg; simp only [Option.map_none] at hRg
+    cases haD : a.crossing_grants A D with
+    | none => simp [Tzimtzum.dropGrantsOf, haD, optRel]
+    | some g => rw [haD] at hRg; exact hRg.elim
+  | some p =>
+    rw [hL] at hRg; simp only [Option.map_some] at hRg
+    have hpk : p.1 = { agent := A, assignment := D } := vmLastEntry_fst _ _ _ hL
+    simp only [Tzimtzum.dropGrantsOf]
+    by_cases hA : A = agent
+    · rw [if_pos hA]
+      simp only [keepGrantP, hpk, hA, ne_eq, not_true_eq_false, decide_false, Bool.false_eq_true,
+        if_false, Option.map_none, optRel]
+    · rw [if_neg hA]
+      simp only [keepGrantP, hpk, hA, ne_eq, not_false_eq_true, decide_true, if_true,
+        Option.map_some]
+      exact hRg
+
 /-- Generic R-transport: any `st'` matching the `clear_agent agent` characterization refines
     `clearAbs a agent`. Consumed by `revoke` / `cascade_revoke` after inversion. -/
 theorem clear_preservesR (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState)
