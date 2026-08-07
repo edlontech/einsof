@@ -421,4 +421,131 @@ theorem ingestConfHold_spec (s : state.KernelState) (bg : background.BackgroundT
   unfold transitions.ingest_conf_hold
   exact ingestConfHoldLoop_spec s bg a pconf hnd true 0#usize (by simp) (by simp)
 
+/-! ## Bridges from concrete `∀`-over-entries hold results to abstract hold predicates -/
+
+/-- `vouched` correspondence under `admissionRel`. -/
+theorem vouchedC_bridge
+    (J : Tzimtzum.PendingInvocation types.AgentId types.ToolId capability.CapKind types.EgressKind
+      types.AttestationId types.PolicyDigest) (cj : types.PendingInvocation)
+    (h : admissionRel J.admission cj.admission) :
+    Tzimtzum.vouched J ↔ vouchedC cj = true := by
+  unfold Tzimtzum.vouched vouchedC
+  cases haa : J.admission <;> cases hca : cj.admission <;>
+    simp_all [admissionRel]
+
+/-- Bridge helper: an abstract pending record `some J` corresponds to a concrete last-match entry. -/
+theorem abs_pending_to_entry (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState)
+    (hR : R st bg a) (I : types.InvocationId)
+    (J : Tzimtzum.PendingInvocation types.AgentId types.ToolId capability.CapKind types.EgressKind
+      types.AttestationId types.PolicyDigest) (hJ : a.pending I = some J) :
+    ∃ cj, (I, cj) ∈ st.pending.entries.val ∧ pendingRel J cj := by
+  have hRp := hR.pending I; rw [hJ] at hRp
+  cases hpc : pendingC st I with
+  | none => rw [hpc] at hRp; simp only [optRel] at hRp
+  | some cj =>
+    rw [hpc] at hRp; simp only [optRel] at hRp
+    have hlast : vmLastEntry st.pending.entries.val I = some (I, cj) := by
+      unfold pendingC at hpc
+      cases hL : vmLastEntry st.pending.entries.val I with
+      | none => rw [hL] at hpc; simp at hpc
+      | some q =>
+        obtain ⟨qk, qv⟩ := q
+        have hq1 : qk = I := vmLastEntry_fst _ _ _ hL
+        rw [hL] at hpc; simp only [Option.map_some, Option.some_inj] at hpc
+        rw [hq1, hpc]
+    exact ⟨cj, (vmLastEntry_nodup _ _ _ hR.ndPending).mp hlast, hRp⟩
+
+/-- Bridge helper: a concrete last-match entry corresponds to an abstract `some J`. -/
+theorem entry_to_abs_pending (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState)
+    (hR : R st bg a) (p : types.InvocationId × types.PendingInvocation)
+    (hp : p ∈ st.pending.entries.val) :
+    ∃ J, a.pending p.1 = some J ∧ pendingRel J p.2 := by
+  have hlast : vmLastEntry st.pending.entries.val p.1 = some (p.1, p.2) :=
+    (vmLastEntry_nodup _ _ _ hR.ndPending).mpr (by simpa using hp)
+  have hpc : pendingC st p.1 = some p.2 := by unfold pendingC; rw [hlast]; rfl
+  have hRp := hR.pending p.1; rw [hpc] at hRp
+  cases haI : a.pending p.1 with
+  | none => rw [haI] at hRp; simp only [optRel] at hRp
+  | some J => rw [haI] at hRp; simp only [optRel] at hRp; exact ⟨J, rfl, hRp⟩
+
+theorem ingestClearHold_bridge (st : state.KernelState) (bg : background.BackgroundTheory)
+    (a : AbsState) (hR : R st bg a) (agent : types.AgentId) (pconf : types.ConfLevel) :
+    (∀ p ∈ st.pending.entries.val, p.2.agent = agent →
+        confLeC pconf p.2.policy.conf_clearance = true) ↔
+      Tzimtzum.ingestClearHold a agent (confA pconf) := by
+  constructor
+  · intro hconc I J hpJ hJa
+    obtain ⟨cj, hmem, hpr⟩ := abs_pending_to_entry st bg a hR I J hpJ
+    obtain ⟨hag, hsnap, _⟩ := hpr
+    obtain ⟨_, _, hclear, _⟩ := hsnap
+    have hcja : cj.agent = agent := by rw [← hag]; exact hJa
+    have := hconc (I, cj) hmem hcja
+    show Tzimtzum.le_conf (confA pconf) J.policy.conf_clearance
+    rw [hclear, le_conf_confLeC_both]; exact this
+  · intro habs p hp hpa
+    obtain ⟨J, haI, hpr⟩ := entry_to_abs_pending st bg a hR p hp
+    obtain ⟨hag, hsnap, _⟩ := hpr
+    obtain ⟨_, _, hclear, _⟩ := hsnap
+    have hJa : J.agent = agent := by rw [hag]; exact hpa
+    have := habs p.1 J haI hJa
+    show confLeC pconf p.2.policy.conf_clearance = true
+    rw [← le_conf_confLeC_both, ← hclear]; exact this
+
+theorem ingestIntegHold_bridge (st : state.KernelState) (bg : background.BackgroundTheory)
+    (a : AbsState) (hR : R st bg a) (agent : types.AgentId) (pinteg : types.IntegLevel) :
+    (∀ p ∈ st.pending.entries.val, p.2.agent = agent →
+        (integLeC p.2.policy.integ_floor pinteg = true ∨
+          (integLeC p.2.policy.integ_inspect pinteg = true ∧ vouchedC p.2 = true))) ↔
+      Tzimtzum.ingestIntegHold a agent (integA pinteg) := by
+  constructor
+  · intro hconc I J hpJ hJa
+    obtain ⟨cj, hmem, hpr⟩ := abs_pending_to_entry st bg a hR I J hpJ
+    obtain ⟨hag, hsnap, _, hadm, _⟩ := hpr
+    obtain ⟨_, _, _, hfloor, hinspect, _⟩ := hsnap
+    have hcja : cj.agent = agent := by rw [← hag]; exact hJa
+    rcases hconc (I, cj) hmem hcja with hh | ⟨h1, h2⟩
+    · left
+      show Tzimtzum.le_integ J.policy.integ_floor (integA pinteg)
+      rw [hfloor, le_integ_integLeC_both]; exact hh
+    · right
+      refine ⟨?_, (vouchedC_bridge J cj hadm).mpr h2⟩
+      show Tzimtzum.le_integ J.policy.integ_inspect (integA pinteg)
+      rw [hinspect, le_integ_integLeC_both]; exact h1
+  · intro habs p hp hpa
+    obtain ⟨J, haI, hpr⟩ := entry_to_abs_pending st bg a hR p hp
+    obtain ⟨hag, hsnap, _, hadm, _⟩ := hpr
+    obtain ⟨_, _, _, hfloor, hinspect, _⟩ := hsnap
+    have hJa : J.agent = agent := by rw [hag]; exact hpa
+    rcases habs p.1 J haI hJa with hh | ⟨h1, h2⟩
+    · left; rw [← le_integ_integLeC_both, ← hfloor]; exact hh
+    · right
+      refine ⟨?_, (vouchedC_bridge J p.2 hadm).mp h2⟩
+      rw [← le_integ_integLeC_both, ← hinspect]; exact h1
+
+theorem ingestConfHold_bridge (st : state.KernelState) (bg : background.BackgroundTheory)
+    (a : AbsState) (hR : R st bg a) (agent : types.AgentId) (pconf : types.ConfLevel) :
+    (∀ p ∈ st.pending.entries.val, p.2.agent = agent → confRecordC bg pconf p) ↔
+      Tzimtzum.ingestConfHold a agent (confA pconf) := by
+  have hfa : ∀ E, a.flow_allows (confA pconf) E ↔ ceilAdmitsC bg.allow_ceiling pconf E = true := by
+    intro E; rw [hR.flowAllows]; simp
+  have hfi : ∀ E, a.flow_inspects (confA pconf) E ↔ ceilAdmitsC bg.inspect_ceiling pconf E = true := by
+    intro E; rw [hR.flowInspects]; simp
+  constructor
+  · intro hconc I J E hpJ hJa hJE
+    obtain ⟨cj, hmem, hpr⟩ := abs_pending_to_entry st bg a hR I J hpJ
+    obtain ⟨hag, _, hegress, hadm, _⟩ := hpr
+    have hcja : cj.agent = agent := by rw [← hag]; exact hJa
+    have hcjE : E ∈ cj.egress.items.val := (hegress E).mp hJE
+    rcases hconc (I, cj) hmem hcja E hcjE with hh | ⟨h1, h2⟩
+    · exact Or.inl ((hfa E).mpr hh)
+    · exact Or.inr ⟨(hfi E).mpr h1, (vouchedC_bridge J cj hadm).mpr h2⟩
+  · intro habs p hp hpa E hpE
+    obtain ⟨J, haI, hpr⟩ := entry_to_abs_pending st bg a hR p hp
+    obtain ⟨hag, _, hegress, hadm, _⟩ := hpr
+    have hJa : J.agent = agent := by rw [hag]; exact hpa
+    have hJE : J.egress E := (hegress E).mpr hpE
+    rcases habs p.1 J E haI hJa hJE with hh | ⟨h1, h2⟩
+    · exact Or.inl ((hfa E).mp hh)
+    · exact Or.inr ⟨(hfi E).mp h1, (vouchedC_bridge J p.2 hadm).mp h2⟩
+
 end ArgusLean.Refinement
