@@ -221,7 +221,7 @@ fn retained_text(state: &KernelState) -> Result<TextBudget, ErrorN> {
     Ok(text)
 }
 
-fn check_state(state: &KernelState) -> Result<(), ErrorN> {
+fn check_state_shape(state: &KernelState) -> Result<(), ErrorN> {
     check_len(state.agent_active.len(), MAX_AGENTS)?;
     check_len(state.agent_parent.len(), MAX_PARENT_OR_LABEL_KEYS)?;
     check_len(state.agent_cap.len(), MAX_PARENT_OR_LABEL_KEYS)?;
@@ -254,6 +254,15 @@ fn check_state(state: &KernelState) -> Result<(), ErrorN> {
         check_len(challenge.egress.len(), MAX_EGRESS_KINDS)?;
     }
     Ok(())
+}
+
+fn checked_state_text(state: &KernelState) -> Result<TextBudget, ErrorN> {
+    check_state_shape(state)?;
+    retained_text(state)
+}
+
+pub(crate) fn check_state(state: &KernelState) -> Result<(), ErrorN> {
+    checked_state_text(state).map(|_| ())
 }
 
 fn add_label_key_if_absent<T: Clone + PartialEq>(
@@ -488,9 +497,8 @@ pub fn preflight(state: &KernelState, sequence: u64, command: &CommandN) -> Resu
     if next > MAX_ACCEPTED_SEQUENCE {
         return Err(ErrorN::SequenceExhausted);
     }
-    check_state(state)?;
+    let mut text = checked_state_text(state)?;
     check_command(command)?;
-    let mut text = retained_text(state)?;
     check_post_transition(state, command, &mut text)
 }
 

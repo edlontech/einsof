@@ -90,7 +90,7 @@ trait Canonical {
     fn write_canonical<S: Sink>(&self, out: &mut Transcript<S>);
 }
 
-trait CanonicalTag {
+pub(crate) trait CanonicalTag {
     fn canonical_tag(&self) -> u8;
 }
 

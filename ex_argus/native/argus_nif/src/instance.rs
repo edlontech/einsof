@@ -4,7 +4,8 @@ use argus_kernel::{BackgroundTheory, KernelState};
 use rustler::{Resource, ResourceArc};
 
 use crate::{
-    BackgroundN, ChainN, CommandN, EnvelopeN, ErrorN, NativeResult, VERSION, genesis, limits, link,
+    BackgroundN, ChainN, CommandN, EnvelopeN, ErrorN, NativeResult, StateN, VERSION, genesis,
+    limits, link,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +43,12 @@ impl LiveInstance {
             sequence: current.sequence,
             head: current.head,
         })
+    }
+
+    fn state(&self) -> Result<StateN, ErrorN> {
+        let current = self.inner.try_lock().map_err(map_try_lock)?;
+        limits::check_state(&current.kernel)?;
+        Ok(StateN::from_kernel(&current.kernel))
     }
 
     fn apply(&self, command: CommandN) -> Result<EnvelopeN, ErrorN> {
@@ -99,17 +106,22 @@ pub fn instance_status(instance: ResourceArc<LiveInstance>) -> NativeResult<Chai
     instance.status()
 }
 
+#[rustler::nif(schedule = "DirtyCpu")]
+pub fn instance_state(instance: ResourceArc<LiveInstance>) -> NativeResult<StateN> {
+    instance.state()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::thread;
 
-    use argus_kernel::AgentId;
+    use argus_kernel::{AgentId, ToolId};
 
     use crate::{
         ActionN, BackgroundN, ChainN, CommandN, EgressKindN, EnvelopeN, ErrorN, KernelErrorN,
-        ModeN, RegisterToolActionN, RegisterToolCommandN, VERSION, genesis, limits, link,
+        ModeN, RegisterToolActionN, RegisterToolCommandN, StateN, VERSION, genesis, limits, link,
     };
 
     use super::LiveInstance;
@@ -128,7 +140,7 @@ mod tests {
         })
     }
 
-    fn snapshot(instance: &LiveInstance) -> super::InstanceState {
+    fn triple(instance: &LiveInstance) -> super::InstanceState {
         instance.inner.try_lock().unwrap().clone()
     }
 
@@ -186,10 +198,10 @@ mod tests {
     fn kernel_refusal_leaves_state_sequence_and_head_unchanged() {
         let instance = LiveInstance::new(background());
         assert!(instance.apply(register_tool("tool")).is_ok());
-        let before = snapshot(&instance);
+        let before = triple(&instance);
 
         assert_eq!(
-            (instance.apply(register_tool("tool")), snapshot(&instance)),
+            (instance.apply(register_tool("tool")), triple(&instance)),
             (
                 Err(ErrorN::Kernel(KernelErrorN::ToolAlreadyRegistered)),
                 before,
@@ -200,14 +212,14 @@ mod tests {
     #[test]
     fn capacity_refusal_leaves_state_sequence_and_head_unchanged() {
         let instance = LiveInstance::new(background());
-        let before = snapshot(&instance);
+        let before = triple(&instance);
 
         assert_eq!(
             (
                 instance.apply(register_tool(
                     &"x".repeat(limits::MAX_OPAQUE_UTF8_BYTES + 1)
                 )),
-                snapshot(&instance),
+                triple(&instance),
             ),
             (Err(ErrorN::CapacityExceeded), before)
         );
@@ -217,11 +229,40 @@ mod tests {
     fn sequence_refusal_leaves_state_sequence_and_head_unchanged() {
         let instance = LiveInstance::new(background());
         instance.inner.try_lock().unwrap().sequence = limits::MAX_ACCEPTED_SEQUENCE;
-        let before = snapshot(&instance);
+        let before = triple(&instance);
 
         assert_eq!(
-            (instance.apply(register_tool("tool")), snapshot(&instance)),
+            (instance.apply(register_tool("tool")), triple(&instance)),
             (Err(ErrorN::SequenceExhausted), before)
+        );
+    }
+
+    #[test]
+    fn state_observation_is_read_only() {
+        let instance = LiveInstance::new(background());
+        let before = triple(&instance);
+
+        assert_eq!(
+            (instance.state(), triple(&instance)),
+            (Ok(StateN::from_kernel(&before.kernel)), before)
+        );
+    }
+
+    #[test]
+    fn state_observation_rejects_capacity_excess_without_mutation() {
+        let instance = LiveInstance::new(background());
+        instance
+            .inner
+            .try_lock()
+            .unwrap()
+            .kernel
+            .tool_registered
+            .insert(ToolId("x".repeat(limits::MAX_OPAQUE_UTF8_BYTES + 1)));
+        let before = triple(&instance);
+
+        assert_eq!(
+            (instance.state(), triple(&instance)),
+            (Err(ErrorN::CapacityExceeded), before)
         );
     }
 
@@ -231,8 +272,16 @@ mod tests {
         let _held = instance.inner.try_lock().unwrap();
 
         assert_eq!(
-            (instance.apply(register_tool("tool")), instance.status()),
-            (Err(ErrorN::InstanceBusy), Err(ErrorN::InstanceBusy))
+            (
+                instance.apply(register_tool("tool")),
+                instance.status(),
+                instance.state(),
+            ),
+            (
+                Err(ErrorN::InstanceBusy),
+                Err(ErrorN::InstanceBusy),
+                Err(ErrorN::InstanceBusy),
+            )
         );
     }
 
@@ -250,8 +299,16 @@ mod tests {
         );
 
         assert_eq!(
-            (instance.apply(register_tool("tool")), instance.status()),
-            (Err(ErrorN::ResourcePoisoned), Err(ErrorN::ResourcePoisoned),)
+            (
+                instance.apply(register_tool("tool")),
+                instance.status(),
+                instance.state(),
+            ),
+            (
+                Err(ErrorN::ResourcePoisoned),
+                Err(ErrorN::ResourcePoisoned),
+                Err(ErrorN::ResourcePoisoned),
+            )
         );
     }
 }
