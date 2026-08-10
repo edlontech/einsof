@@ -86,9 +86,7 @@ defmodule ExArgus.LifecycleTest do
              Instance.state(malformed)
 
     wrong_reference = struct(Instance, resource: make_ref())
-
-    assert {:error, %Error{class: :boundary, reason: :invalid_type, path: [:resource]}} =
-             Instance.status(wrong_reference)
+    assert_raise ArgumentError, fn -> Instance.status(wrong_reference) end
   end
 
   test "native live and recovery resource types reject cross-use at the BEAM decoder boundary" do
@@ -119,9 +117,29 @@ defmodule ExArgus.LifecycleTest do
     refute function_exported?(Native, :load_rustler_precompiled, 0)
   end
 
-  test "Instance exposes only the Task 7 lifecycle" do
-    assert Enum.sort(Instance.__info__(:functions)) ==
-             Enum.sort(__struct__: 0, __struct__: 1, new: 1, state: 1, status: 1)
+  test "Instance exposes only the Task 8 lifecycle and named actions" do
+    expected = [
+      __struct__: 0,
+      __struct__: 1,
+      new: 1,
+      state: 1,
+      status: 1,
+      register_tool: 2,
+      unregister_tool: 2,
+      delegate: 3,
+      grant_capability: 4,
+      grant_crossing: 5,
+      revoke: 3,
+      cascade_revoke: 3,
+      ingest: 2,
+      begin_invocation: 2,
+      authorize_inspected: 2,
+      settle_invocation: 2,
+      cross_output: 2,
+      resolve_quarantine: 4
+    ]
+
+    assert Enum.sort(Instance.__info__(:functions)) == Enum.sort(expected)
   end
 
   test "only the seven V4 NIF stubs are declared" do

@@ -14,6 +14,63 @@ defmodule ExArgus.Kernel.Action do
           | ExArgus.Kernel.Action.AuthorizeInspected.t()
           | ExArgus.Kernel.Action.SettleInvocation.t()
           | ExArgus.Kernel.Action.CrossOutput.t()
+
+  @empty_projection %{verdict: nil, disposition: nil, branch: nil}
+
+  @doc false
+  @spec telemetry_projection(term()) ::
+          {:ok, %{verdict: atom() | nil, disposition: atom() | nil, branch: atom() | nil}}
+          | :error
+  def telemetry_projection(%{
+        __struct__: ExArgus.Kernel.Action.Ingest,
+        disposition: disposition
+      })
+      when disposition in [:permitted, :blocked, :monitor_bypassed] do
+    {:ok, %{@empty_projection | disposition: disposition}}
+  end
+
+  def telemetry_projection(%{
+        __struct__: ExArgus.Kernel.Action.BeginInvocation,
+        verdict: verdict
+      })
+      when verdict in [:allow, :inspection_required, :deny] do
+    {:ok, %{@empty_projection | verdict: verdict}}
+  end
+
+  def telemetry_projection(%{
+        __struct__: ExArgus.Kernel.Action.SettleInvocation,
+        disposition: disposition
+      })
+      when disposition in [:permitted, :blocked, :monitor_bypassed] do
+    {:ok, %{@empty_projection | disposition: disposition}}
+  end
+
+  def telemetry_projection(%{
+        __struct__: ExArgus.Kernel.Action.CrossOutput,
+        branch: branch,
+        disposition: disposition
+      })
+      when branch in [:endorsed, :unendorsed, :fail] and
+             disposition in [:permitted, :blocked, :monitor_bypassed] do
+    {:ok, %{@empty_projection | branch: branch, disposition: disposition}}
+  end
+
+  @plain_actions [
+    ExArgus.Kernel.Action.RegisterTool,
+    ExArgus.Kernel.Action.UnregisterTool,
+    ExArgus.Kernel.Action.Delegate,
+    ExArgus.Kernel.Action.GrantCapability,
+    ExArgus.Kernel.Action.GrantCrossing,
+    ExArgus.Kernel.Action.Revoke,
+    ExArgus.Kernel.Action.CascadeRevoke,
+    ExArgus.Kernel.Action.AuthorizeInspected
+  ]
+
+  def telemetry_projection(%{__struct__: action}) when action in @plain_actions do
+    {:ok, @empty_projection}
+  end
+
+  def telemetry_projection(_action), do: :error
 end
 
 defmodule ExArgus.Kernel.Action.RegisterTool do
