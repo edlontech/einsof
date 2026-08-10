@@ -3,21 +3,13 @@
 version = 4
 
 [[package]]
-name = "argus-explain"
-version = "0.1.0"
-dependencies = [
- "argus-kernel",
-]
-
-[[package]]
 name = "argus-kernel"
 version = "0.1.0"
 
 [[package]]
 name = "argus_nif"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
- "argus-explain",
  "argus-kernel",
  "rustler",
 ]

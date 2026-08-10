@@ -1,10 +1,11 @@
+mod command;
 mod enums;
 mod event;
-mod explain;
-mod instance;
-mod nifs;
-mod oracles;
-mod shadow;
-mod state;
+mod wire;
+
+pub use command::CommandN;
+pub use enums::*;
+pub use event::{ActionN, ErrorN, KernelErrorN};
+pub use wire::*;
 
 rustler::init!("Elixir.ExArgus.Native");

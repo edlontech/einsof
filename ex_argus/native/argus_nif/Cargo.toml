@@ -1,13 +1,12 @@
 [package]
 name = "argus_nif"
-version = "0.2.0"
-edition = "2021"
+version = "0.3.0"
+edition = "2024"
 
 [lib]
 name = "argus_nif"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 rustler = "0.38"
 argus-kernel = { path = "../../../argus/crates/argus-kernel" }
-argus-explain = { path = "../../../argus/crates/argus-explain" }

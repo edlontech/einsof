@@ -1,214 +1,288 @@
 use argus_kernel::{KernelAction, KernelError};
-use rustler::{NifTaggedEnum, NifUnitEnum};
+use rustler::{NifTaggedEnum, NifUnitEnum, NifUntaggedEnum};
 
-use crate::enums::{CapKindN, ConfLevelN, IntegLevelN};
-use crate::state::StateN;
+use crate::enums::{ConfLevelN, CrossBranchN, DispositionN, IntegLevelN, OutcomeN, VerdictN};
+use crate::wire::{
+    AuthorizeInspectedActionN, BeginInvocationActionN, CascadeRevokeActionN, CrossOutputActionN,
+    DelegateActionN, GrantCapabilityActionN, GrantCrossingActionN, IngestActionN,
+    RegisterToolActionN, RevokeActionN, SettleInvocationActionN, UnregisterToolActionN,
+};
 
-#[derive(Debug, NifTaggedEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, NifUntaggedEnum)]
 pub enum ActionN {
-    RegisterTool(String),
-    UnregisterTool(String),
-    LoadInstruction(String, String),
-    Delegate(String, String),
-    GrantCapability(String, String, CapKindN),
-    Revoke(String, String),
-    CascadeRevoke(String, String),
-    InvokeStart(String, String, String),
-    InvokeComplete(String, String, bool),
-    ReturnEndorsed(String, String, ConfLevelN, IntegLevelN),
-    ReturnUnendorsed(String, String),
-    SentinelElevateTaint(String, ConfLevelN),
-    SentinelDegradeIntegrity(String, IntegLevelN),
-    SentinelCreditBudget(String, u8),
-    GrantOverride(String, String, String, ConfLevelN),
+    RegisterTool(RegisterToolActionN),
+    UnregisterTool(UnregisterToolActionN),
+    Delegate(DelegateActionN),
+    GrantCapability(GrantCapabilityActionN),
+    GrantCrossing(GrantCrossingActionN),
+    Revoke(RevokeActionN),
+    CascadeRevoke(CascadeRevokeActionN),
+    Ingest(IngestActionN),
+    BeginInvocation(BeginInvocationActionN),
+    AuthorizeInspected(AuthorizeInspectedActionN),
+    SettleInvocation(SettleInvocationActionN),
+    CrossOutput(CrossOutputActionN),
 }
 
 impl ActionN {
-    pub fn from_kernel(a: KernelAction) -> Self {
-        match a {
-            KernelAction::RegisterTool { tool } => Self::RegisterTool(tool.0),
-            KernelAction::UnregisterTool { tool } => Self::UnregisterTool(tool.0),
-            KernelAction::LoadInstruction { agent, instr } => {
-                Self::LoadInstruction(agent.0, instr.0)
+    pub fn from_kernel(action: KernelAction) -> Self {
+        match action {
+            KernelAction::RegisterTool { tool } => {
+                Self::RegisterTool(RegisterToolActionN { tool: tool.0 })
             }
-            KernelAction::Delegate { grantor, grantee } => Self::Delegate(grantor.0, grantee.0),
+            KernelAction::UnregisterTool { tool } => {
+                Self::UnregisterTool(UnregisterToolActionN { tool: tool.0 })
+            }
+            KernelAction::Delegate { grantor, grantee } => Self::Delegate(DelegateActionN {
+                grantor: grantor.0,
+                grantee: grantee.0,
+            }),
             KernelAction::GrantCapability { parent, child, cap } => {
-                Self::GrantCapability(parent.0, child.0, CapKindN::from_kernel(cap))
+                Self::GrantCapability(GrantCapabilityActionN {
+                    parent: parent.0,
+                    child: child.0,
+                    cap: crate::enums::CapKindN::from_kernel(cap),
+                })
             }
-            KernelAction::Revoke { parent, target } => Self::Revoke(parent.0, target.0),
-            KernelAction::CascadeRevoke { child, parent } => Self::CascadeRevoke(child.0, parent.0),
-            KernelAction::InvokeStart { agent, tool, inv } => {
-                Self::InvokeStart(agent.0, tool.0, inv.0)
+            KernelAction::GrantCrossing {
+                grantor,
+                agent,
+                assignment,
+                n,
+            } => Self::GrantCrossing(GrantCrossingActionN {
+                grantor: grantor.0,
+                agent: agent.0,
+                assignment: assignment.0,
+                n,
+            }),
+            KernelAction::Revoke { parent, target } => Self::Revoke(RevokeActionN {
+                parent: parent.0,
+                target: target.0,
+            }),
+            KernelAction::CascadeRevoke { child, parent } => {
+                Self::CascadeRevoke(CascadeRevokeActionN {
+                    child: child.0,
+                    parent: parent.0,
+                })
             }
-            KernelAction::InvokeComplete { agent, inv, endorsed } => {
-                Self::InvokeComplete(agent.0, inv.0, endorsed)
-            }
-            KernelAction::ReturnEndorsed { child, parent, clvl, ilvl } => Self::ReturnEndorsed(
-                child.0,
-                parent.0,
-                ConfLevelN::from_kernel(clvl),
-                IntegLevelN::from_kernel(ilvl),
-            ),
-            KernelAction::ReturnUnendorsed { child, parent } => {
-                Self::ReturnUnendorsed(child.0, parent.0)
-            }
-            KernelAction::SentinelElevateTaint { agent, level } => {
-                Self::SentinelElevateTaint(agent.0, ConfLevelN::from_kernel(level))
-            }
-            KernelAction::SentinelDegradeIntegrity { agent, level } => {
-                Self::SentinelDegradeIntegrity(agent.0, IntegLevelN::from_kernel(level))
-            }
-            KernelAction::SentinelCreditBudget { agent, amount } => {
-                Self::SentinelCreditBudget(agent.0, amount)
-            }
-            KernelAction::GrantOverride { granter, target, tool, level } => {
-                Self::GrantOverride(granter.0, target.0, tool.0, ConfLevelN::from_kernel(level))
-            }
+            KernelAction::Ingest {
+                agent,
+                src,
+                pconf,
+                pinteg,
+                disposition,
+            } => Self::Ingest(IngestActionN {
+                agent: agent.0,
+                src: src.map(|source| source.0),
+                pconf: ConfLevelN::from_kernel(pconf),
+                pinteg: IntegLevelN::from_kernel(pinteg),
+                disposition: DispositionN::from_kernel(disposition),
+            }),
+            KernelAction::BeginInvocation {
+                agent,
+                inv,
+                tool,
+                verdict,
+                authorized,
+            } => Self::BeginInvocation(BeginInvocationActionN {
+                agent: agent.0,
+                inv: inv.0,
+                tool: tool.0,
+                verdict: VerdictN::from_kernel(verdict),
+                authorized,
+            }),
+            KernelAction::AuthorizeInspected {
+                inv,
+                attestation,
+                admitted,
+            } => Self::AuthorizeInspected(AuthorizeInspectedActionN {
+                inv: inv.0,
+                attestation: attestation.0,
+                admitted,
+            }),
+            KernelAction::SettleInvocation {
+                inv,
+                agent,
+                disposition,
+                outcome,
+                clvl,
+                ilvl,
+                resolution,
+            } => Self::SettleInvocation(SettleInvocationActionN {
+                inv: inv.0,
+                agent: agent.0,
+                disposition: DispositionN::from_kernel(disposition),
+                outcome: OutcomeN::from_kernel(outcome),
+                clvl: ConfLevelN::from_kernel(clvl),
+                ilvl: IntegLevelN::from_kernel(ilvl),
+                resolution: resolution.map(|id| id.0),
+            }),
+            KernelAction::CrossOutput {
+                src,
+                rcv,
+                crossing,
+                branch,
+                disposition,
+            } => Self::CrossOutput(CrossOutputActionN {
+                src: src.0,
+                rcv: rcv.0,
+                crossing: crossing.0,
+                branch: CrossBranchN::from_kernel(branch),
+                disposition: DispositionN::from_kernel(disposition),
+            }),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, NifUnitEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, NifUnitEnum)]
 pub enum KernelErrorN {
-    ToolNotInTheory,
     ToolAlreadyRegistered,
     ToolNotRegistered,
-    UntrustedIssuer,
-    InstructionIssuerUnknown,
+    ToolInUse,
     AgentInactive,
     AgentAlreadyActive,
     RootNotAllowed,
     NotDirectChild,
     ParentStillActive,
+    AgentHasChildren,
     CapabilityMissing,
+    NotRoot,
     InvocationExists,
-    InvocationInFlight,
-    NotInFlight,
-    ChildHasInFlight,
-    TargetHasInFlight,
+    InvocationReplayed,
+    NotPending,
+    EgressNotNarrowing,
+    EgressNotCovering,
+    IncoherentPolicy,
+    ChallengeAlreadyOpen,
+    ClearanceDenied,
     FlowGateBlocked,
     AuthorizerDenied,
-    NotConforming,
-    BudgetExhausted,
-    MissingToolBinding,
-    InvocationReplayed,
-    AttestationInvalid,
     IntegrityFloorDenied,
-    LeverIntegrityDenied,
-    DeclarationNotCovering,
-    ToolInFlight,
+    PairwiseConflict,
+    ChallengeNotOpen,
+    ChallengeScopeMismatch,
+    AttestationConsumed,
+    InspectionNegative,
+    BlockedPending,
+    NotQuarantined,
+    QuarantineResolutionRequired,
+    ResolutionAttestationInvalid,
+    IngestHoldFailed,
+    ProvenanceNotDominated,
+    CrossingReplayed,
+    GrantMissing,
+    GrantExhausted,
+    SourceInFlight,
+    CrossingBoundViolated,
+    CrossingHoldFailed,
     EventStore,
 }
 
 impl KernelErrorN {
-    pub fn from_kernel(e: KernelError) -> Self {
-        match e {
-            KernelError::ToolNotInTheory => Self::ToolNotInTheory,
+    pub fn from_kernel(error: KernelError) -> Self {
+        match error {
             KernelError::ToolAlreadyRegistered => Self::ToolAlreadyRegistered,
             KernelError::ToolNotRegistered => Self::ToolNotRegistered,
-            KernelError::UntrustedIssuer => Self::UntrustedIssuer,
-            KernelError::InstructionIssuerUnknown => Self::InstructionIssuerUnknown,
+            KernelError::ToolInUse => Self::ToolInUse,
             KernelError::AgentInactive => Self::AgentInactive,
             KernelError::AgentAlreadyActive => Self::AgentAlreadyActive,
             KernelError::RootNotAllowed => Self::RootNotAllowed,
             KernelError::NotDirectChild => Self::NotDirectChild,
             KernelError::ParentStillActive => Self::ParentStillActive,
+            KernelError::AgentHasChildren => Self::AgentHasChildren,
             KernelError::CapabilityMissing => Self::CapabilityMissing,
+            KernelError::NotRoot => Self::NotRoot,
             KernelError::InvocationExists => Self::InvocationExists,
-            KernelError::InvocationInFlight => Self::InvocationInFlight,
-            KernelError::NotInFlight => Self::NotInFlight,
-            KernelError::ChildHasInFlight => Self::ChildHasInFlight,
-            KernelError::TargetHasInFlight => Self::TargetHasInFlight,
+            KernelError::InvocationReplayed => Self::InvocationReplayed,
+            KernelError::NotPending => Self::NotPending,
+            KernelError::EgressNotNarrowing => Self::EgressNotNarrowing,
+            KernelError::EgressNotCovering => Self::EgressNotCovering,
+            KernelError::IncoherentPolicy => Self::IncoherentPolicy,
+            KernelError::ChallengeAlreadyOpen => Self::ChallengeAlreadyOpen,
+            KernelError::ClearanceDenied => Self::ClearanceDenied,
             KernelError::FlowGateBlocked => Self::FlowGateBlocked,
             KernelError::AuthorizerDenied => Self::AuthorizerDenied,
-            KernelError::NotConforming => Self::NotConforming,
-            KernelError::BudgetExhausted => Self::BudgetExhausted,
-            KernelError::MissingToolBinding => Self::MissingToolBinding,
-            KernelError::InvocationReplayed => Self::InvocationReplayed,
-            KernelError::AttestationInvalid => Self::AttestationInvalid,
             KernelError::IntegrityFloorDenied => Self::IntegrityFloorDenied,
-            KernelError::LeverIntegrityDenied => Self::LeverIntegrityDenied,
-            KernelError::DeclarationNotCovering => Self::DeclarationNotCovering,
-            KernelError::ToolInFlight => Self::ToolInFlight,
+            KernelError::PairwiseConflict => Self::PairwiseConflict,
+            KernelError::ChallengeNotOpen => Self::ChallengeNotOpen,
+            KernelError::ChallengeScopeMismatch => Self::ChallengeScopeMismatch,
+            KernelError::AttestationConsumed => Self::AttestationConsumed,
+            KernelError::InspectionNegative => Self::InspectionNegative,
+            KernelError::BlockedPending => Self::BlockedPending,
+            KernelError::NotQuarantined => Self::NotQuarantined,
+            KernelError::QuarantineResolutionRequired => Self::QuarantineResolutionRequired,
+            KernelError::ResolutionAttestationInvalid => Self::ResolutionAttestationInvalid,
+            KernelError::IngestHoldFailed => Self::IngestHoldFailed,
+            KernelError::ProvenanceNotDominated => Self::ProvenanceNotDominated,
+            KernelError::CrossingReplayed => Self::CrossingReplayed,
+            KernelError::GrantMissing => Self::GrantMissing,
+            KernelError::GrantExhausted => Self::GrantExhausted,
+            KernelError::SourceInFlight => Self::SourceInFlight,
+            KernelError::CrossingBoundViolated => Self::CrossingBoundViolated,
+            KernelError::CrossingHoldFailed => Self::CrossingHoldFailed,
             KernelError::EventStore => Self::EventStore,
         }
     }
 }
 
-// Transient FFI return value: it is encoded to an Elixir term and dropped immediately, so the
-// Ok/Error size disparity is irrelevant and boxing would only add a needless allocation.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, NifTaggedEnum)]
-pub enum Outcome {
-    Ok(StateN, ActionN),
-    Error(KernelErrorN),
+#[derive(Debug, Clone, PartialEq, Eq, NifTaggedEnum)]
+pub enum ErrorN {
+    Kernel(KernelErrorN),
+    InstanceBusy,
+    ResourcePoisoned,
+    CapacityExceeded,
+    SequenceExhausted,
+    InvalidVersion,
+    SequenceMismatch,
+    PreviousDigestMismatch,
+    ActionMismatch,
+    DigestMismatch,
+    RecoveryConsumed,
+    FinalAnchorMismatch,
 }
 
-// Instance-transition return: the live state stays in the resource, so on success we hand
-// back only the monotone seq (for the adapter's gap/reorder detection) and the action.
-#[derive(Debug, NifTaggedEnum)]
-pub enum InstanceOutcome {
-    Ok(u64, ActionN),
-    Error(KernelErrorN),
+impl ErrorN {
+    pub fn kernel(error: KernelErrorN) -> Self {
+        Self::Kernel(error)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use argus_kernel::AgentId;
+    use argus_kernel::{AgentId, AttestationId, InvocationId};
 
     #[test]
-    fn action_from_kernel_maps_invoke_start() {
-        let a = KernelAction::InvokeStart {
-            agent: AgentId::new("a1"),
-            tool: argus_kernel::ToolId::new("t"),
-            inv: argus_kernel::InvocationId::new("i"),
+    fn settlement_action_preserves_resolution_and_computed_fields() {
+        let action = KernelAction::SettleInvocation {
+            inv: InvocationId::new("inv"),
+            agent: AgentId::new("agent"),
+            disposition: argus_kernel::Disposition::Permitted,
+            outcome: argus_kernel::Outcome::Success,
+            clvl: argus_kernel::ConfLevel::Sensitive,
+            ilvl: argus_kernel::IntegLevel::Trusted,
+            resolution: Some(AttestationId::new("resolution")),
         };
-        match ActionN::from_kernel(a) {
-            ActionN::InvokeStart(agent, tool, inv) => {
-                assert_eq!((agent.as_str(), tool.as_str(), inv.as_str()), ("a1", "t", "i"));
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
+
+        assert_eq!(
+            ActionN::from_kernel(action),
+            ActionN::SettleInvocation(SettleInvocationActionN {
+                inv: "inv".to_owned(),
+                agent: "agent".to_owned(),
+                disposition: DispositionN::Permitted,
+                outcome: OutcomeN::Success,
+                clvl: ConfLevelN::Sensitive,
+                ilvl: IntegLevelN::Trusted,
+                resolution: Some("resolution".to_owned()),
+            })
+        );
     }
 
     #[test]
-    fn action_from_kernel_maps_invoke_complete_endorsed() {
-        let a = KernelAction::InvokeComplete {
-            agent: AgentId::new("a1"),
-            inv: argus_kernel::InvocationId::new("i"),
-            endorsed: true,
-        };
-        match ActionN::from_kernel(a) {
-            ActionN::InvokeComplete(agent, inv, endorsed) => {
-                assert_eq!((agent.as_str(), inv.as_str()), ("a1", "i"));
-                assert!(endorsed);
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn error_from_kernel_maps_capability_missing() {
-        assert!(matches!(
-            KernelErrorN::from_kernel(KernelError::CapabilityMissing),
-            KernelErrorN::CapabilityMissing
-        ));
-    }
-
-    #[test]
-    fn error_from_kernel_maps_v3_variants() {
-        assert!(matches!(
-            KernelErrorN::from_kernel(KernelError::AttestationInvalid),
-            KernelErrorN::AttestationInvalid
-        ));
-        assert!(matches!(
-            KernelErrorN::from_kernel(KernelError::IntegrityFloorDenied),
-            KernelErrorN::IntegrityFloorDenied
-        ));
-        assert!(matches!(
-            KernelErrorN::from_kernel(KernelError::ToolInFlight),
-            KernelErrorN::ToolInFlight
-        ));
+    fn kernel_error_maps_to_closed_native_reason() {
+        assert_eq!(
+            KernelErrorN::from_kernel(KernelError::CrossingBoundViolated),
+            KernelErrorN::CrossingBoundViolated
+        );
     }
 }
