@@ -29,7 +29,8 @@ pub use state::{KernelState, STATE_VERSION};
 pub use traits::{AuthorizerOracle, EventStore};
 pub use types::{
     ActionPolicySnapshot, Admission, AgentId, AssignmentDigest, AttestationId, ChallengeId,
-    ChallengeScope, ConfLevel, ContentHash, CrossingGrant, CrossingId, CrossingKey, Disposition,
-    EgressKind, Fallback, IntegLevel, InvocationId, Mode, Outcome, PendingInvocation, PolicyDigest,
-    ToolId, Verdict,
+    ChallengeScope, ConfLevel, ConformanceAttestation, ContentHash, CrossBranch, CrossInput,
+    CrossingGrant, CrossingId, CrossingKey, Disposition, EgressKind, Fallback,
+    InspectionAttestation, IntegLevel, InvocationId, Mode, Outcome, PendingInvocation,
+    PolicyDigest, ResolutionAttestation, ToolId, Verdict,
 };
