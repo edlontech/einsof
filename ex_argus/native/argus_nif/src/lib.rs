@@ -1,5 +1,7 @@
 mod chain;
 mod command;
+#[cfg(test)]
+mod conformance_tests;
 mod enums;
 mod event;
 mod instance;

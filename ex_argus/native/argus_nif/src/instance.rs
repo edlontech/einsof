@@ -59,7 +59,7 @@ impl Resource for LiveInstance {}
 impl Resource for RecoveryInstance {}
 
 impl LiveInstance {
-    fn new(background: BackgroundN) -> Self {
+    pub(crate) fn new(background: BackgroundN) -> Self {
         let state = InstanceState::initial(&background);
         Self::from_state(background.into_kernel(), state)
     }
@@ -71,7 +71,7 @@ impl LiveInstance {
         }
     }
 
-    fn status(&self) -> Result<ChainN, ErrorN> {
+    pub(crate) fn status(&self) -> Result<ChainN, ErrorN> {
         let current = self.inner.try_lock().map_err(map_try_lock)?;
         Ok(ChainN {
             version: VERSION,
@@ -80,13 +80,13 @@ impl LiveInstance {
         })
     }
 
-    fn state(&self) -> Result<StateN, ErrorN> {
+    pub(crate) fn state(&self) -> Result<StateN, ErrorN> {
         let current = self.inner.try_lock().map_err(map_try_lock)?;
         limits::check_state(&current.kernel)?;
         Ok(StateN::from_kernel(&current.kernel))
     }
 
-    fn apply(&self, command: CommandN) -> Result<EnvelopeN, ErrorN> {
+    pub(crate) fn apply(&self, command: CommandN) -> Result<EnvelopeN, ErrorN> {
         let mut current = self.inner.try_lock().map_err(map_try_lock)?;
         let applied = apply_without_commit(&current, &self.background, command)?;
         *current = applied.next;
@@ -95,7 +95,7 @@ impl LiveInstance {
 }
 
 impl RecoveryInstance {
-    fn new(background: BackgroundN) -> Self {
+    pub(crate) fn new(background: BackgroundN) -> Self {
         let state = InstanceState::initial(&background);
         Self {
             background: background.into_kernel(),
@@ -103,7 +103,7 @@ impl RecoveryInstance {
         }
     }
 
-    fn replay(&self, recorded: EnvelopeN) -> Result<(), ErrorN> {
+    pub(crate) fn replay(&self, recorded: EnvelopeN) -> Result<(), ErrorN> {
         let mut slot = self.inner.try_lock().map_err(map_try_lock)?;
         let current = slot.as_ref().ok_or(ErrorN::RecoveryConsumed)?;
         limits::check_recovery_link(&current.kernel, current.sequence)?;
@@ -135,7 +135,7 @@ impl RecoveryInstance {
         Ok(())
     }
 
-    fn finalize(&self, expected: ChainN) -> Result<LiveInstance, ErrorN> {
+    pub(crate) fn finalize(&self, expected: ChainN) -> Result<LiveInstance, ErrorN> {
         let mut slot = self.inner.try_lock().map_err(map_try_lock)?;
         let current = slot.as_ref().ok_or(ErrorN::RecoveryConsumed)?;
         if expected.version != VERSION {
