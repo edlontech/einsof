@@ -10,6 +10,11 @@ Read it as: start from any legal initial state and run the protocol's 12 registe
 in any order, any number of times. Every state reached this way satisfies all 32 rules in
 `allInv`. This includes interleavings nobody wrote as tests.
 
+The companion theorem `ArgusLean.Refinement.implementation_sound` in
+[`argus/formal-lean`](../argus/formal-lean/) composes extraction refinement with this result: every
+reachable state of the extracted V4 kernel relates to such a safe abstract state, modulo the trusted
+Charon/Aeneas translation and the explicit `CapacityOK`/`OracleFidelity` hypotheses.
+
 ## The security contract
 
 The 32 rules are split into five bundles because proving one monolithic conjunction is
@@ -170,15 +175,16 @@ boundary because Kav's closed actions existentially hide command parameters.
 This is a safety proof of the abstract protocol. It is not a proof that the whole deployed
 system is secure.
 
-- **Rust refinement status:** the current `argus/formal-lean` theorem is the V3 baseline.
-  The V4 abstract proof is complete, but parent Task 8 must regenerate extraction and prove
-  the new V4 action bundle before making an end-to-end V4 claim.
+- **Extracted-kernel refinement:** `ArgusLean.Refinement.implementation_sound` covers the complete
+  V4 12-action surface and 32-invariant bundle. It verifies the extracted model, not the handwritten
+  Rust text independently.
 - **Extractor:** Aeneas/Charon and its generated semantic model are trusted.
-- **Capacity:** the concrete refinement must assume the fired branch has enough `Vec`
-  capacity; `grant_crossing n` additionally requires `n < 2^32` for Rust `u32`.
-- **Oracle fidelity:** V4 needs per-invocation agreement only for authorizer verdict and
-  attested-egress classification. Evidence verdicts are explicit inputs, not timeless
-  oracle relations.
+- **Capacity:** `CapacityOK` assumes governed-root initialization coherence, the begin snapshot
+  prediction, and exactly the fired branch's `Vec` bounds; `grant_crossing n` additionally retains
+  the explicit `n < 2^32` boundary.
+- **Oracle fidelity:** `OracleFidelity` requires per-invocation agreement only for authorizer verdict
+  and attested-egress classification. Evidence verdicts are explicit inputs, not timeless oracle
+  relations.
 - **Authenticated construction:** the adapter must validate `CrossInput`'s exact revision,
   fallback, assignment bounds/digest, receiver pin, and tenant identity before construction.
 - **Evidence truth:** the kernel checks positivity, exact scope, and one-use. It does not

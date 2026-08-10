@@ -1,32 +1,31 @@
 # argus-kernel Lean refinement (`formal-lean`)
 
-Mechanically-extracted Lean model of the Rust `argus-kernel`, refined against the
-pure-Lean TzimtzumV3 (Kav) spec. The end-to-end result is `implementation_sound`: every
-reachable state of the extracted kernel refines an abstract TzimtzumV3 state that
-satisfies all safety invariants (11 safeties + 15 strengthening invariants, 16 actions).
+Mechanically extracted Lean model of the Rust `argus-kernel`, refined against the pure-Lean
+TzimtzumV4 Kav specification. The end-to-end theorem is:
 
-> **V4 campaign handoff:** the abstract TzimtzumV4 proof is now complete under
-> [`tzimtzum/`](../../tzimtzum/), but this directory remains the verified **V3 baseline**
-> until parent campaign Task 8 regenerates the model and ports the unified relation and
-> preservation bundle. Do not cite `implementation_sound` as a V4 refinement yet. The V4
-> action/state/partition and reshaped `CapacityOK`/`OracleFidelity` handoff is recorded in
-> [`tzimtzum/README.md`](../../tzimtzum/README.md#v4-kernelrefinement-handoff).
+```lean
+ArgusLean.Refinement.implementation_sound
+```
 
-The Rust kernel is extracted to Lean with Charon and Aeneas
-(`scripts/charon-aeneas-extract.sh` produces `ArgusLean/Generated/ArgusKernel.lean`); this
-library proves the extracted model refines the spec.
+For every reachable state of the extracted kernel, modulo the explicit assumptions below, the
+theorem produces a related TzimtzumV4 state satisfying `Tzimtzum.allInv`: all **32 invariants** over
+the complete **12-action** V4 system.
+
+The Rust kernel is translated by Charon and Aeneas. The pinned extraction script
+[`../scripts/charon-aeneas-extract.sh`](../scripts/charon-aeneas-extract.sh) produces
+`ArgusLean/Generated/ArgusKernel.lean`; generated Lean is never hand-edited.
 
 ## Build
 
 ```bash
-lake build              # the whole library, incl. implementation_sound
-lake build ArgusChecks  # opt-in Plausible property-test harness (not in the default build)
+lake build              # complete extracted model + V4 refinement + implementation_sound
+lake build ArgusChecks  # opt-in Plausible collection-model checks
 ```
 
-Lean 4.32.1 (pinned via `lean-toolchain`). After a toolchain change, run `lake exe cache get`
-first.
+Lean 4.32.1 is pinned by `lean-toolchain`. After a toolchain change, run
+`lake exe cache get` first.
 
-### Frozen V4-campaign stack
+### Frozen extraction stack
 
 | Component | Pin |
 |---|---|
@@ -37,11 +36,9 @@ first.
 | Charon | `527ea8e3b5dcb52edd6aef0f7bc34cc09c11dd59` |
 | Charon Rust | `nightly-2026-06-01` |
 
-These pins and the resolved Lake manifests stay fixed for the V4 campaign. The evaluated versions,
-release-note review, adaptations, and clean-build evidence are recorded in
-[`UPGRADE-4.32.md`](UPGRADE-4.32.md). Aeneas upstream targets Lean 4.31 at this commit, so
-`patches/aeneas-lean-v4.32.1.patch` is part of the frozen stack. Recreate
-the intentionally gitignored tool checkout from the repository root with:
+The compatibility review, patches, and clean-build evidence are in
+[`UPGRADE-4.32.md`](UPGRADE-4.32.md). Recreate the intentionally ignored extractor checkout from the
+repository root with:
 
 ```bash
 git clone https://github.com/AeneasVerif/aeneas tools/aeneas
@@ -51,81 +48,122 @@ git -C tools/aeneas apply --unidiff-zero ../../argus/formal-lean/patches/aeneas-
 (cd tools/aeneas && eval "$(opam env --switch=aeneas --set-switch)" && gmake build-bin-dir)
 ```
 
-The Aeneas OCaml switch needs the upstream dependency set, including `ppx_deriving_yojson`.
-`argus/scripts/charon-aeneas-extract.sh` rejects any source/pin/patch mismatch and clean-rebuilds
-both ignored extractor binaries before use.
+The extraction script rejects source/pin/patch mismatches and clean-rebuilds the ignored extractor
+binaries before use.
+
+## Verified action surface
+
+`KernelCmd`, `kernelStep`, `AbsStep`, and `step_refines` cover exactly these twelve transitions:
+
+1. `register_tool`
+2. `unregister_tool`
+3. `delegate`
+4. `grant_capability`
+5. `grant_crossing`
+6. `revoke`
+7. `cascade_revoke`
+8. `ingest`
+9. `begin_invocation`
+10. `authorize_inspected`
+11. `settle_invocation`
+12. `cross_output`
+
+Each successful extracted transition maps to the corresponding single abstract action. Transparent
+internal action parameters select disposition/verdict, live challenge scope, settlement fields, or
+crossing branch; they do not widen a command to another action.
 
 ## Module map
 
-```
-ArgusLean.lean                      root: Generated + Smoke + Unified.{Bundle,Soundness}
+```text
+ArgusLean.lean
 ArgusLean/
-  Generated/ArgusKernel.lean        Aeneas/Charon-extracted kernel model; DO NOT EDIT
+  Generated/ArgusKernel.lean        Charon/Aeneas output; DO NOT EDIT
   Refinement/
-    Bridging/                       reusable spec-bridging: concrete Result/loop to list-level facts
-      Collections.lean              VecMap/VecSet last-match insert/remove specs; id/String trust axioms
-      StateRelation.lean            AbsState, confC/budgetC, capMem/budgetReadC, clear/budget specs
-      FlowBridging.lean             flow_decision / gate_egress / integ_decision / egressDenied
-      FlowOracle.lean               flow-oracle reads (flowModeC/toolMetaC/...) + per-invocation
-                                    helpers (invToolC/egItems/...); general flow bridging
-    PlausibleChecks.lean            opt-in property-test harness; `lake build ArgusChecks`
+    Bridging/
+      Collections.lean              VecMap/VecSet and extracted opaque-operation specs
+      StateRelation.lean            V4 record/enum/state correspondences
+      FlowBridging.lean             V4 flow/integrity gate bridges
+      FlowOracle.lean               extracted read/loop specifications
+    PlausibleChecks.lean            opt-in finite collection-model checks
     Unified/
-      ViewCoincidence.lean          the canonical-view facts the unified relation needs
-      NodupPreservation.lean        key-uniqueness preservation across writes
-      Relation.lean                 the unified relation `R` + per-invocation oracle-agreement
-                                    (CgAgree/AuAgree/CfAgree/RcAgree)
-      Bridges.lean                  shared `R`-projection helpers for the preservation proofs
-      Preservation/<Action>.lean    per-transition `<action>_preservesR` (15 files; InvokeComplete
-                                    proves the split pair, the event's `endorsed` selecting the
-                                    spec action)
-      InitRefinement.lean           the initial state refines the abstract initial state
-      Bundle.lean                   `KernelCmd` dispatch + `step_refines`: 15 transitions
-                                    refining the 16 spec actions in one statement
-      Soundness.lean                `implementation_sound` (init refinement, forward simulation, Kav)
+      Relation.lean                 canonical V4 relation `R`; `AuAgree`/`EgressAgree`
+      ViewCoincidence.lean          canonical-view lemmas
+      NodupPreservation.lean        seven VecMap key-uniqueness fences
+      Bridges.lean                  shared `R` projection helpers
+      Preservation/                 12 action proofs plus shared `ClearAgent`
+      InitRefinement.lean           V4 initial-state refinement
+      Bundle.lean                   12-command dispatch and `step_refines`
+      Soundness.lean                forward simulation and `implementation_sound`
 ```
 
-Layering is strict: `Generated` then `Bridging` then `Unified`. Nothing in `Bridging` or
-`Generated` depends on `Unified`.
+Layering is strict: `Generated → Bridging → Unified`.
 
-## What `implementation_sound` proves, and what it doesn't
+## What `implementation_sound` proves
 
-For every reachable concrete `KernelState c`, there is an abstract state `a` with
-`R c bg a` and `Tzimtzum.allInv a` (every TzimtzumV3 safety invariant holds — including
-`integrity_confinement`, the prompt-injection containment headline). It is forward
-simulation composed with the Kav soundness theorem.
+For any governed background `bg`, fixed snapshot interpretation `snapRel`, fixed egress
+interpretation `egRel`, fixed authorizer interpretation `auRel`, and reachable extracted state `c`:
 
-It is sound modulo the trusted extractor and two explicit assumptions. It does not prove
-the hand-written Rust source, the oracles, or the SPIFFE/STS mesh and Elixir adapter
-correct. State the extractor and the assumptions whenever claiming end-to-end soundness.
+```lean
+∃ a, R c bg a ∧ Tzimtzum.allInv a
+```
 
-## Trust base (TCB)
+The proof composes:
 
-`#print axioms ArgusLean.Refinement.implementation_sound` reports exactly:
+1. `init_refines` for the extracted initial state;
+2. `step_refines` for all twelve successful transitions;
+3. abstract reachability in `Tzimtzum.system`; and
+4. `Tzimtzum.kav_soundP` for the 32-invariant V4 bundle.
 
-- Standard: `propext`, `Classical.choice`, `Quot.sound`.
-- Named-root: `argus_kernel.types.AgentId.root._native.decide.ax_1`, the `native_decide`
-  residual for the root agent's concrete name. This is a baseline of naming the root, not
-  a proof `sorry`.
-- Three explicit opaque-operation specifications in `Bridging/Collections.lean`:
-  `string_eq_spec`, `string_clone_spec`, and `optionAgentId_eq_spec`.
-- Four Aeneas/Charon extractor residuals in `Generated/ArgusKernel.lean`:
-  `Str.…to_owned`, `String.…clone`, `String.…eq`, and `Option.…eq`.
+It verifies the extracted semantic model, not the hand-written Rust text directly. Charon/Aeneas are
+trusted to translate that text faithfully. It also does not verify the external SPIFFE/STS mesh,
+adapter, persistence, authenticated input construction, attestation truth, or event-store behavior.
 
-Aeneas Std still contains documented `sorry`s, but this theorem's dependency closure no longer
-contains `sorryAx`. The extractor's translated `PartialEq::ne` operations now use a proved default
-implementation, so the former per-id disequality assumptions were removed rather than replaced.
+## Explicit hypotheses
 
-Two assumptions are hypotheses of `implementation_sound` (discharged by the caller, not
-axioms):
+`implementation_sound` has exactly two caller-supplied assumption bundles.
 
-- `CapacityOK`: the `Vec`-capacity bounds (`... .length < Usize.max`) each transition
-  needs, plus `invoke_start`'s two per-invocation oracle-seam predictions (the abstract
-  tool binding and the fresh invocation's attested-egress agreement). There is no
-  resource model here to discharge the bounds; the predictions are the per-call half of
-  the oracle contract.
-- `OracleFidelity`: the runtime `ContentGate` / `Authorizer` / `Conformance` oracles agree
-  with a fixed per-invocation abstract interpretation (`cgRel`/`auRel`/`cfRel` keyed by
-  `InvocationId`; `return_conforms` pairwise).
+### `CapacityOK`
 
-There are no proof `sorry`s in this refinement's own files; the verification is
-kernel-checked.
+`CapacityOK` states:
+
+- concrete `AgentId.root` equals the governed `BackgroundTheory.root_agent` at initialization;
+- the exact collection-capacity premises for the branch that successfully fires;
+- the fixed per-invocation abstract snapshot predicts the concrete frozen snapshot at
+  `begin_invocation`; and
+- `grant_crossing n` satisfies the explicit abstract-`Nat`/Rust-`u32` boundary `n < 2^32`.
+
+The crossing premises remain branch-specific: crossing-id capacity is unconditional; endorsed label,
+evidence, and grant capacities require `endorsedOK`; unendorsed copy capacities require the
+release-unendorsed branch. Settlement likewise separates ambiguous pending reinsertion,
+non-ambiguous label absorption, and optional resolution-evidence consumption.
+
+These are premises only for successful commands from reachable related states. They are not hidden in
+the definition of concrete reachability.
+
+### `OracleFidelity`
+
+`OracleFidelity` contains only the two begin-time values lifted to the unverified driver:
+
+- the authorizer verdict agrees with `auRel inv`; and
+- the attested egress `VecSet` agrees extensionally with `egRel inv`.
+
+Inspection, quarantine resolution, and crossing conformance are explicit scoped one-use attestation
+data. The kernel checks their scope and consumption; there are no V3 content-gate, conformance, or
+return-conformance oracle assumptions.
+
+## Trust base
+
+`#print axioms ArgusLean.Refinement.implementation_sound` reports:
+
+- standard Lean axioms: `propext`, `Classical.choice`, `Quot.sound`;
+- documented bridge specifications: `string_eq_spec`, `string_clone_spec`;
+- documented extracted opaque operations:
+  `Str.Insts.AllocBorrowToOwnedString.to_owned`,
+  `alloc.string.String.Insts.CoreCloneClone.clone`, and
+  `alloc.string.String.Insts.CoreCmpPartialEqString.eq`; and
+- `types.AgentId.root._native.decide.ax_1`, the generated/native root-name residual.
+
+The theorem closure contains no `sorryAx`, and the handwritten refinement contains no `sorry`,
+`admit`, or undeclared project-local authority beyond the two named String bridge specifications.
+Always state the trusted extractor and the `CapacityOK`/`OracleFidelity` hypotheses when citing the
+end-to-end result.

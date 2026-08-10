@@ -1,330 +1,357 @@
 import ArgusLean.Refinement.Unified.Preservation.RegisterTool
 import ArgusLean.Refinement.Unified.Preservation.UnregisterTool
-import ArgusLean.Refinement.Unified.Preservation.LoadInstruction
+import ArgusLean.Refinement.Unified.Preservation.Delegate
 import ArgusLean.Refinement.Unified.Preservation.GrantCapability
-import ArgusLean.Refinement.Unified.Preservation.SentinelCreditBudget
-import ArgusLean.Refinement.Unified.Preservation.ReturnEndorsed
+import ArgusLean.Refinement.Unified.Preservation.GrantCrossing
 import ArgusLean.Refinement.Unified.Preservation.Revoke
 import ArgusLean.Refinement.Unified.Preservation.CascadeRevoke
-import ArgusLean.Refinement.Unified.Preservation.Delegate
-import ArgusLean.Refinement.Unified.Preservation.InvokeComplete
-import ArgusLean.Refinement.Unified.Preservation.SentinelElevateTaint
-import ArgusLean.Refinement.Unified.Preservation.SentinelDegradeIntegrity
-import ArgusLean.Refinement.Unified.Preservation.ReturnUnendorsed
-import ArgusLean.Refinement.Unified.Preservation.InvokeStart
-import ArgusLean.Refinement.Unified.Preservation.GrantOverride
+import ArgusLean.Refinement.Unified.Preservation.Ingest
+import ArgusLean.Refinement.Unified.Preservation.BeginInvocation
+import ArgusLean.Refinement.Unified.Preservation.AuthorizeInspected
+import ArgusLean.Refinement.Unified.Preservation.SettleInvocation
+import ArgusLean.Refinement.Unified.Preservation.CrossOutput
 
-/-! # Layer 1 — top-level dispatch + the `step_refines` bundle
+/-! # Layer 1 — V4 dispatch and one-step refinement
 
-V3 (task 14): a single concrete step `kernelStep` over the driver-level command `KernelCmd`, the
-abstract action it refines (`absActionOf`), and the bundle theorem `step_refines` collapsing the
-15 per-transition `_preservesR` lemmas into one "the kernel simulates the spec, preserving `R`"
-statement over the **16** spec actions.
+`KernelCmd` is the twelve-command surface of the extracted V4 kernel. `kernelStep` dispatches one
+command to exactly one extracted transition. `AbsStep` describes the corresponding single V4 action;
+its existential parameters are only the action's transparent internal branch choices (disposition,
+verdict, live challenge scope, settlement record fields, or crossing branch).
 
-`KernelCmd` is the command surface, not the output `event.KernelAction`: `InvokeStart`
-additionally carries the classifier's attested egress set (an input the kernel persists — the
-event does not repeat it), and `InvokeComplete` carries no `endorsed` flag (which branch fired is
-a RESULT, visible only in the returned event — design §5.4: the kernel's single `invoke_complete`
-refines the split pair, the event's `Bool` selecting the spec action). `absActionOf` therefore
-takes the command AND the returned event; only the `InvokeComplete` arm inspects the event.
+The bundle has two explicit per-step contracts:
 
-Two hypotheses beyond `R` + the oracle agreements:
-
-* `hFlightUsed` — the spec's `in_flight_implies_used` strengthening invariant at the abstract
-  state; the soundness induction supplies it from `Tzimtzum.kav_soundP` at the reachable abstract
-  state (design §5.7).
-* `StepPre` — the fired transition's capacity bounds, plus `InvokeStart`'s two oracle-seam
-  predictions: the abstract tool binding (`a.invocation_tool inv = tool`) and the fresh
-  invocation's attested-egress agreement (`hEgAgree`, the per-invocation half of `OracleFidelity`
-  that `R`'s used-only `RinvocationEgress` deliberately cannot supply). -/
+* `StepPre` contains only extraction/resource premises plus the fixed per-invocation snapshot
+  prediction used by `begin_invocation`.
+* `StepFidelity` is the narrowed oracle seam: the begin command's authorizer `Bool` and attested
+  egress set agree with the fixed abstract per-invocation interpretation. Inspection, resolution,
+  and conformance are explicit scoped one-use data and require no oracle assumption.
+-/
 
 namespace ArgusLean.Refinement
 
 open Aeneas Aeneas.Std Result argus_kernel
 
-/-- The driver-level command: the extracted transition inputs (see module header for how this
-    differs from the output `event.KernelAction`). -/
+abbrev AbsSnapshot := Tzimtzum.ActionPolicySnapshot types.ToolId capability.CapKind
+  types.EgressKind types.PolicyDigest
+
+/-- The extracted driver-level command surface. -/
 inductive KernelCmd where
   | RegisterTool : types.ToolId → KernelCmd
   | UnregisterTool : types.ToolId → KernelCmd
-  | LoadInstruction : types.AgentId → types.InstructionId → KernelCmd
   | Delegate : types.AgentId → types.AgentId → KernelCmd
   | GrantCapability : types.AgentId → types.AgentId → capability.CapKind → KernelCmd
+  | GrantCrossing : types.AgentId → types.AgentId → types.AssignmentDigest → Std.U32 → KernelCmd
   | Revoke : types.AgentId → types.AgentId → KernelCmd
   | CascadeRevoke : types.AgentId → types.AgentId → KernelCmd
-  | InvokeStart : types.AgentId → types.ToolId → types.InvocationId →
-      collections.VecSet types.EgressKind → KernelCmd
-  | InvokeComplete : types.AgentId → types.InvocationId → KernelCmd
-  | ReturnEndorsed : types.AgentId → types.AgentId → types.ConfLevel → types.IntegLevel →
+  | Ingest : types.AgentId → Option types.AgentId → types.ConfLevel → types.IntegLevel → KernelCmd
+  | BeginInvocation : types.AgentId → types.InvocationId → types.ChallengeId →
+      types.ActionPolicySnapshot → collections.VecSet types.EgressKind → types.ContentHash → Bool →
       KernelCmd
-  | ReturnUnendorsed : types.AgentId → types.AgentId → KernelCmd
-  | SentinelElevateTaint : types.AgentId → types.ConfLevel → KernelCmd
-  | SentinelDegradeIntegrity : types.AgentId → types.IntegLevel → KernelCmd
-  | SentinelCreditBudget : types.AgentId → Std.U8 → KernelCmd
-  | GrantOverride : types.AgentId → types.AgentId → types.ToolId → types.ConfLevel → KernelCmd
+  | AuthorizeInspected : types.InvocationId → types.InspectionAttestation → KernelCmd
+  | SettleInvocation : types.InvocationId → types.Outcome → Option types.ResolutionAttestation →
+      KernelCmd
+  | CrossOutput : types.CrossInput → KernelCmd
 
-/-- The concrete step: dispatch a `KernelCmd` to its extracted transition. The oracle-backed
-    transitions thread the `Kernel<A,C,F,E>` instances/parameters. -/
-noncomputable def kernelStep {A C F : Type}
-    (aInst : traits.AuthorizerOracle A) (cgInst : traits.ContentGateOracle C)
-    (cfInst : traits.ConformanceOracle F)
-    (authorizer : A) (content_gate : C) (conformance : F)
-    (st : state.KernelState) (bg : background.BackgroundTheory) (cmd : KernelCmd) :
+/-- Dispatch a command to the matching extracted transition. -/
+noncomputable def kernelStep (st : state.KernelState) (bg : background.BackgroundTheory) (cmd : KernelCmd) :
     Result (core.result.Result (state.KernelState × event.KernelAction) error.KernelError) :=
   match cmd with
-  | .RegisterTool tool => transitions.register_tool st bg tool
-  | .UnregisterTool tool => transitions.unregister_tool st bg tool
-  | .LoadInstruction agent instr => transitions.load_instruction st bg agent instr
+  | .RegisterTool tool => transitions.register_tool st tool
+  | .UnregisterTool tool => transitions.unregister_tool st tool
   | .Delegate grantor grantee => transitions.delegate st bg grantor grantee
-  | .GrantCapability parent child cap => transitions.grant_capability st bg parent child cap
+  | .GrantCapability parent child cap => transitions.grant_capability st parent child cap
+  | .GrantCrossing grantor agent assignment n =>
+      transitions.grant_crossing st bg grantor agent assignment n
   | .Revoke parent target => transitions.revoke st bg parent target
   | .CascadeRevoke child parent => transitions.cascade_revoke st bg child parent
-  | .InvokeStart agent tool inv attested_egress =>
-      transitions.invoke_start aInst cgInst st bg authorizer content_gate agent tool inv
-        attested_egress
-  | .InvokeComplete agent inv => transitions.invoke_complete cfInst st bg conformance agent inv
-  | .ReturnEndorsed child parent clvl ilvl =>
-      transitions.return_endorsed cfInst st bg conformance child parent clvl ilvl
-  | .ReturnUnendorsed child parent =>
-      transitions.return_unendorsed cgInst st bg content_gate child parent
-  | .SentinelElevateTaint agent level =>
-      transitions.sentinel_elevate_taint cgInst st bg content_gate agent level
-  | .SentinelDegradeIntegrity agent level =>
-      transitions.sentinel_degrade_integrity cgInst st bg content_gate agent level
-  | .SentinelCreditBudget agent amount => transitions.sentinel_credit_budget st bg agent amount
-  | .GrantOverride granter target tool level =>
-      transitions.grant_override st bg granter target tool level
+  | .Ingest agent src pconf pinteg => transitions.ingest st bg agent src pconf pinteg
+  | .BeginInvocation agent inv chal snap egr ah authorized =>
+      transitions.begin_invocation st bg agent inv chal snap egr ah authorized
+  | .AuthorizeInspected inv att => transitions.authorize_inspected st bg inv att
+  | .SettleInvocation inv outcome att => transitions.settle_invocation st inv outcome att
+  | .CrossOutput q => transitions.cross_output st bg q
 
-/-- The abstract action a command refines. Only the `InvokeComplete` arm inspects the returned
-    event: the `endorsed : Bool` it carries selects the split pair's branch (design §5.4). The
-    concrete lattice levels map via `confA`/`integA`. -/
-def absActionOf (cmd : KernelCmd) (ev : event.KernelAction) : Kav.Action AbsState :=
+/-! ## Canonical abstractions for explicit data inputs -/
+
+/-- Canonical abstraction of an inspection attestation. -/
+def inspectionA (att : types.InspectionAttestation) :
+    Tzimtzum.InspectionAttestation types.InvocationId types.ChallengeId types.AttestationId
+      types.PolicyDigest types.ContentHash where
+  id := att.id
+  inv := att.inv
+  challenge := att.challenge
+  args_hash := att.args_hash
+  policy_digest := att.policy_digest
+  positive := att.positive = true
+
+@[simp] theorem inspectionA_rel (att : types.InspectionAttestation) :
+    inspectionAttestationRel (inspectionA att) att := by
+  simp [inspectionA, inspectionAttestationRel]
+
+/-- Canonical abstraction of a quarantine-resolution attestation. -/
+def resolutionA (att : types.ResolutionAttestation) :
+    Tzimtzum.ResolutionAttestation types.InvocationId types.AttestationId where
+  id := att.id
+  inv := att.inv
+  outcome := outcomeA att.outcome
+
+@[simp] theorem resolutionA_rel (att : types.ResolutionAttestation) :
+    resolutionAttestationRel (resolutionA att) att := by
+  simp [resolutionA, resolutionAttestationRel]
+
+@[simp] theorem resolutionOptionA_rel (att : Option types.ResolutionAttestation) :
+    optRel resolutionAttestationRel (att.map resolutionA) att := by
+  cases att <;> simp [optRel]
+
+/-- Canonical abstraction of a conformance attestation carried by `CrossInput`. -/
+def conformanceA (att : types.ConformanceAttestation) :
+    Tzimtzum.ConformanceAttestation types.AgentId types.AttestationId types.AssignmentDigest
+      types.ContentHash where
+  id := att.id
+  output := att.output
+  src := att.src
+  rcv := att.rcv
+  descriptor := att.descriptor
+  assignment := att.assignment
+  positive := att.positive = true
+
+@[simp] theorem conformanceA_rel (att : types.ConformanceAttestation) :
+    conformanceAttestationRel (conformanceA att) att := by
+  simp [conformanceA, conformanceAttestationRel]
+
+@[simp] theorem conformanceOptionA_rel (att : Option types.ConformanceAttestation) :
+    optRel conformanceAttestationRel (att.map conformanceA) att := by
+  cases att <;> simp [optRel]
+
+/-- Canonical abstraction of the explicit crossing input. -/
+def crossA (q : types.CrossInput) :
+    Tzimtzum.CrossInput types.AgentId types.AttestationId types.CrossingId
+      types.AssignmentDigest types.ContentHash where
+  src := q.src
+  rcv := q.rcv
+  crossing := q.crossing
+  output_hash := q.output_hash
+  descriptor := q.descriptor
+  fallback := fallbackA q.fallback
+  t_integ := integA q.t_integ
+  t_conf := q.t_conf.map confA
+  assignment := q.assignment
+  evidence := q.evidence.map conformanceA
+  released_conf := confA q.released_conf
+  released_integ := integA q.released_integ
+
+@[simp] theorem crossA_rel (q : types.CrossInput) : crossInputRel (crossA q) q := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, rfl, rfl⟩
+  exact conformanceOptionA_rel q.evidence
+
+/-! ## Abstract step selected by a concrete command -/
+
+/-- The one V4 action refined by a command. Existentials expose only that action's internal branch
+parameters; they do not widen the command to another action. -/
+def AbsStep
+    (snapRel : types.InvocationId → AbsSnapshot)
+    (egRel : types.InvocationId → types.EgressKind → Prop)
+    (auRel : types.InvocationId → Prop)
+    (cmd : KernelCmd) (a a' : AbsState) : Prop :=
   match cmd with
-  | .RegisterTool tool => Tzimtzum.register_tool tool
-  | .UnregisterTool tool => Tzimtzum.unregister_tool tool
-  | .LoadInstruction agent instr => Tzimtzum.load_instruction agent instr
-  | .Delegate grantor grantee => Tzimtzum.delegate grantor grantee
-  | .GrantCapability parent child cap => Tzimtzum.grant_capability parent child cap
-  | .Revoke parent target => Tzimtzum.revoke parent target
-  | .CascadeRevoke child parent => Tzimtzum.cascade_revoke child parent
-  | .InvokeStart agent tool inv _ => Tzimtzum.invoke_start agent tool inv
-  | .InvokeComplete agent inv =>
-      match ev with
-      | .InvokeComplete _ _ true => Tzimtzum.invoke_complete_endorsed agent inv
-      | _ => Tzimtzum.invoke_complete_unendorsed agent inv
-  | .ReturnEndorsed child parent clvl ilvl =>
-      Tzimtzum.return_endorsed child parent (confA clvl) (integA ilvl)
-  | .ReturnUnendorsed child parent => Tzimtzum.return_unendorsed child parent
-  | .SentinelElevateTaint agent level => Tzimtzum.sentinel_elevate_taint agent (confA level)
-  | .SentinelDegradeIntegrity agent level =>
-      Tzimtzum.sentinel_degrade_integrity agent (integA level)
-  | .SentinelCreditBudget agent amount => Tzimtzum.sentinel_credit_budget agent amount.val
-  | .GrantOverride granter target tool level =>
-      Tzimtzum.grant_override granter target tool (confA level)
+  | .RegisterTool tool =>
+      (Tzimtzum.register_tool tool).guard a ∧ (Tzimtzum.register_tool tool).next a a'
+  | .UnregisterTool tool =>
+      (Tzimtzum.unregister_tool tool).guard a ∧ (Tzimtzum.unregister_tool tool).next a a'
+  | .Delegate grantor grantee =>
+      (Tzimtzum.delegate grantor grantee).guard a ∧
+        (Tzimtzum.delegate grantor grantee).next a a'
+  | .GrantCapability parent child cap =>
+      (Tzimtzum.grant_capability parent child cap).guard a ∧
+        (Tzimtzum.grant_capability parent child cap).next a a'
+  | .GrantCrossing grantor agent assignment n =>
+      (Tzimtzum.grant_crossing grantor agent assignment n.val).guard a ∧
+        (Tzimtzum.grant_crossing grantor agent assignment n.val).next a a'
+  | .Revoke parent target =>
+      (Tzimtzum.revoke parent target).guard a ∧ (Tzimtzum.revoke parent target).next a a'
+  | .CascadeRevoke child parent =>
+      (Tzimtzum.cascade_revoke child parent).guard a ∧
+        (Tzimtzum.cascade_revoke child parent).next a a'
+  | .Ingest agent src pconf pinteg =>
+      ∃ dispo, (Tzimtzum.ingest agent src (confA pconf) (integA pinteg) dispo).guard a ∧
+        (Tzimtzum.ingest agent src (confA pconf) (integA pinteg) dispo).next a a'
+  | .BeginInvocation agent inv chal _snap _egr ah _authorized =>
+      ∃ verdict,
+        (Tzimtzum.begin_invocation agent inv chal (snapRel inv) (egRel inv) ah (auRel inv)
+          verdict).guard a ∧
+        (Tzimtzum.begin_invocation agent inv chal (snapRel inv) (egRel inv) ah (auRel inv)
+          verdict).next a a'
+  | .AuthorizeInspected inv att =>
+      ∃ scope admit,
+        (Tzimtzum.authorize_inspected inv scope (inspectionA att) admit).guard a ∧
+        (Tzimtzum.authorize_inspected inv scope (inspectionA att) admit).next a a'
+  | .SettleInvocation inv outcome att =>
+      ∃ agent dispo clvl ilvl,
+        (Tzimtzum.settle_invocation inv agent dispo (outcomeA outcome) clvl ilvl
+          (att.map resolutionA)).guard a ∧
+        (Tzimtzum.settle_invocation inv agent dispo (outcomeA outcome) clvl ilvl
+          (att.map resolutionA)).next a a'
+  | .CrossOutput q =>
+      ∃ branch dispo,
+        (Tzimtzum.cross_output (crossA q) branch dispo).guard a ∧
+        (Tzimtzum.cross_output (crossA q) branch dispo).next a a'
 
-/-! ## Capacity honesty + per-command precondition
+/-! ## Exact per-command assumptions -/
 
-Every `_preservesR` lemma takes its `…length < Usize.max` (and joint/multiplicative) bounds as
-free hypotheses — there is no resource model to discharge them. `StepPre st bg a cmd` is the
-per-command conjunction of exactly the bounds the fired transition's `_preservesR` lists, plus —
-for `InvokeStart` — the two oracle-seam predictions (module header). `revoke`/`cascade_revoke`/
-`unregister_tool` need none, so their slot is `True`. -/
-
-/-- The per-command precondition `step_refines` consumes. -/
-def StepPre (st : state.KernelState) (_bg : background.BackgroundTheory) (a : AbsState)
-    (cmd : KernelCmd) : Prop :=
+/-- Branch-specific collection bounds and the begin snapshot prediction. The `grant_crossing`
+`u32` bound is retained explicitly at the refinement boundary rather than silently discharged from
+its concrete representation. -/
+def StepPre (st : state.KernelState) (a : AbsState)
+    (snapRel : types.InvocationId → AbsSnapshot) (cmd : KernelCmd) : Prop :=
   match cmd with
   | .RegisterTool _ => st.tool_registered.items.val.length < Usize.max
   | .UnregisterTool _ => True
-  | .LoadInstruction _ _ =>
-      st.agent_instruction.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.agent_instruction.entries.val, p.2.items.val.length < Usize.max)
   | .Delegate _ _ =>
       st.agent_active.items.val.length < Usize.max ∧
-      st.agent_cap.entries.val.length < Usize.max ∧
-      st.agent_parent.entries.val.length < Usize.max ∧
-      st.agent_budget.entries.val.length < Usize.max
+      st.agent_parent.entries.val.length < Usize.max
   | .GrantCapability _ _ _ =>
       st.agent_cap.entries.val.length < Usize.max ∧
       (∀ p ∈ st.agent_cap.entries.val, p.2.items.val.length < Usize.max)
+  | .GrantCrossing _ _ _ n =>
+      st.crossing_grants.entries.val.length < Usize.max ∧ n.val < 2 ^ 32
   | .Revoke _ _ => True
   | .CascadeRevoke _ _ => True
-  | .InvokeStart agent tool inv attested_egress =>
-      (vmSetLen st.taint_levels agent + vmSetLen st.in_flight agent
-        + vmSetLen st.in_flight agent + 1 ≤ Usize.max) ∧
-      (vmSetLen st.integ_levels agent + vmSetLen st.in_flight agent ≤ Usize.max) ∧
-      st.override_used.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.override_used.entries.val,
-        p.2.items.val.length + (vmSetLen st.taint_levels agent + vmSetLen st.in_flight agent + 1
-          + vmSetLen st.in_flight agent) ≤ Usize.max) ∧
-      st.invocation_tool.entries.val.length < Usize.max ∧
-      st.in_flight.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.in_flight.entries.val, p.2.items.val.length < Usize.max) ∧
-      st.invocation_used.items.val.length < Usize.max ∧
-      st.invocation_egress.entries.val.length < Usize.max ∧
-      a.invocation_tool inv = tool ∧
-      (∀ E, a.invocation_egress inv E ↔ vsMem attested_egress E)
-  | .InvokeComplete _ _ =>
-      st.agent_budget.entries.val.length < Usize.max ∧
+  | .Ingest _ _ _ _ =>
       st.taint_levels.entries.val.length < Usize.max ∧
       (∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max) ∧
       st.integ_levels.entries.val.length < Usize.max ∧
       (∀ p ∈ st.integ_levels.entries.val, p.2.items.val.length < Usize.max)
-  | .ReturnEndorsed _ _ _ _ => st.agent_budget.entries.val.length < Usize.max
-  | .ReturnUnendorsed child parent =>
-      st.taint_levels.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.taint_levels.entries.val,
-        p.2.items.val.length + vmSetLen st.taint_levels child ≤ Usize.max) ∧
-      (vmSetLen st.taint_levels child ≤ Usize.max) ∧
-      st.integ_levels.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.integ_levels.entries.val,
-        p.2.items.val.length + vmSetLen st.integ_levels child ≤ Usize.max) ∧
-      (vmSetLen st.integ_levels child ≤ Usize.max) ∧
-      st.override_used.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.override_used.entries.val,
-        p.2.items.val.length + vmSetLen st.taint_levels child * vmSetLen st.in_flight parent
-          ≤ Usize.max) ∧
-      (vmSetLen st.taint_levels child * vmSetLen st.in_flight parent ≤ Usize.max)
-  | .SentinelElevateTaint agent _ =>
-      st.taint_levels.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max) ∧
-      st.override_used.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.override_used.entries.val,
-        p.2.items.val.length + vmSetLen st.in_flight agent ≤ Usize.max) ∧
-      (vmSetLen st.in_flight agent ≤ Usize.max)
-  | .SentinelDegradeIntegrity _ _ =>
-      st.integ_levels.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.integ_levels.entries.val, p.2.items.val.length < Usize.max)
-  | .SentinelCreditBudget _ _ => st.agent_budget.entries.val.length < Usize.max
-  | .GrantOverride _ _ _ _ =>
-      st.flow_override.entries.val.length < Usize.max ∧
-      (∀ p ∈ st.flow_override.entries.val, p.2.items.val.length < Usize.max) ∧
-      st.agent_budget.entries.val.length < Usize.max
+  | .BeginInvocation agent inv _ snap _ _ _ =>
+      vmSetLen st.taint_levels agent + st.pending.entries.val.length ≤ Usize.max ∧
+      vmSetLen st.integ_levels agent + st.pending.entries.val.length ≤ Usize.max ∧
+      st.pending.entries.val.length < Usize.max ∧
+      st.challenges.entries.val.length < Usize.max ∧
+      st.consumed_ids.items.val.length < Usize.max ∧
+      snapshotRel (snapRel inv) snap
+  | .AuthorizeInspected inv _ =>
+      (∀ sc, challengeC st inv = some sc →
+        vmSetLen st.taint_levels sc.agent + st.pending.entries.val.length ≤ Usize.max) ∧
+      (∀ sc, challengeC st inv = some sc →
+        vmSetLen st.integ_levels sc.agent + st.pending.entries.val.length ≤ Usize.max) ∧
+      st.pending.entries.val.length < Usize.max ∧
+      st.consumed_attestations.items.val.length < Usize.max
+  | .SettleInvocation _ outcome att =>
+      (outcome = .Ambiguous → st.pending.entries.val.length < Usize.max) ∧
+      (outcome ≠ .Ambiguous → st.taint_levels.entries.val.length < Usize.max) ∧
+      (outcome ≠ .Ambiguous →
+        ∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max) ∧
+      (outcome ≠ .Ambiguous → st.integ_levels.entries.val.length < Usize.max) ∧
+      (outcome ≠ .Ambiguous →
+        ∀ p ∈ st.integ_levels.entries.val, p.2.items.val.length < Usize.max) ∧
+      (∀ r, att = some r → st.consumed_attestations.items.val.length < Usize.max)
+  | .CrossOutput q =>
+      (Tzimtzum.endorsedOK a (crossA q) →
+        st.taint_levels.entries.val.length < Usize.max) ∧
+      (Tzimtzum.endorsedOK a (crossA q) →
+        ∀ p ∈ st.taint_levels.entries.val, p.2.items.val.length < Usize.max) ∧
+      (Tzimtzum.endorsedOK a (crossA q) →
+        st.integ_levels.entries.val.length < Usize.max) ∧
+      (Tzimtzum.endorsedOK a (crossA q) →
+        ∀ p ∈ st.integ_levels.entries.val, p.2.items.val.length < Usize.max) ∧
+      (¬Tzimtzum.endorsedOK a (crossA q) → (crossA q).fallback = .release_unendorsed →
+        ∀ src, collections.VecMapKVecSet.get_set_or_empty
+          types.AgentId.Insts.CoreCloneClone types.AgentId.Insts.CoreCmpPartialEqAgentId
+          types.ConfLevel.Insts.CoreCloneClone types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
+          st.taint_levels q.src = .ok src → CopyCapacity st.taint_levels q.rcv src) ∧
+      (¬Tzimtzum.endorsedOK a (crossA q) → (crossA q).fallback = .release_unendorsed →
+        ∀ src, collections.VecMapKVecSet.get_set_or_empty
+          types.AgentId.Insts.CoreCloneClone types.AgentId.Insts.CoreCmpPartialEqAgentId
+          types.IntegLevel.Insts.CoreCloneClone types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+          st.integ_levels q.src = .ok src → CopyCapacity st.integ_levels q.rcv src) ∧
+      st.consumed_crossings.items.val.length < Usize.max ∧
+      (Tzimtzum.endorsedOK a (crossA q) →
+        st.consumed_attestations.items.val.length < Usize.max) ∧
+      (Tzimtzum.endorsedOK a (crossA q) →
+        st.crossing_grants.entries.val.length < Usize.max)
 
-/-! ## Runtime-oracle extraction
+/-- The only residual oracle agreement: authorizer verdict and egress classification at begin. -/
+def StepFidelity (egRel : types.InvocationId → types.EgressKind → Prop)
+    (auRel : types.InvocationId → Prop) (cmd : KernelCmd) : Prop :=
+  match cmd with
+  | .BeginInvocation _ inv _ _ egr _ authorized =>
+      AuAgree authorized (auRel inv) ∧ EgressAgree egr (egRel inv)
+  | _ => True
 
-The oracle-backed lemmas either take the state-level agreements directly (`hCg`/`hAu`), or —
-for the conformance verdicts — the per-invocation boolean reductions extracted here via
-`Classical.choose` (already in the standard TCB). -/
+/-! ## Twelve-way preservation bundle -/
 
-/-- The conformance reduction at a fixed `(agent, inv)`, from `CfAgree` (state-independent,
-    per-invocation). -/
-noncomputable def cfOfAgree {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
-    {bg : background.BackgroundTheory} {a : AbsState}
-    (h : CfAgree cfInst conformance bg a) (ag : types.AgentId) (inv : types.InvocationId) :
-    types.ToolId → Bool :=
-  fun t => (h ag t inv).choose
+set_option maxHeartbeats 2000000
 
-theorem cfOfAgree_ok {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
-    {bg : background.BackgroundTheory} {a : AbsState}
-    (h : CfAgree cfInst conformance bg a) (ag : types.AgentId) (inv : types.InvocationId)
-    (t : types.ToolId) (s : state.KernelState) :
-    cfInst.conforms conformance ag t inv s bg = .ok (cfOfAgree h ag inv t) :=
-  (h ag t inv).choose_spec.1 s
-
-theorem cfOfAgree_iff {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
-    {bg : background.BackgroundTheory} {a : AbsState}
-    (h : CfAgree cfInst conformance bg a) (ag : types.AgentId) (inv : types.InvocationId)
-    (t : types.ToolId) :
-    cfOfAgree h ag inv t = true ↔ a.invocation_conforms inv := (h ag t inv).choose_spec.2
-
-/-- The return-conformance reduction at a fixed `(child, parent)`, from `RcAgree`
-    (state-independent, pairwise). -/
-noncomputable def rcOfAgree {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
-    {bg : background.BackgroundTheory} {a : AbsState}
-    (h : RcAgree cfInst conformance bg a) (c p : types.AgentId) : Bool :=
-  (h c p).choose
-
-theorem rcOfAgree_ok {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
-    {bg : background.BackgroundTheory} {a : AbsState}
-    (h : RcAgree cfInst conformance bg a) (c p : types.AgentId) (s : state.KernelState) :
-    cfInst.return_conforms conformance c p s bg = .ok (rcOfAgree h c p) := (h c p).choose_spec.1 s
-
-theorem rcOfAgree_iff {F : Type} {cfInst : traits.ConformanceOracle F} {conformance : F}
-    {bg : background.BackgroundTheory} {a : AbsState}
-    (h : RcAgree cfInst conformance bg a) (c p : types.AgentId) :
-    rcOfAgree h c p = true ↔ a.return_conforms c p := (h c p).choose_spec.2
-
-/-! ## The bundle: `step_refines` -/
-
-set_option maxHeartbeats 1000000
-
-theorem step_refines {A C F : Type}
-    (aInst : traits.AuthorizerOracle A) (cgInst : traits.ContentGateOracle C)
-    (cfInst : traits.ConformanceOracle F)
-    (authorizer : A) (content_gate : C) (conformance : F)
+/-- Every successful extracted V4 transition performs exactly one corresponding abstract V4 action
+and preserves the unified relation. -/
+theorem step_refines
     (st : state.KernelState) (bg : background.BackgroundTheory) (a : AbsState)
-    (cmd : KernelCmd)
-    (hR : R st bg a)
-    (hCg : CgAgree cgInst content_gate st bg a)
-    (hAu : AuAgree aInst authorizer st bg a)
-    (hCf : CfAgree cfInst conformance bg a)
-    (hRc : RcAgree cfInst conformance bg a)
-    (hFlightUsed : ∀ ag I, a.in_flight ag I → a.invocation_used I)
-    (hPre : StepPre st bg a cmd)
+    (snapRel : types.InvocationId → AbsSnapshot)
+    (egRel : types.InvocationId → types.EgressKind → Prop)
+    (auRel : types.InvocationId → Prop)
+    (cmd : KernelCmd) (hR : R st bg a)
+    (hScoped : Tzimtzum.challenge_scoped a)
+    (hPre : StepPre st a snapRel cmd)
+    (hFid : StepFidelity egRel auRel cmd)
     (st' : state.KernelState) (ev : event.KernelAction)
-    (hok : kernelStep aInst cgInst cfInst authorizer content_gate conformance st bg cmd
-      = .ok (.Ok (st', ev))) :
-    ∃ a', (absActionOf cmd ev).guard a ∧ (absActionOf cmd ev).next a a' ∧ R st' bg a' := by
+    (hok : kernelStep st bg cmd = .ok (.Ok (st', ev))) :
+    ∃ a', AbsStep snapRel egRel auRel cmd a a' ∧ R st' bg a' := by
   cases cmd with
   | RegisterTool tool =>
-      exact register_tool_preservesR st bg a tool hR hPre st' ev hok
+      obtain ⟨a', hg, hn, hR'⟩ := register_tool_preservesR st bg a tool hR hPre st' ev hok
+      exact ⟨a', ⟨hg, hn⟩, hR'⟩
   | UnregisterTool tool =>
-      exact unregister_tool_preservesR st bg a tool hR st' ev hok
-  | LoadInstruction agent instr =>
-      exact load_instruction_preservesR st bg a agent instr hR hPre.1 hPre.2 st' ev hok
+      obtain ⟨a', hg, hn, hR'⟩ := unregister_tool_preservesR st bg a tool hR st' ev hok
+      exact ⟨a', ⟨hg, hn⟩, hR'⟩
   | Delegate grantor grantee =>
-      exact delegate_preservesR st bg a grantor grantee hR hPre.1 hPre.2.1 hPre.2.2.1 hPre.2.2.2
-        st' ev hok
+      obtain ⟨a', hg, hn, hR'⟩ :=
+        delegate_preservesR st bg a grantor grantee hR hPre.1 hPre.2 st' ev hok
+      exact ⟨a', ⟨hg, hn⟩, hR'⟩
   | GrantCapability parent child cap =>
-      exact grant_capability_preservesR st bg a parent child cap hR hPre.1 hPre.2 st' ev hok
+      obtain ⟨a', hg, hn, hR'⟩ :=
+        grant_capability_preservesR st bg a parent child cap hR hPre.1 hPre.2 st' ev hok
+      exact ⟨a', ⟨hg, hn⟩, hR'⟩
+  | GrantCrossing grantor agent assignment n =>
+      obtain ⟨a', hg, hn, hR'⟩ :=
+        grant_crossing_preservesR st bg a grantor agent assignment n hR hPre.1 st' ev hok
+      exact ⟨a', ⟨hg, hn⟩, hR'⟩
   | Revoke parent target =>
-      exact revoke_preservesR st bg a parent target hR st' ev hok
+      obtain ⟨a', hg, hn, hR'⟩ := revoke_preservesR st bg a parent target hR st' ev hok
+      exact ⟨a', ⟨hg, hn⟩, hR'⟩
   | CascadeRevoke child parent =>
-      exact cascade_revoke_preservesR st bg a child parent hR st' ev hok
-  | InvokeStart agent tool inv attested_egress =>
-      obtain ⟨hcapFlow, hcapInteg, hcapOvE, hcapOvJoint, hcapInvT, hcapInflE, hcapInflS,
-        hcapUsed, hcapEgress, hinvtool, hEgAgree⟩ := hPre
-      exact invoke_start_preservesR aInst cgInst st bg authorizer content_gate a agent tool inv
-        attested_egress hR hCg hAu hEgAgree hinvtool hFlightUsed hcapFlow hcapInteg hcapOvE
-        hcapOvJoint hcapInvT hcapInflE hcapInflS hcapUsed hcapEgress st' ev hok
-  | InvokeComplete agent inv =>
-      obtain ⟨hcapBudget, hcapTaintE, hcapTaintS, hcapIntegE, hcapIntegS⟩ := hPre
-      -- Learn which branch fired from the returned event, then dispatch the split pair.
-      obtain ⟨-, -, tool, tmeta, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hBranch⟩ :=
-        invoke_complete_inv_full cfInst st bg conformance agent inv (cfOfAgree hCf agent inv)
-          (fun t s => cfOfAgree_ok hCf agent inv t s) hR.wfInflight hcapBudget hcapTaintE
-          hcapTaintS hcapIntegE hcapIntegS st' ev hok
-      rcases hBranch with ⟨hEv, -, -, -, -, -⟩ | ⟨hEv, -, -, -, -, -, -⟩ <;> subst hEv
-      · exact invoke_complete_endorsed_preservesR cfInst st bg conformance a agent inv
-          (cfOfAgree hCf agent inv) (fun t s => cfOfAgree_ok hCf agent inv t s)
-          (fun t => cfOfAgree_iff hCf agent inv t) hR hcapBudget hcapTaintE hcapTaintS
-          hcapIntegE hcapIntegS st' hok
-      · exact invoke_complete_unendorsed_preservesR cfInst st bg conformance a agent inv
-          (cfOfAgree hCf agent inv) (fun t s => cfOfAgree_ok hCf agent inv t s)
-          (fun t => cfOfAgree_iff hCf agent inv t) hR hcapBudget hcapTaintE hcapTaintS
-          hcapIntegE hcapIntegS st' hok
-  | ReturnEndorsed child parent clvl ilvl =>
-      exact return_endorsed_preservesR cfInst st bg conformance a child parent clvl ilvl
-        (rcOfAgree hRc child parent) (rcOfAgree_ok hRc child parent)
-        (rcOfAgree_iff hRc child parent) hR hPre st' ev hok
-  | ReturnUnendorsed child parent =>
-      obtain ⟨hcapTaintE, hcapTaintJ, hcapTaintO, hcapIntegE, hcapIntegJ, hcapIntegO, hcapOvE,
-        hcapOvJ, hcapCons⟩ := hPre
-      exact return_unendorsed_preservesR cgInst st bg content_gate a child parent hR hCg
-        hFlightUsed hcapTaintE hcapTaintJ hcapTaintO hcapIntegE hcapIntegJ hcapIntegO hcapOvE
-        hcapOvJ hcapCons st' ev hok
-  | SentinelElevateTaint agent level =>
-      obtain ⟨hcapTaintE, hcapTaintS, hcapOvE, hcapOvJ, hcapCons⟩ := hPre
-      exact sentinel_elevate_taint_preservesR cgInst st bg content_gate a agent level hR hCg
-        hFlightUsed hcapTaintE hcapTaintS hcapOvE hcapOvJ hcapCons st' ev hok
-  | SentinelDegradeIntegrity agent level =>
-      exact sentinel_degrade_integrity_preservesR cgInst st bg content_gate a agent level hR hCg
-        hPre.1 hPre.2 st' ev hok
-  | SentinelCreditBudget agent amount =>
-      exact sentinel_credit_budget_preservesR st bg a agent amount hR hPre st' ev hok
-  | GrantOverride granter target tool level =>
-      exact grant_override_preservesR st bg a granter target tool level hR
-        hPre.1 hPre.2.1 hPre.2.2 st' ev hok
+      obtain ⟨a', hg, hn, hR'⟩ :=
+        cascade_revoke_preservesR st bg a child parent hR st' ev hok
+      exact ⟨a', ⟨hg, hn⟩, hR'⟩
+  | Ingest agent src pconf pinteg =>
+      obtain ⟨dispo, a', hg, hn, hR'⟩ :=
+        ingest_preservesR st bg a agent src pconf pinteg hR hPre.1 hPre.2.1 hPre.2.2.1
+          hPre.2.2.2 st' ev hok
+      exact ⟨a', ⟨dispo, hg, hn⟩, hR'⟩
+  | BeginInvocation agent inv chal snap egr ah authorized =>
+      obtain ⟨hcapT, hcapI, hcapP, hcapCh, hcapIds, hsnap⟩ := hPre
+      obtain ⟨hAu, hEg⟩ := hFid
+      obtain ⟨verdict, a', hg, hn, hR'⟩ :=
+        begin_invocation_preservesR st bg a agent inv chal snap (snapRel inv) hsnap egr
+          (egRel inv) hEg ah authorized (auRel inv) hAu hR hcapT hcapI hcapP hcapCh hcapIds
+          st' ev hok
+      exact ⟨a', ⟨verdict, hg, hn⟩, hR'⟩
+  | AuthorizeInspected inv att =>
+      obtain ⟨hcapT, hcapI, hcapP, hcapAtt⟩ := hPre
+      obtain ⟨scope, admit, a', hg, hn, hR'⟩ :=
+        authorize_inspected_preservesR st bg a inv att (inspectionA att) (inspectionA_rel att) hR
+          hScoped hcapT hcapI hcapP hcapAtt st' ev hok
+      exact ⟨a', ⟨scope, admit, hg, hn⟩, hR'⟩
+  | SettleInvocation inv outcome att =>
+      obtain ⟨hcapP, hcapTE, hcapTS, hcapIE, hcapIS, hcapAtt⟩ := hPre
+      obtain ⟨agent, dispo, clvl, ilvl, a', hg, hn, hR'⟩ :=
+        settle_invocation_preservesR st bg a inv outcome att (att.map resolutionA)
+          (resolutionOptionA_rel att) hR hcapP hcapTE hcapTS hcapIE hcapIS hcapAtt st' ev hok
+      exact ⟨a', ⟨agent, dispo, clvl, ilvl, hg, hn⟩, hR'⟩
+  | CrossOutput q =>
+      obtain ⟨hcapEndT, hcapEndTS, hcapEndI, hcapEndIS, hcapCopyT, hcapCopyI, hcapCross,
+        hcapAtt, hcapGrant⟩ := hPre
+      obtain ⟨branch, dispo, a', hg, hn, hR'⟩ :=
+        cross_output_preservesR st bg a hR q (crossA q) (crossA_rel q) hcapEndT hcapEndTS
+          hcapEndI hcapEndIS hcapCopyT hcapCopyI hcapCross hcapAtt hcapGrant st' ev hok
+      exact ⟨a', ⟨branch, dispo, hg, hn⟩, hR'⟩
 
 end ArgusLean.Refinement

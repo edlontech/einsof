@@ -177,39 +177,38 @@ egress, and policy digest. Pending records additionally carry agent, attested eg
 admission, disposition, authorizer verdict, and quarantine. Challenge scope carries the
 challenge id, agent, snapshot/egress, arguments hash, and authorizer verdict.
 
-### Reshaped refinement assumptions
+### Extracted-kernel refinement
 
-The V4 refinement must keep two explicit assumptions, with narrower content than V3:
+[`argus/formal-lean`](../argus/formal-lean/) now proves
+`ArgusLean.Refinement.implementation_sound` for the extracted V4 kernel over all twelve actions.
+Every reachable extracted state refines a TzimtzumV4 state satisfying all 32 invariants, modulo the
+trusted Charon/Aeneas extraction and two explicit hypotheses:
 
 **`OracleFidelity`** is per-invocation agreement only for:
 
 1. the authorizer verdict; and
 2. egress-kind classification producing the attested egress set.
 
-Inspection, quarantine-resolution, and conformance decisions are explicit attestation
-inputs, not timeless ContentGate/Conformance oracle relations. The kernel verifies their
-scope and one-use; issuer truth remains external.
+Inspection, quarantine resolution, and conformance decisions are explicit attestation inputs, not
+timeless ContentGate/Conformance oracle relations. The kernel verifies their scope and one-use;
+issuer truth remains external.
 
-**`CapacityOK`** covers exactly the allocations made by the fired branch:
+**`CapacityOK`** states governed-root initialization coherence, the fixed begin-time snapshot
+prediction, `grant_crossing n < 2^32`, and exactly the allocations made by each successful branch:
 
 - register: tool-set insertion;
 - delegate: active/parent insertions;
 - grant capability: outer capability map and child set;
-- grant crossing: grant-map insertion **and `n < 2^32`** for abstract `Nat` versus Rust
-  `u32`;
+- grant crossing: grant-map insertion;
 - ingest: taint/integrity outer-map and inner-set insertions;
 - begin: pending-or-challenge insertion plus consumed-id insertion;
 - authorize: admitted-pending insertion plus consumed-attestation insertion;
-- settle: non-ambiguous label insertions plus resolution-attestation insertion;
-- cross: crossing-id insertion; endorsed label/evidence writes; unendorsed bulk label
-  copies with joint destination/source bounds;
+- settle: ambiguous pending reinsertion, or non-ambiguous label and optional resolution-evidence
+  writes;
+- cross: unconditional crossing-id insertion; endorsed label/evidence/grant writes; or unendorsed
+  source-label copies with joint destination/source bounds;
 - removal and frame-only branches: no growth bound.
 
-A single insertion requires `length < Usize.max`; bulk copying requires
-`destination.length + source.length ≤ Usize.max`.
-
-Each `begin_invocation` call also supplies two fresh-call predictions:
-
-- the abstract frozen snapshot/tool binding equals the concrete exact composite tool
-  binding; and
-- `∀ E, abstractEgress E ↔ VecSet.mem attested_egress E`.
+A single insertion requires `length < Usize.max`; bulk copying requires the exact destination/source
+bounds exposed by the extracted loops. These premises apply only to successful commands from
+reachable related states and are not hidden in concrete reachability.
