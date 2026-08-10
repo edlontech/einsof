@@ -264,6 +264,8 @@ impl ErrorN {
     }
 }
 
+pub type NativeResult<T> = Result<T, ErrorN>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
