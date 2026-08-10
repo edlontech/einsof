@@ -1,54 +1,150 @@
 defmodule ExArgus.LifecycleTest do
   use ExUnit.Case, async: true
 
-  alias ExArgus.Offline
-  alias ExArgus.Kernel.Background
+  alias ExArgus.{Chain, Error, Instance, Native}
+  alias ExArgus.Kernel.{Background, State}
 
-  defp bg do
-    %Background{
-      tools: %{
-        "read_file" => %{
-          capabilities: [:filesystem_read],
-          egress: [],
-          conf_floor: :sensitive,
-          output_bounded: false,
-          issuer: "trusted",
-          integ_floor: :untrusted,
-          integ_inspect_floor: :untrusted,
-          output_integ: :attested
-        }
-      },
-      allow_ceiling: %{network_external: :public},
-      inspect_ceiling: %{},
-      trusted_issuers: ["trusted"],
-      instruction_issuer: %{}
-    }
+  @egress [:network_external, :network_internal, :filesystem_write, :ipc]
+
+  defp ceiling(value \\ nil), do: Map.new(@egress, &{&1, value})
+
+  defp background do
+    %Background{mode: :enforce, allow_ceiling: ceiling(), inspect_ceiling: ceiling()}
   end
 
-  test "register -> delegate -> grant -> invoke -> complete -> return -> revoke" do
-    bg = bg()
-    s = Offline.initial_state()
+  test "new, status, and state expose the fixed-root genesis" do
+    assert {:ok, instance} = Instance.new(background())
+    assert %Instance{} = instance
 
-    {:ok, s, {:register_tool, "read_file"}} = Offline.register_tool(s, bg, "read_file")
-    {:ok, s, {:delegate, "root", "a1"}} = Offline.delegate(s, bg, "root", "a1")
-    {:ok, s, _} = Offline.grant_capability(s, bg, "root", "a1", :filesystem_read)
-    {:ok, s, _} = Offline.grant_capability(s, bg, "root", "a1", :declassify)
+    assert {:ok, %Chain{version: 5, sequence: 0, head: head}} = Instance.status(instance)
+    assert byte_size(head) == 32
 
-    {:ok, s, _} =
-      Offline.invoke_start(s, bg, "a1", "read_file", "inv-1", true, %{"inv-1" => true}, [])
+    assert {:ok,
+            %State{
+              agent_active: ["root"],
+              agent_parent: [],
+              agent_cap: [
+                {"root",
+                 [
+                   :filesystem_read,
+                   :filesystem_write,
+                   :filesystem_delete,
+                   :network_egress,
+                   :network_ingress,
+                   :execution_shell,
+                   :execution_code,
+                   :credentials,
+                   :system_info,
+                   :system_modify,
+                   :clipboard,
+                   :browser_navigate,
+                   :database_read,
+                   :database_write,
+                   :ipc
+                 ]}
+              ],
+              taint_levels: [],
+              integ_levels: [],
+              pending: [],
+              challenges: [],
+              consumed_ids: [],
+              consumed_attestations: [],
+              consumed_crossings: [],
+              crossing_grants: [],
+              tool_registered: []
+            }} = Instance.state(instance)
+  end
 
-    {:ok, s, _} = Offline.invoke_complete(s, bg, "a1", "inv-1", true)
-    # bounded=false => not the zero-taint path => taint at the tool floor
-    assert :sensitive in Map.fetch!(s.taint_levels, "a1")
+  test "background is exact, closed, and fail-closed before Rustler decoding" do
+    invalid = [
+      {nil, :invalid_struct, []},
+      {%Background{}, :unknown_enum, [:mode]},
+      {Map.put(background(), :root, "other"), :invalid_keys, []},
+      {%Background{background() | allow_ceiling: %{}}, :invalid_keys, [:allow_ceiling]},
+      {%Background{background() | inspect_ceiling: Map.put(ceiling(), :other, nil)},
+       :invalid_keys, [:inspect_ceiling]},
+      {%Background{background() | allow_ceiling: Map.put(ceiling(), :network_external, :secret)},
+       :unknown_enum, [:allow_ceiling, :network_external]}
+    ]
 
-    {:ok, s, {:return_endorsed, "a1", "root", :sensitive, :attested}} =
-      Offline.return_endorsed(s, bg, "a1", "root", true, :sensitive, :attested)
+    for {input, reason, path} <- invalid do
+      assert {:error, %Error{class: :boundary, reason: ^reason, path: ^path}} =
+               Instance.new(input)
+    end
+  end
 
-    # return_endorsed debits the recipient (root) by declass_weight(:sensitive) + integ_weight(:attested) = 2 + 0.
-    assert Map.get(s.agent_budget, "root", 16) == 14
+  test "ordinary malformed lifecycle inputs return typed errors rather than badarg" do
+    assert {:error, %Error{class: :boundary, reason: :invalid_struct}} = Instance.status(nil)
+    assert {:error, %Error{class: :boundary, reason: :invalid_struct}} = Instance.state(%{})
 
-    {:ok, s, {:revoke, "root", "a1"}} = Offline.revoke(s, bg, "root", "a1")
+    malformed = struct(Instance, resource: :not_a_reference)
 
-    refute "a1" in s.agent_active
+    assert {:error, %Error{class: :boundary, reason: :invalid_type, path: [:resource]}} =
+             Instance.status(malformed)
+
+    assert {:error, %Error{class: :boundary, reason: :invalid_type, path: [:resource]}} =
+             Instance.state(malformed)
+
+    wrong_reference = struct(Instance, resource: make_ref())
+
+    assert {:error, %Error{class: :boundary, reason: :invalid_type, path: [:resource]}} =
+             Instance.status(wrong_reference)
+  end
+
+  test "native live and recovery resource types reject cross-use at the BEAM decoder boundary" do
+    assert {:ok, live} = Native.instance_new(background())
+    assert {:ok, recovery} = Native.recovery_new(background())
+    assert {:ok, chain} = Native.instance_status(live)
+
+    assert_raise ArgumentError, fn -> Native.instance_status(recovery) end
+    assert_raise ArgumentError, fn -> Native.recovery_finalize(live, chain) end
+  end
+
+  test "source loading is default and force-build wins explicit precompiled opt-in" do
+    source? = &ExArgus.MixProject.build_from_source?/1
+
+    assert source?.(%{})
+    refute source?.(%{"EX_ARGUS_USE_PRECOMPILED" => "1"})
+
+    assert source?.(%{
+             "EX_ARGUS_USE_PRECOMPILED" => "1",
+             "RUSTLER_PRECOMPILED_FORCE_BUILD" => "1"
+           })
+
+    assert source?.(%{
+             "EX_ARGUS_USE_PRECOMPILED" => "1",
+             "RUSTLER_PRECOMPILED_FORCE_BUILD" => "true"
+           })
+
+    refute function_exported?(Native, :load_rustler_precompiled, 0)
+  end
+
+  test "Instance exposes only the Task 7 lifecycle" do
+    assert Enum.sort(Instance.__info__(:functions)) ==
+             Enum.sort(__struct__: 0, __struct__: 1, new: 1, state: 1, status: 1)
+  end
+
+  test "only the seven V4 NIF stubs are declared" do
+    nifs =
+      Native.__info__(:functions)
+      |> Enum.filter(fn {name, _arity} ->
+        name |> Atom.to_string() |> then(&String.starts_with?(&1, ["instance_", "recovery_"]))
+      end)
+
+    assert Enum.sort(nifs) ==
+             Enum.sort(
+               instance_new: 1,
+               instance_apply: 2,
+               instance_status: 1,
+               instance_state: 1,
+               recovery_new: 1,
+               recovery_replay: 2,
+               recovery_finalize: 2
+             )
+  end
+
+  test "the package starts no application callback or process" do
+    assert Application.spec(:ex_argus, :mod) in [nil, []]
+    refute Code.ensure_loaded?(ExArgus.Application)
   end
 end
