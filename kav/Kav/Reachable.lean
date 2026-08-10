@@ -12,7 +12,7 @@ into
   "every reachable state satisfies the bundle".
 
 This is the protocol-independent analog of the (retired) Rocq `invariants_inductive`
-bundle. The TzimtzumV2 instantiation — `def allInv` + the per-action preservation
+bundle. The TzimtzumV4 instantiation — `def allInv` + the per-action preservation
 lemmas + `kav_sound` — lives in `tzimtzum/`. Nothing here mentions a solver: the
 combinator is a plain structural induction, so it adds nothing to the trust base
 beyond the kernel. -/

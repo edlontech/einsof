@@ -2,82 +2,95 @@
 
 > Work in progress.
 
-`argus-kernel` is the pure-functional security kernel implementing the
-[TzimtzumV3](../tzimtzum/) authorization protocol. It enforces data-flow policy at tool
-invocation boundaries to prevent exfiltration via indirect prompt injection (the Lethal
-Trifecta), and a dual integrity lattice to prevent ingested-untrusted-content from driving
-destructive tools.
+`argus-kernel` is the zero-runtime-dependency, pure-functional Rust implementation of the
+[TzimtzumV4](../tzimtzum/) authorization protocol. It enforces confidentiality,
+integrity, capability, inspection, quarantine, and bounded crossing rules at tool and
+agent boundaries.
 
-## argus-kernel
+## Kernel surface
 
-Pure functional state machine implementing the TzimtzumV3 transitions (16 spec actions;
-`invoke_complete`'s `if`/`else` branches refine the split `invoke_complete_endorsed` /
-`invoke_complete_unendorsed` pair, so the kernel has 15 transition functions). Zero
-dependencies; compatible with Aeneas/Charon (Lean) extraction.
-
-Each transition takes an immutable state and a fixed background theory, and returns a new
-state plus an event:
+Each transition consumes an immutable `KernelState` and returns a new state plus its exact
+`KernelAction`, or a closed `KernelError`:
 
 ```rust
-fn(KernelState, &BackgroundTheory, ...) -> Result<(KernelState, KernelEvent), KernelError>
+fn(KernelState, &BackgroundTheory, ...) -> Result<(KernelState, KernelAction), KernelError>
 ```
 
-The generic driver
-`Kernel<A: AuthorizerOracle, C: ContentGateOracle, F: ConformanceOracle, E: EventStore>`
-is fully monomorphized (no `Arc<dyn Trait>`).
+The complete V4 action surface is:
 
-Key V3 mechanisms: a dual confidentiality/integrity invoke gate (the flow gate plus CHECK
-4a/4b/4c -- graduated ALLOW / INSPECT+vouch, no override arm, since endorsement is the only
-way to raise integrity); per-invocation attested oracle verdicts keyed by `InvocationId`
-with replay freshness (`invocation_used`) and egress attestation (narrowing + coverage);
-one unified two-dimension crossing guard in `invoke_complete` that debits a
-dimension-adjusted `crossing_weight` (confidentiality and integrity components charged only
-when each dimension actually helps); weighted, no-arbitrage debits on `return_endorsed`
-and `grant_override` (`declass_weight`/`integ_weight`, no flat constants); and budget
-conservation -- children spawn at budget 0 (`delegate`), `sentinel_credit_budget` is the
-only faucet. `sentinel_degrade_integrity` and `unregister_tool` round out the action set.
+1. `register_tool`
+2. `unregister_tool`
+3. `delegate`
+4. `grant_capability`
+5. `grant_crossing`
+6. `revoke`
+7. `cascade_revoke`
+8. `ingest`
+9. `begin_invocation`
+10. `authorize_inspected`
+11. `settle_invocation`
+12. `cross_output`
 
-## argus-explain
+The immutable background contains enforcement mode, exact confidentiality allow/inspect
+ceilings for four egress kinds, and the root identity. Invocation policy and evidence are
+frozen transition inputs. Mutable state contains the agent tree and capabilities, dual
+labels, pending invocations and challenges, consumed-id histories, crossing grants, and
+registered tools.
 
-`crates/argus-explain` provides read-only DENY diagnostics: gate findings plus rescue
-counterfactuals, mirroring the kernel's gated transitions -- including the V3 integrity
-gates, attestation/freshness preconditions, `return_endorsed`/`grant_override` lever
-floors, and `sentinel_degrade_integrity`. Agreement with the kernel is property-tested. It
-is not part of the Charon/Aeneas extraction and is not verified.
+The kernel deliberately uses extraction-compatible `VecMap`/`VecSet` collections,
+explicit index loops, owned collection accessors, and no runtime dependencies. Serde and
+JSON are development-only dependencies for the shared V4 conformance corpus.
 
-## Formal verification
+## Verification
 
-The protocol is verified in Lean 4 (see [`tzimtzum/`](../tzimtzum/), built on the
-[Kav](../kav/) framework): TzimtzumV3, 16 actions against 26 invariants (11 safety
-properties + 15 strengthening invariants), all kernel-checked.
+TzimtzumV4 proves all 32 invariants over its complete 12-action abstract system. Charon
+and Aeneas mechanically extract this Rust kernel to Lean. The refinement in
+[`formal-lean/`](formal-lean/) proves that every successful extracted action maps to its
+single abstract counterpart and that every reachable extracted state relates to a
+TzimtzumV4 state satisfying the full invariant bundle.
 
-The Rust kernel implements TzimtzumV3, and the Lean refinement under
-[`formal-lean/`](formal-lean/) targets the same V3 kernel (extracted via Charon/Aeneas,
-`scripts/charon-aeneas-extract.sh`). `implementation_sound` -- every reachable state of
-the extracted kernel refines an abstract state satisfying all safety invariants, forward
-simulation composed with the Kav soundness theorem, kernel-checked -- holds over all 16
-V3 actions.
+The extracted V4 kernel covers exactly 12 actions and yields all 32 invariants modulo
+trusted Aeneas/Charon extraction, `CapacityOK`, and narrowed `OracleFidelity`. This does
+not verify the handwritten Rust itself. `CapacityOK` supplies governed-root coherence,
+exact successful-branch collection bounds, begin-time snapshot prediction, and
+`grant_crossing n < 2^32`. `OracleFidelity` is limited to begin-time authorizer verdict
+and attested-egress agreement.
 
-The refinement holds modulo the trusted Aeneas/Charon extractor and two explicit
-assumptions: `CapacityOK` (the `Vec`-capacity bounds each transition needs, plus
-`invoke_start`'s per-invocation tool-binding and attested-egress predictions) and
-`OracleFidelity` (the runtime oracles agree with a fixed per-invocation abstract
-interpretation). It does not prove the hand-written Rust source, the oracles, or the
-external SPIFFE/STS mesh and adapter correct. See
-[`formal-lean/README.md`](formal-lean/README.md) for the module map and the full trust
-base.
+Handwritten Rust, ExArgus and telemetry, authentication/identity/evidence truth,
+serialization and persistence, the native digest-chain adapter and trusted rollback
+anchor, and host one-owner/persist-before-effect ordering are outside formal
+verification. The adapter is conformance-tested. See
+[`formal-lean/README.md`](formal-lean/README.md) for the theorem closure and exact
+hypotheses.
 
-## Building
+## Building and checking
+
+From `argus/`:
 
 ```bash
-cargo build
-cargo build --release
-cargo test
-cargo clippy --workspace
+cargo fmt --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --workspace --locked --release
 ```
 
-To re-extract the kernel to Lean (Aeneas/Charon pipeline):
+The shared conformance runner covers the public transition surface in addition to unit,
+safety-property, and external-consumer tests.
+
+To build the extracted model and refinement:
+
+```bash
+cd formal-lean
+lake build
+lake build ArgusChecks
+```
+
+To regenerate the extracted Lean model with the frozen, locally reconstructed
+Aeneas/Charon stack:
 
 ```bash
 ./scripts/charon-aeneas-extract.sh
 ```
+
+The extraction script validates all tool pins and patches before replacing generated
+Lean output. Generated Lean is never hand-edited.

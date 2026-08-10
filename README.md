@@ -3,79 +3,103 @@
 > Work in progress.
 
 Einsof is a security authorization system for LLM tool execution. It targets the
-[Lethal Trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/): the
-combination of private data, untrusted content, and external communication that lets
-indirect prompt injection exfiltrate data.
+[Lethal Trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/): private
+data, untrusted content, and external communication combined into an indirect prompt
+injection path.
 
-The system enforces authorization at tool boundaries, so a prompt-injected agent cannot
-reach an egress channel while it carries taint from private data.
+The core has two components. TzimtzumV4 is the formal source of truth; Argus is its
+extraction-compatible Rust implementation and refinement target. ExArgus is the
+conformance-tested Elixir deployment adapter around Argus.
 
 ## Components
 
-### [Tzimtzum](tzimtzum/): formal specification
+### [Tzimtzum](tzimtzum/): V4 specification
 
-The TzimtzumV2 protocol, written in Lean 4 on the [Kav](kav/) transition-system
-framework: 13 actions, 10 safety properties, and 16 strengthening invariants, all proved
-inductive and assembled into a single reachability theorem (`kav_sound`).
+A pure Lean 4 authorization protocol built on the [Kav](kav/) transition-system
+framework. Its exact 12-action system preserves all 32 invariants in every reachable
+abstract state.
 
-### [Kav](kav/): verification framework
+### [Argus](argus/): V4 kernel and refinement
 
-The pure-Lean transition-system verifier Tzimtzum is built on (`#kav_check_action`,
-`#kav_check_init`, and a finite-model checker for bug-finding).
+`argus-kernel` is the zero-runtime-dependency, pure-functional Rust implementation of the
+same twelve transitions. Charon and Aeneas extract it to Lean; the refinement under
+[`argus/formal-lean`](argus/formal-lean/) connects successful extracted transitions to
+TzimtzumV4 and composes with the 32-invariant soundness theorem.
 
-### [Argus](argus/): Rust implementation
+### [ExArgus](ex_argus/): deployment adapter
 
-`argus-kernel`, the pure-functional state machine that implements the TzimtzumV2
-transitions.
+The Elixir/Rustler boundary exposes one opaque live instance, the twelve V4 actions,
+read-only V5 state and chain status, strict envelope recovery, fixed capacity limits, and
+one bounded telemetry event per transition attempt. Source builds are the default;
+precompiled NIFs require explicit opt-in.
 
-### [ExArgus](ex_argus/): Elixir NIF
+## Trust boundary
 
-The Elixir binding for `argus-kernel`; exposes the live authorization API.
+The extracted V4 kernel covers exactly 12 actions and yields all 32 invariants modulo
+trusted Aeneas/Charon extraction, `CapacityOK`, and narrowed `OracleFidelity`. This does
+not verify the handwritten Rust itself. Handwritten Rust, ExArgus and telemetry,
+authentication/identity/evidence truth, serialization and persistence, the native
+digest-chain adapter and trusted rollback anchor, and host one-owner/persist-before-effect
+ordering are outside formal verification. The adapter is conformance-tested.
 
-### [Lean refinement](argus/formal-lean/): Rust to spec
+A host must authenticate frozen command and evidence meaning, serialize one owner per
+instance, durably store every accepted envelope plus a protected head/length anchor before
+the next command or effect, and discard/recover after persistence failure or timeout
+ambiguity. SHA-256 chaining does not by itself prevent rollback of a valid prefix.
 
-The Rust kernel is mechanically extracted to Lean via Aeneas/Charon and refined against
-the Kav specification. `implementation_sound` is complete: every reachable state of the
-extracted kernel refines an abstract TzimtzumV2 state satisfying all safety invariants.
-This holds modulo the trusted extractor and two explicit assumptions (`Vec`-capacity
-bounds and runtime-oracle agreement); it does not cover the hand-written Rust source or
-the external mesh.
+## Current checks
+
+```bash
+# Tzimtzum V4 abstract specification
+(cd tzimtzum && make verify)
+
+# Argus Rust kernel
+(cd argus && cargo fmt --check)
+(cd argus && cargo test --workspace --locked)
+(cd argus && cargo clippy --workspace --all-targets --locked -- -D warnings)
+(cd argus && cargo build --workspace --locked --release)
+
+# Extracted-kernel refinement
+(cd argus/formal-lean && lake build)
+(cd argus/formal-lean && lake build ArgusChecks)
+
+# ExArgus adapter
+(cd ex_argus && mix format --check-formatted)
+(cd ex_argus && MIX_ENV=test RUSTLER_PRECOMPILED_FORCE_BUILD=1 mix test)
+(cd ex_argus && mix credo --strict)
+(cd ex_argus && mix dialyzer)
+```
 
 ## Toolchain
 
-Managed via [mise](https://mise.jdx.dev/):
+Managed through `mise`, Cargo, Mix, and each Lean project's pinned toolchain:
 
 | Tool | Version |
-|------|---------|
-| Rust | 1.93.0  |
-| Lean | 4.30.0  |
+| --- | --- |
+| Rust | 1.93.0 |
+| Elixir | 1.19-compatible (`~> 1.19`) |
+| Tzimtzum/refinement Lean | 4.32.1 |
+| Charon extraction Rust | nightly-2026-06-01 |
 
 ## References
 
-Background reading and prior art behind the protocol design.
-
 **Standards and identity ecosystem**
-- [SPIFFE: Securing the identity of agentic AI and non-human actors](https://www.hashicorp.com/en/blog/spiffe-securing-the-identity-of-agentic-ai-and-non-human-actors) -- the mesh Argus is a guest inside of
-- [Uber: Solving the Agent Identity Crisis](https://www.uber.com/us/en/blog/solving-the-agent-identity-crisis/) -- SVID + STS + attested `act_chain` per hop, the actor-chain model Einsof's identity plane adopts wholesale
+
+- [SPIFFE: Securing the identity of agentic AI and non-human actors](https://www.hashicorp.com/en/blog/spiffe-securing-the-identity-of-agentic-ai-and-non-human-actors)
+- [Uber: Solving the Agent Identity Crisis](https://www.uber.com/us/en/blog/solving-the-agent-identity-crisis/)
 - [Agent2Agent Protocol Specification](https://a2a-protocol.org/latest/specification/)
-- [AIP: Agent Identity Protocol for Verifiable Delegation Across MCP and A2A (arXiv 2603.24775)](https://arxiv.org/abs/2603.24775)
-- [State of MCP Security: March 2026](https://nimblebrain.ai/blog/state-of-mcp-security-2026/)
-- [Macaroon Tokens vs API Keys for AI Agents](https://satgate.io/blog/macaroon-tokens-vs-api-keys)
+- [AIP: Agent Identity Protocol for Verifiable Delegation Across MCP and A2A](https://arxiv.org/abs/2603.24775)
 
-**Academic (information-flow control)**
-- Honda, Vasconcelos, Yoshida -- [Secure Information Flow as Typed Process Behaviour](https://link.springer.com/chapter/10.1007/3-540-46425-5_12)
-- Boudol -- [Information flow vs. resource access in the asynchronous pi-calculus](https://link.springer.com/chapter/10.1007/3-540-45022-X_35)
-- [Detecting Steganographic Collusion in Multi-Agent LLMs (arXiv 2510.04303)](https://arxiv.org/abs/2510.04303)
+**Information-flow control and verification**
 
-**Verification tooling**
-- [Veil 2.0](https://github.com/verse-lab/veil)
+- Honda, Vasconcelos, Yoshida, [Secure Information Flow as Typed Process Behaviour](https://link.springer.com/chapter/10.1007/3-540-46425-5_12)
+- Boudol, [Information flow vs. resource access in the asynchronous pi-calculus](https://link.springer.com/chapter/10.1007/3-540-45022-X_35)
 - [Lean 4](https://lean-lang.org/)
 
 ## AI usage disclosure
 
-Parts of this project were developed with AI assistance, most heavily in the
-documentation, the Lean work, the Tzimtzum/Kav formalization, and the Aeneas/Charon
-refinement.
+Parts of this project were developed with AI assistance, most heavily in documentation,
+Lean work, the Tzimtzum/Kav formalization, and the Aeneas/Charon refinement.
 
 ## License
 

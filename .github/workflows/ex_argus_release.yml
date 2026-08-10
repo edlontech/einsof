@@ -1,4 +1,4 @@
-name: ex_argus precompiled NIF
+name: ExArgus V4 precompiled NIF flow
 
 on:
   push:

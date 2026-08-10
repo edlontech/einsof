@@ -1,184 +1,173 @@
 # ExArgus
 
-Elixir binding for the verified `argus-kernel` authorization state machine
-(TzimtzumV3, 16 spec actions). Pure functional: one function per kernel
-transition. The caller owns state, the event log, and the (unverified)
-authorizer, content-gate, and conformance oracles.
+ExArgus is the Elixir adapter for the Argus V4 authorization kernel. Its supported
+runtime boundary is an opaque live `ExArgus.Instance`, the exact twelve V4 actions,
+read-only V5 state and chain observations, and strict V5 recovery.
 
-## Usage
+## Background and lifecycle
 
-    bg = %ExArgus.Kernel.Background{
-      tools: %{
-        "web_fetch" => %{
-          capabilities: [:network_egress],
-          egress: [:network_external],
-          conf_floor: :public,
-          output_bounded: true,
-          issuer: "trusted",
-          integ_floor: :untrusted,
-          integ_inspect_floor: :untrusted,
-          output_integ: :untrusted
-        }
-      },
-      allow_ceiling: %{network_external: :sensitive},
-      inspect_ceiling: %{},
-      trusted_issuers: ["trusted"],
-      instruction_issuer: %{}
-    }
+A background has exactly three fields:
 
-    state = ExArgus.Offline.initial_state()
-    {:ok, state, _action} = ExArgus.Offline.register_tool(state, bg, "web_fetch")
-    {:ok, state, _action} = ExArgus.Offline.delegate(state, bg, "root", "a1")
-    {:ok, state, _action} = ExArgus.Offline.grant_capability(state, bg, "root", "a1", :network_egress)
+```elixir
+alias ExArgus.Instance
+alias ExArgus.Kernel.Background
 
-    {:ok, state, {:invoke_start, "a1", "web_fetch", "i1"}} =
-      ExArgus.Offline.invoke_start(state, bg, "a1", "web_fetch", "i1", true, %{}, [:network_external])
+kinds = [:network_external, :network_internal, :filesystem_write, :ipc]
+deny_all = Map.new(kinds, &{&1, nil})
 
-`tools` entries carry three integrity fields alongside the confidentiality
-ones -- `integ_floor`/`integ_inspect_floor` (the dual integrity gate,
-CHECK 4a/4b/4c) and `output_integ` (what the tool's own output emits at). All
-three are required: the NIF decode fails closed on a missing key rather than
-defaulting to a trusted level. `invoke_start`'s last argument is the
-invocation's **attested egress** -- the egress kinds this specific call
-actually touches, checked against the tool's declared `egress` set (see
-below).
+background = %Background{
+  mode: :enforce,
+  allow_ceiling: deny_all,
+  inspect_ceiling: deny_all
+}
 
-Transitions return `{:ok, state, action}` or `{:error, reason}`, where `reason` is one
-of the closed `ExArgus.Offline.error_reason/0` atoms (mirroring `argus-kernel`'s
-`KernelError`).
+{:ok, instance} = Instance.new(background)
+{:ok, state} = Instance.state(instance)
+{:ok, chain} = Instance.status(instance)
+```
 
-## Live vs offline
+`mode` is `:enforce` or `:monitor`. Both ceiling maps must contain exactly the four
+egress keys above. Each value is `nil` (deny that band) or one of `:public`,
+`:internal`, `:sensitive`, and `:restricted`; a level is admitted when it is at or
+below the configured ceiling. The root is fixed as `"root"`, starts active, and holds
+all fifteen capabilities. It is not a caller-configurable background field.
 
-- `ExArgus.Instance` is the live authorization API. `Instance.new(bg)` returns an opaque
-  handle holding the only mutable copy of the kernel state inside the verified NIF
-  resource; transitions return `{:ok, seq, action} | {:error, reason}`. State exports only
-  via `Instance.state/1`; it can never be imported back, so out-of-reachable-space state is
-  unrepresentable on the live path. Restart recovery is `Instance.recover(bg, log)`, a
-  strict event-sourced replay of a version-stamped `{fun, args}` log (see below).
-- `ExArgus.Offline` is the state-passing API for offline use only (replay, shadow,
-  property tests, explain on snapshots); never for live authorization. `ExArgus.Replay` and
-  `ExArgus.Shadow` build on it.
+`new/1` returns a fresh live resource. `state/1` returns the canonical twelve-field,
+read-only `ExArgus.Kernel.State`; it cannot be imported. `status/1` returns
+`%ExArgus.Chain{version: 5, sequence: accepted_history_length, head: digest}`. At
+genesis, the sequence is zero and the head binds the complete background.
 
-## Egress attestation
+## Live action API
 
-The verified kernel's authorizer hook sees only `(agent, tool, invocation, state, bg)`; it
-cannot see a per-call argument such as a URL, and it consumes egress only as an
-uninterpreted per-invocation kind set -- it never sees a URL at all.
-`ExArgus.EgressPolicy.classify/2` is a pure, fail-closed URL classifier: it maps a URL
-against an agent's rule set to the **union** of kinds every matching rule attests, or
-`:deny` on no match (or a malformed/unparseable URL). `ExArgus.EgressAuthorizer.attest/4`
-folds that into the `{authorized?, attested_kinds}` pair `invoke_start` consumes, unioning
-across multi-URL calls (`%{urls: [...]}`) and denying the whole call if any URL denies.
-Call arguments with no URL dimension (e.g. `send_email`) attest the tool's full declared
-egress set -- V2's static worst case, still sound, just less precise.
+Every accepted action returns `{:ok, %ExArgus.Envelope{}}`. A refusal returns
+`{:error, %ExArgus.Error{}}` without changing state, sequence, or head.
 
-The kernel enforces two checks on the attested set, both fail-closed:
-**narrowing** (attested kinds must be a subset of the tool's declared `egress`) and
-**coverage** (an egress-bearing tool cannot be admitted on an empty attestation). Either
-violation denies with `:attestation_invalid`. The adapter must never intersect a rule
-union with the tool's declared set to "fix" an over-wide attestation -- that would
-silently narrow a real attestation into a false one; let the kernel's `:attestation_invalid`
-surface instead.
+The exact action surface is:
 
-This keeps URL/path matching on the unverified, conformance-tested side of the
-guest-model boundary: it can only subtract from what the kernel already permits, never
-widen it, and `implementation_sound` is unchanged.
+1. `register_tool(instance, tool)`
+2. `unregister_tool(instance, tool)`
+3. `delegate(instance, grantor, grantee)`
+4. `grant_capability(instance, parent, child, capability)`
+5. `grant_crossing(instance, grantor, agent, assignment, count)`
+6. `revoke(instance, parent, target)`
+7. `cascade_revoke(instance, child, parent)`
+8. `ingest(instance, %ExArgus.Command.Ingest{})`
+9. `begin_invocation(instance, %ExArgus.Command.BeginInvocation{})`
+10. `authorize_inspected(instance, %ExArgus.Command.AuthorizeInspected{})`
+11. `settle_invocation(instance, %ExArgus.Command.SettleInvocation{})`
+12. `cross_output(instance, %ExArgus.Command.CrossOutput{})`
 
-## Versioned event log
+`resolve_quarantine(instance, invocation, outcome, attestation)` is a convenience helper
+for a `settle_invocation` with a `:success` or `:failure` resolution. It is not a
+thirteenth kernel action. The command, action, evidence, policy snapshot, and crossing
+structs under `ExArgus.Command` and `ExArgus.Kernel` are closed: unknown keys, enum
+values, duplicate set members, malformed UTF-8, and omitted trusted fields fail closed.
 
-Every recordable log begins with `ExArgus.log_header/0` (`{:state_version, 4}`), checked
-by `Instance.recover/2` and `Replay.run/2`/`diff/3` **before any entry replays**. A missing
-or mismatched header returns `{:error, :state_version_mismatch}` (or the equivalent
-`recovery_error` shape from `Instance.recover/2`) without touching any entry -- a
-V3-shape-compatible V2 log (e.g. one containing only `delegate`/`invoke_complete`
-entries, unchanged in arity) would otherwise replay structurally fine while meaning
-something different (V2's `delegate` gave a full budget meter; V3's gives zero). The
-version stamp makes that rejection deterministic instead of luck-based.
+## Envelopes, persistence, and recovery
 
-## Upgrading from V2
+An accepted `%ExArgus.Envelope{}` contains the exact V5 version, positive sequence,
+previous digest, digest, replay-complete command, and computed action. The adapter uses a
+domain-separated SHA-256 chain; it does not choose a storage serialization and does not
+persist anything.
 
-This is a hard break, not a migration. There is no V2-to-V3 log shim: restart every
-live agent from a fresh `Instance.new/1` and start a fresh, version-stamped log.
-Synthesizing V3 attestations for old V2 log entries would fabricate per-invocation
-egress/integrity data that was never actually attested -- exactly what freshness and
-narrowing exist to prevent.
+The host must durably retain each accepted envelope and a protected trusted anchor
+containing the latest head and length. Recover only with:
 
-## Operational notes
+```elixir
+Instance.recover(background, complete_envelope_history, trusted_chain)
+```
 
-- **Budget-zero children.** `ExArgus.Offline.delegate/4` (and the `Instance` equivalent)
-  spawns children at `agent_budget` 0. A freshly delegated child cannot pay for an
-  endorsed return or an override re-arm until `sentinel_credit_budget` funds it; before
-  that, completions route through the unendorsed path. This is kernel behavior, not a bug.
-- **A blocked `sentinel_degrade_integrity` is a platform obligation.** When the dual
-  integrity gate denies a degrade because a below-floor tool is in flight, the caller must
-  hold the ingestion that triggered the degrade until the in-flight invocation completes
-  and the degrade can be retried -- never deliver the ingested content and drop the
-  degrade. The binding cannot enforce this; it only surfaces the denial.
-- **Invocation replay precedence.** Through `ExArgus.Instance`, reusing an invocation id
-  surfaces `:invocation_exists`, not `:invocation_replayed` -- the invocation-tool binding
-  check fires first because `invocation_tool` persists across completion.
-  `:invocation_replayed` is reachable at the transition level (an id present in
-  `invocation_used` but absent from `invocation_tool`). Replay is denied either way.
-- **The content-gate map is always safe empty.** `content_gate_targets/2` and
-  `content_gate_map/3` compute exactly which invocations CHECK 2b/4b/4c will query for a
-  vouch. An empty `%{}` is always safe -- fail-closed, it can never widen permissions --
-  but any pair that lands in an INSPECT band then goes unvouched, so the transition
-  denies (`:flow_gate_blocked` / `:integrity_floor_denied`).
+`recover/3` strictly validates V5 structures and bounds, starts from the background-bound
+genesis, re-executes each command in sequence, and checks its action, predecessor, and
+digest. It exposes a live instance only when the final head and sequence equal the
+supplied `%ExArgus.Chain{}`. Corruption returns an indexed typed error; recovery emits no
+transition telemetry. A valid old prefix is still a rollback unless the host protects
+its current head and length outside the envelope store.
 
-## Diagnostics: explain, telemetry, shadow, replay
+## Fixed limits
 
-`ExArgus.Explain` mirrors the gate-consuming transitions read-only across six entry
-points -- `explain_invoke`, `explain_return_unendorsed`, `explain_return_endorsed`,
-`explain_sentinel_elevate_taint`, `explain_sentinel_degrade_integrity`, and
-`explain_grant_override` -- returning the exact error the transition would return plus,
-per denied pair, the counterfactual rescues (override grant, policy change, tool relabel,
-content-gate pass, lever floor relabel). Agreement with the kernel is property-tested in
-`argus-explain`. These reports are diagnostics from an unverified crate; feed them to
-telemetry and policy review, never back into authorization decisions.
+The V5 profile is protocol-fixed and mirrored by `ExArgus.Limits`:
 
-On a denial, pass the report to `ExArgus.Telemetry.emit_denied/2`
-(`[:ex_argus, :flow, :denied]`); on an accepted `invoke_complete`, pass the action to
-`ExArgus.Telemetry.emit_completed/2` (`[:ex_argus, :flow, :completed]`), which carries the
-`endorsed` flag so the policy-review loop can distinguish endorsed from unendorsed
-completions.
+| Limit | Value |
+| --- | ---: |
+| UTF-8 bytes per opaque value | 1,024 |
+| agents | 4,096 |
+| parent or label-map keys | 4,096 |
+| registered tools | 1,024 |
+| pending invocations | 4,096 |
+| open challenges | 4,096 |
+| crossing grants | 16,384 |
+| consumed invocation IDs | 65,536 |
+| consumed attestations | 65,536 |
+| consumed crossings | 65,536 |
+| retained UTF-8 bytes | 16 MiB |
+| accepted sequence | 100,000 |
+| recovery envelopes | 100,000 |
+| replay content bytes | 64 MiB |
+| capabilities per set | 15 |
+| egress kinds per set | 4 |
+| confidentiality levels per set | 4 |
+| integrity levels per set | 4 |
 
-`ExArgus.Shadow.compare/3` runs one transition against a live and a candidate background
-and diffs the decision. `ExArgus.Replay.run/2` plus `diff/3` replay a recorded,
-version-stamped `{fun, args}` log (with recorded oracle verdicts) against alternative
-backgrounds for trajectory-level evidence.
+Limits are checked before commit. Capacity or sequence exhaustion is a typed refusal, not
+a reason to bypass or rebuild the kernel with different limits.
 
-## Trust statement
+## Telemetry
 
-`argus-kernel` is refined against TzimtzumV3 -- `implementation_sound` holds over all 16
-spec actions -- modulo the trusted Aeneas/Charon extractor and two explicit assumptions,
-`CapacityOK` and `OracleFidelity`. This binding, and the authorizer/content-gate/conformance
-oracles it wraps, are **conformance-tested, not verified**: they sit on the unverified side
-of the guest-model boundary. Do not treat `ex_argus`, the oracles, or the egress classifier
-as carrying the kernel's proof.
+Each live transition attempt emits exactly one `[:ex_argus, :transition]` event after
+its result is fixed. Measurements contain only `duration`. Metadata is bounded to
+`command`, `outcome`, `sequence`, `reason`, `verdict`, `disposition`, and `branch`; it
+never includes identifiers, hashes, commands, policies, evidence, prompts, arguments, or
+results. Outcomes are `:accepted`, `:kernel_refused`, `:boundary_refused`, or
+`:internal_error`.
 
-## Snapshot wire version
+Handlers run synchronously. Their absence or failure cannot change the fixed result, but
+a slow handler can make a successful call appear timed out. Telemetry is observation,
+not durable evidence.
 
-`ExArgus.state_version/0` stamps the wire shape of `ExArgus.Kernel.State`. Callers that
-persist a `State` snapshot store it with this version and fail closed on a mismatch. Bump
-`@state_version` (in `lib/ex_argus.ex`) on any change to `Kernel.State`'s fields or the NIF
-encode/decode, and update the golden field list in `test/ex_argus_test.exs`.
+## Host ordering and trust boundary
 
-## Building locally
+One host owner must serialize access to each live instance. The host must authenticate
+and freeze command meaning, policy and assignment revisions, tenant and identity
+bindings, authorizer verdicts, attested egress, and inspection, resolution, and
+conformance evidence. For every accepted transition it must durably store the envelope
+plus the protected head and length before issuing the next command or any authorized
+effect.
 
-The native crate is at `native/argus_nif` and depends on `../argus` (monorepo
-sibling). To force a local build instead of downloading a precompiled artifact:
+If persistence fails, discard the advanced instance and recover from the prior durable
+chain and trusted anchor. After a timeout or binding exception, treat the result as
+ambiguous: do not retry blindly; discard and recover. The resource mutex provides atomic
+in-process transitions, not host persistence ordering or rollback protection.
 
-    RUSTLER_PRECOMPILED_FORCE_BUILD=1 mix compile
+The extracted V4 kernel covers exactly 12 actions and yields all 32 invariants modulo
+trusted Aeneas/Charon extraction, `CapacityOK`, and narrowed `OracleFidelity`. This does
+not verify the handwritten Rust itself. Handwritten Rust, ExArgus and telemetry,
+authentication/identity/evidence truth, serialization and persistence, the native
+digest-chain adapter and trusted rollback anchor, and host one-owner/persist-before-effect
+ordering are outside formal verification. The adapter is conformance-tested.
 
-(`:dev` and `:test` force-build by default.)
+## Building and checking
 
-## Releasing precompiled artifacts
+Source builds are the default in every Mix environment:
 
-1. Tag `ex_argus-vX.Y.Z` and push; CI builds the cdylib for every target in
-   `ExArgus.Native` and attaches the archives to the GitHub release.
-2. Regenerate the checksum file and commit it:
+```bash
+cd ex_argus
+mix compile
+```
 
-       mix rustler_precompiled.download ExArgus.Native --all --print
+`EX_ARGUS_USE_PRECOMPILED=1` explicitly opts into the configured GitHub release artifacts.
+`RUSTLER_PRECOMPILED_FORCE_BUILD=1` or `true` forces a source build and wins when both
+variables are set. `RustlerPrecompiled`, the configured base URL, target matrix, and
+checksum behavior remain part of the loader; precompiled publication is separate from a
+source build.
 
-The checksum file `checksum-Elixir.ExArgus.Native.exs` must be committed and
-shipped in the Hex package.
+Current checks:
+
+```bash
+mix format --check-formatted
+MIX_ENV=test RUSTLER_PRECOMPILED_FORCE_BUILD=1 mix test
+mix credo --strict
+mix dialyzer
+env -u EX_ARGUS_USE_PRECOMPILED -u RUSTLER_PRECOMPILED_FORCE_BUILD \
+  MIX_ENV=prod mix compile --force
+```

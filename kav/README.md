@@ -3,7 +3,7 @@
 Kav is a pure-Lean 4 transition-system verification framework. It uses mathlib
 (Lean 4.32.1 + mathlib v4.32.1) and Duper as automation backends.
 
-It is a reusable library. The TzimtzumV2 protocol that exercises it lives in the sibling
+It is a reusable library. The TzimtzumV4 protocol that exercises it lives in the sibling
 [`tzimtzum/`](../tzimtzum/) project, which `require`s Kav.
 
 ## What Kav is
