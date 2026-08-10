@@ -5,7 +5,7 @@ use argus_kernel::{
     BackgroundTheoryBuilder, ChallengeId, ConformanceAttestation, ContentHash, CrossInput,
     InspectionAttestation, InvocationId, PolicyDigest, ResolutionAttestation, ToolId,
 };
-use rustler::NifStruct;
+use rustler::{Binary, Decoder, Encoder, Env, Error, NewBinary, NifStruct, Term};
 
 use crate::command::CommandN;
 use crate::enums::{
@@ -391,13 +391,42 @@ action_struct!(CrossOutputActionN, "ExArgus.Kernel.Action.CrossOutput", {
     disposition: DispositionN,
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DigestN([u8; 32]);
+
+impl DigestN {
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl Encoder for DigestN {
+    fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
+        let mut binary = NewBinary::new(env, self.0.len());
+        binary.copy_from_slice(&self.0);
+        binary.into()
+    }
+}
+
+impl<'a> Decoder<'a> for DigestN {
+    fn decode(term: Term<'a>) -> Result<Self, Error> {
+        let binary = Binary::decode(term)?;
+        let bytes = <[u8; 32]>::try_from(binary.as_slice()).map_err(|_| Error::BadArg)?;
+        Ok(Self(bytes))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, NifStruct)]
 #[module = "ExArgus.Envelope"]
 pub struct EnvelopeN {
     pub version: u32,
     pub sequence: u64,
-    pub previous_digest: Vec<u8>,
-    pub digest: Vec<u8>,
+    pub previous_digest: DigestN,
+    pub digest: DigestN,
     pub command: CommandN,
     pub action: ActionN,
 }
@@ -407,7 +436,7 @@ pub struct EnvelopeN {
 pub struct ChainN {
     pub version: u32,
     pub sequence: u64,
-    pub head: Vec<u8>,
+    pub head: DigestN,
 }
 
 #[cfg(test)]

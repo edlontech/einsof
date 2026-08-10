@@ -29,6 +29,23 @@ pub enum CommandN {
 }
 
 impl CommandN {
+    pub(crate) fn canonical_tag(&self) -> u8 {
+        match self {
+            Self::RegisterTool(_) => 0,
+            Self::UnregisterTool(_) => 1,
+            Self::Delegate(_) => 2,
+            Self::GrantCapability(_) => 3,
+            Self::GrantCrossing(_) => 4,
+            Self::Revoke(_) => 5,
+            Self::CascadeRevoke(_) => 6,
+            Self::Ingest(_) => 7,
+            Self::BeginInvocation(_) => 8,
+            Self::AuthorizeInspected(_) => 9,
+            Self::SettleInvocation(_) => 10,
+            Self::CrossOutput(_) => 11,
+        }
+    }
+
     pub fn apply(
         self,
         state: KernelState,

@@ -9,4 +9,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 rustler = "0.38"
+sha2 = "0.11"
 argus-kernel = { path = "../../../argus/crates/argus-kernel" }
