@@ -117,11 +117,12 @@ defmodule ExArgus.LifecycleTest do
     refute function_exported?(Native, :load_rustler_precompiled, 0)
   end
 
-  test "Instance exposes only the Task 8 lifecycle and named actions" do
+  test "Instance exposes only the lifecycle, recovery, and named actions" do
     expected = [
       __struct__: 0,
       __struct__: 1,
       new: 1,
+      recover: 3,
       state: 1,
       status: 1,
       register_tool: 2,

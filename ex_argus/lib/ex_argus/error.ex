@@ -146,5 +146,46 @@ defmodule ExArgus.Error do
     {:error, %__MODULE__{class: :internal, reason: :native_contract_violation}}
   end
 
+  @doc false
+  @spec from_recovery(term(), non_neg_integer() | nil) :: {:error, t()}
+  for reason <- [
+        :invalid_version,
+        :sequence_mismatch,
+        :previous_digest_mismatch,
+        :action_mismatch,
+        :digest_mismatch,
+        :recovery_consumed,
+        :final_anchor_mismatch
+      ] do
+    def from_recovery(unquote(reason), index) do
+      {:error, %__MODULE__{class: :recovery, reason: unquote(reason), index: index}}
+    end
+  end
+
+  for cause <- @kernel_reasons do
+    def from_recovery({:replay_refused, unquote(cause)}, index) do
+      {:error,
+       %__MODULE__{
+         class: :recovery,
+         reason: :replay_refused,
+         index: index,
+         cause: unquote(cause)
+       }}
+    end
+  end
+
+  def from_recovery(reason, index)
+      when reason in [:instance_busy, :capacity_exceeded, :sequence_exhausted] do
+    {:error, %__MODULE__{class: :boundary, reason: reason, index: index}}
+  end
+
+  def from_recovery(:resource_poisoned, index) do
+    {:error, %__MODULE__{class: :internal, reason: :resource_poisoned, index: index}}
+  end
+
+  def from_recovery(_reason, index) do
+    {:error, %__MODULE__{class: :internal, reason: :native_contract_violation, index: index}}
+  end
+
   defp boundary(reason), do: {:error, %__MODULE__{class: :boundary, reason: reason}}
 end

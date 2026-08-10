@@ -76,6 +76,7 @@ defmodule ExArgus.InstanceTest do
       __struct__: 0,
       __struct__: 1,
       new: 1,
+      recover: 3,
       state: 1,
       status: 1,
       register_tool: 2,
@@ -96,7 +97,6 @@ defmodule ExArgus.InstanceTest do
     assert Enum.sort(Instance.__info__(:functions)) == Enum.sort(expected)
     refute function_exported?(Instance, :apply, 2)
     refute function_exported?(Instance, :apply, 3)
-    refute function_exported?(Instance, :recover, 3)
   end
 
   test "all seven simple wrappers construct and apply their matching command once" do

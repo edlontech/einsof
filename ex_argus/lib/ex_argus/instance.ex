@@ -38,6 +38,25 @@ defmodule ExArgus.Instance do
     end
   end
 
+  @doc """
+  Reconstructs a live instance from a complete validated V5 history and trusted anchor.
+
+  Unexpected binding exceptions or result shapes fail closed as a typed internal error because no
+  partial recovery handle is exposed.
+  """
+  @spec recover(Background.t(), [Envelope.t()], Chain.t()) :: {:ok, t()} | {:error, Error.t()}
+  def recover(background, history, expected) do
+    with {:ok, {normalized_background, normalized_history, normalized_expected}} <-
+           Validation.recovery(background, history, expected),
+         {:ok, recovery} <- recovery_new(normalized_background),
+         :ok <- replay_history(recovery, normalized_history),
+         {:ok, resource} <- recovery_finalize(recovery, normalized_expected) do
+      {:ok, %__MODULE__{resource: resource}}
+    end
+  catch
+    _kind, _reason -> internal_error()
+  end
+
   @doc "Returns the canonical read-only V5 state projection."
   @spec state(t()) :: {:ok, ExArgus.Kernel.State.t()} | {:error, Error.t()}
   def state(instance), do: observe(instance, &Native.instance_state/1)
@@ -142,6 +161,34 @@ defmodule ExArgus.Instance do
       command,
       &Validation.quarantine_resolution/1
     )
+  end
+
+  defp recovery_new(background) do
+    case Native.recovery_new(background) do
+      {:ok, resource} when is_reference(resource) -> {:ok, resource}
+      {:error, reason} -> Error.from_recovery(reason, nil)
+      _other -> internal_error()
+    end
+  end
+
+  defp replay_history(recovery, history) do
+    history
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {envelope, index}, :ok ->
+      case Native.recovery_replay(recovery, envelope) do
+        {:ok, {}} -> {:cont, :ok}
+        {:error, reason} -> {:halt, Error.from_recovery(reason, index)}
+        _other -> {:halt, internal_error(index)}
+      end
+    end)
+  end
+
+  defp recovery_finalize(recovery, expected) do
+    case Native.recovery_finalize(recovery, expected) do
+      {:ok, resource} when is_reference(resource) -> {:ok, resource}
+      {:error, reason} -> Error.from_recovery(reason, nil)
+      _other -> internal_error()
+    end
   end
 
   defp observe(instance, native) do
@@ -250,7 +297,7 @@ defmodule ExArgus.Instance do
 
   defp valid_digest?(digest), do: is_binary(digest) and byte_size(digest) == 32
 
-  defp internal_error do
-    {:error, %Error{class: :internal, reason: :native_contract_violation}}
+  defp internal_error(index \\ nil) do
+    {:error, %Error{class: :internal, reason: :native_contract_violation, index: index}}
   end
 end

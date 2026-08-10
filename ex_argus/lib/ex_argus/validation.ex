@@ -1,8 +1,8 @@
 defmodule ExArgus.Validation do
   @moduledoc false
 
-  alias ExArgus.{Command, Error, Instance, Limits}
-  alias ExArgus.Kernel.Background
+  alias ExArgus.{Chain, Command, Envelope, Error, Instance, Limits}
+  alias ExArgus.Kernel.{Action, Background}
   alias ExArgus.Kernel.Types
 
   @u32_max 4_294_967_295
@@ -55,6 +55,50 @@ defmodule ExArgus.Validation do
   end
 
   def background(_background), do: boundary_error(:invalid_struct, [])
+
+  @doc false
+  def recovery(background, history, expected) do
+    with {:ok, normalized_background} <- background(background),
+         {:ok, normalized_history, length, last_digest} <- history(history),
+         {:ok, normalized_expected} <- chain(expected),
+         :ok <- expected_sequence(normalized_expected.sequence, length),
+         :ok <- expected_head(normalized_expected.head, last_digest) do
+      {:ok, {normalized_background, normalized_history, normalized_expected}}
+    end
+  end
+
+  @doc false
+  def checked_recovery_count(index) when is_integer(index) and index >= 0 do
+    if index < Limits.max_recovery_envelopes() do
+      :ok
+    else
+      boundary_error(:capacity_exceeded, [], index)
+    end
+  end
+
+  def checked_recovery_count(_index), do: boundary_error(:invalid_type, [])
+
+  @doc false
+  def checked_replay_content(total, bytes)
+      when is_integer(total) and total >= 0 and is_integer(bytes) and bytes >= 0 do
+    maximum = Limits.max_replay_content_bytes()
+
+    if total <= maximum and bytes <= maximum - total do
+      {:ok, total + bytes}
+    else
+      boundary_error(:capacity_exceeded, [])
+    end
+  end
+
+  def checked_replay_content(_total, _bytes), do: boundary_error(:invalid_type, [])
+
+  @doc false
+  def replay_envelope_content(envelope) do
+    case envelope(envelope, 0) do
+      {:ok, _normalized, content} -> {:ok, content}
+      {:error, %Error{} = error} -> {:error, error}
+    end
+  end
 
   @doc false
   def instance(%Instance{} = instance) do
@@ -205,6 +249,167 @@ defmodule ExArgus.Validation do
   def command(_command, expected) when expected in @command_names do
     boundary_error(:invalid_struct, [])
   end
+
+  @doc false
+  def action(%Action.RegisterTool{} = action, path) do
+    with :ok <- exact_keys(action, [:__struct__, :tool], path),
+         :ok <- opaque(action.tool, path ++ [:tool]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.UnregisterTool{} = action, path) do
+    with :ok <- exact_keys(action, [:__struct__, :tool], path),
+         :ok <- opaque(action.tool, path ++ [:tool]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.Delegate{} = action, path) do
+    with :ok <- exact_keys(action, [:__struct__, :grantor, :grantee], path),
+         :ok <- opaque(action.grantor, path ++ [:grantor]),
+         :ok <- opaque(action.grantee, path ++ [:grantee]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.GrantCapability{} = action, path) do
+    with :ok <- exact_keys(action, [:__struct__, :parent, :child, :cap], path),
+         :ok <- opaque(action.parent, path ++ [:parent]),
+         :ok <- opaque(action.child, path ++ [:child]),
+         :ok <- enum(action.cap, @capabilities, path ++ [:cap]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.GrantCrossing{} = action, path) do
+    with :ok <-
+           exact_keys(action, [:__struct__, :grantor, :agent, :assignment, :n], path),
+         :ok <- opaque(action.grantor, path ++ [:grantor]),
+         :ok <- opaque(action.agent, path ++ [:agent]),
+         :ok <- opaque(action.assignment, path ++ [:assignment]),
+         :ok <- u32(action.n, path ++ [:n]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.Revoke{} = action, path) do
+    with :ok <- exact_keys(action, [:__struct__, :parent, :target], path),
+         :ok <- opaque(action.parent, path ++ [:parent]),
+         :ok <- opaque(action.target, path ++ [:target]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.CascadeRevoke{} = action, path) do
+    with :ok <- exact_keys(action, [:__struct__, :child, :parent], path),
+         :ok <- opaque(action.child, path ++ [:child]),
+         :ok <- opaque(action.parent, path ++ [:parent]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.Ingest{} = action, path) do
+    with :ok <-
+           exact_keys(
+             action,
+             [:__struct__, :agent, :src, :pconf, :pinteg, :disposition],
+             path
+           ),
+         :ok <- opaque(action.agent, path ++ [:agent]),
+         :ok <- optional_opaque(action.src, path ++ [:src]),
+         :ok <- enum(action.pconf, @conf_levels, path ++ [:pconf]),
+         :ok <- enum(action.pinteg, @integ_levels, path ++ [:pinteg]),
+         :ok <-
+           enum(
+             action.disposition,
+             [:permitted, :blocked, :monitor_bypassed],
+             path ++ [:disposition]
+           ) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.BeginInvocation{} = action, path) do
+    with :ok <-
+           exact_keys(
+             action,
+             [:__struct__, :agent, :inv, :tool, :verdict, :authorized],
+             path
+           ),
+         :ok <- opaque(action.agent, path ++ [:agent]),
+         :ok <- opaque(action.inv, path ++ [:inv]),
+         :ok <- opaque(action.tool, path ++ [:tool]),
+         :ok <- enum(action.verdict, [:allow, :inspection_required, :deny], path ++ [:verdict]),
+         :ok <- boolean(action.authorized, path ++ [:authorized]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.AuthorizeInspected{} = action, path) do
+    with :ok <-
+           exact_keys(action, [:__struct__, :inv, :attestation, :admitted], path),
+         :ok <- opaque(action.inv, path ++ [:inv]),
+         :ok <- opaque(action.attestation, path ++ [:attestation]),
+         :ok <- boolean(action.admitted, path ++ [:admitted]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.SettleInvocation{} = action, path) do
+    with :ok <-
+           exact_keys(
+             action,
+             [
+               :__struct__,
+               :inv,
+               :agent,
+               :disposition,
+               :outcome,
+               :clvl,
+               :ilvl,
+               :resolution
+             ],
+             path
+           ),
+         :ok <- opaque(action.inv, path ++ [:inv]),
+         :ok <- opaque(action.agent, path ++ [:agent]),
+         :ok <-
+           enum(
+             action.disposition,
+             [:permitted, :blocked, :monitor_bypassed],
+             path ++ [:disposition]
+           ),
+         :ok <- enum(action.outcome, @outcomes, path ++ [:outcome]),
+         :ok <- enum(action.clvl, @conf_levels, path ++ [:clvl]),
+         :ok <- enum(action.ilvl, @integ_levels, path ++ [:ilvl]),
+         :ok <- optional_opaque(action.resolution, path ++ [:resolution]) do
+      {:ok, action}
+    end
+  end
+
+  def action(%Action.CrossOutput{} = action, path) do
+    with :ok <-
+           exact_keys(
+             action,
+             [:__struct__, :src, :rcv, :crossing, :branch, :disposition],
+             path
+           ),
+         :ok <- opaque(action.src, path ++ [:src]),
+         :ok <- opaque(action.rcv, path ++ [:rcv]),
+         :ok <- opaque(action.crossing, path ++ [:crossing]),
+         :ok <- enum(action.branch, [:endorsed, :unendorsed, :fail], path ++ [:branch]),
+         :ok <-
+           enum(
+             action.disposition,
+             [:permitted, :blocked, :monitor_bypassed],
+             path ++ [:disposition]
+           ) do
+      {:ok, action}
+    end
+  end
+
+  def action(_action, path), do: boundary_error(:invalid_struct, path)
 
   @doc false
   def quarantine_resolution(%Command.SettleInvocation{} = command) do
@@ -372,6 +577,287 @@ defmodule ExArgus.Validation do
 
   defp ceiling(_value, path), do: boundary_error(:invalid_type, path)
 
+  defp history(value), do: history(value, 0, nil, 0, [])
+
+  defp history([], index, last_digest, _content, normalized) do
+    {:ok, Enum.reverse(normalized), index, last_digest}
+  end
+
+  defp history([envelope | tail], index, last_digest, content, normalized) do
+    with :ok <- checked_recovery_count(index) do
+      validate_history_envelope(envelope, tail, index, last_digest, content, normalized)
+    end
+  end
+
+  defp history(_improper, index, _last_digest, _content, _normalized) do
+    boundary_error(:invalid_type, [], index)
+  end
+
+  defp validate_history_envelope(envelope, tail, index, last_digest, content, normalized) do
+    with {:ok, normalized_envelope, envelope_content} <- envelope(envelope, index),
+         :ok <- declared_sequence(normalized_envelope.sequence, index),
+         :ok <- predecessor(normalized_envelope.previous_digest, last_digest, index),
+         {:ok, next_content} <-
+           checked_replay_content(content, envelope_content) |> put_index(index) do
+      history(
+        tail,
+        index + 1,
+        normalized_envelope.digest,
+        next_content,
+        [normalized_envelope | normalized]
+      )
+    end
+  end
+
+  defp envelope(%Envelope{} = envelope, index) do
+    result =
+      with :ok <-
+             exact_keys(
+               envelope,
+               [
+                 :__struct__,
+                 :version,
+                 :sequence,
+                 :previous_digest,
+                 :digest,
+                 :command,
+                 :action
+               ],
+               []
+             ),
+           :ok <- recovery_version(envelope.version, index),
+           :ok <- envelope_sequence(envelope.sequence),
+           :ok <- digest(envelope.previous_digest, [:previous_digest]),
+           :ok <- digest(envelope.digest, [:digest]),
+           {:ok, normalized_command} <- envelope_command(envelope.command),
+           {:ok, normalized_action} <- action(envelope.action, [:action]),
+           {:ok, content} <- envelope_content(normalized_command, normalized_action) do
+        {:ok,
+         %Envelope{
+           envelope
+           | command: normalized_command,
+             action: normalized_action
+         }, content}
+      end
+
+    put_index(result, index)
+  end
+
+  defp envelope(_envelope, index), do: boundary_error(:invalid_struct, [], index)
+
+  defp envelope_command(command) do
+    case command(command) do
+      {:ok, normalized} -> {:ok, normalized}
+      {:error, %Error{} = error} -> {:error, %Error{error | path: [:command | error.path]}}
+    end
+  end
+
+  defp chain(%Chain{} = chain) do
+    with :ok <- exact_keys(chain, [:__struct__, :version, :sequence, :head], []),
+         :ok <- recovery_version(chain.version, nil),
+         :ok <- chain_sequence(chain.sequence),
+         :ok <- digest(chain.head, [:head]) do
+      {:ok, chain}
+    end
+  end
+
+  defp chain(_chain), do: boundary_error(:invalid_struct, [])
+
+  defp declared_sequence(sequence, index) when sequence == index + 1, do: :ok
+
+  defp declared_sequence(_sequence, index) do
+    {:error, %Error{class: :recovery, reason: :sequence_mismatch, index: index}}
+  end
+
+  defp predecessor(_previous_digest, nil, 0), do: :ok
+  defp predecessor(previous_digest, previous_digest, _index), do: :ok
+
+  defp predecessor(_previous_digest, _expected, index) do
+    {:error, %Error{class: :recovery, reason: :previous_digest_mismatch, index: index}}
+  end
+
+  defp envelope_content(command, action) do
+    with {:ok, content} <- checked_replay_content(0, 64),
+         {:ok, content} <- checked_replay_content(content, command_content(command)) do
+      checked_replay_content(content, action_content(action))
+    end
+  end
+
+  defp command_content(%Command.RegisterTool{tool: tool}), do: bytes(tool)
+  defp command_content(%Command.UnregisterTool{tool: tool}), do: bytes(tool)
+
+  defp command_content(%Command.Delegate{grantor: grantor, grantee: grantee}) do
+    bytes(grantor) + bytes(grantee)
+  end
+
+  defp command_content(%Command.GrantCapability{parent: parent, child: child}) do
+    bytes(parent) + bytes(child)
+  end
+
+  defp command_content(%Command.GrantCrossing{} = command) do
+    bytes(command.grantor) + bytes(command.agent) + bytes(command.assignment)
+  end
+
+  defp command_content(%Command.Revoke{parent: parent, target: target}) do
+    bytes(parent) + bytes(target)
+  end
+
+  defp command_content(%Command.CascadeRevoke{child: child, parent: parent}) do
+    bytes(child) + bytes(parent)
+  end
+
+  defp command_content(%Command.Ingest{agent: agent, src: src}) do
+    bytes(agent) + optional_bytes(src)
+  end
+
+  defp command_content(%Command.BeginInvocation{} = command) do
+    bytes(command.agent) +
+      bytes(command.inv) +
+      bytes(command.challenge) +
+      policy_content(command.policy) +
+      bytes(command.args_hash)
+  end
+
+  defp command_content(%Command.AuthorizeInspected{} = command) do
+    bytes(command.inv) + inspection_content(command.attestation)
+  end
+
+  defp command_content(%Command.SettleInvocation{} = command) do
+    bytes(command.inv) + resolution_content(command.resolution)
+  end
+
+  defp command_content(%Command.CrossOutput{input: input}), do: cross_content(input)
+
+  defp action_content(%Action.RegisterTool{tool: tool}), do: bytes(tool)
+  defp action_content(%Action.UnregisterTool{tool: tool}), do: bytes(tool)
+
+  defp action_content(%Action.Delegate{grantor: grantor, grantee: grantee}) do
+    bytes(grantor) + bytes(grantee)
+  end
+
+  defp action_content(%Action.GrantCapability{parent: parent, child: child}) do
+    bytes(parent) + bytes(child)
+  end
+
+  defp action_content(%Action.GrantCrossing{} = action) do
+    bytes(action.grantor) + bytes(action.agent) + bytes(action.assignment)
+  end
+
+  defp action_content(%Action.Revoke{parent: parent, target: target}) do
+    bytes(parent) + bytes(target)
+  end
+
+  defp action_content(%Action.CascadeRevoke{child: child, parent: parent}) do
+    bytes(child) + bytes(parent)
+  end
+
+  defp action_content(%Action.Ingest{agent: agent, src: src}) do
+    bytes(agent) + optional_bytes(src)
+  end
+
+  defp action_content(%Action.BeginInvocation{} = action) do
+    bytes(action.agent) + bytes(action.inv) + bytes(action.tool)
+  end
+
+  defp action_content(%Action.AuthorizeInspected{} = action) do
+    bytes(action.inv) + bytes(action.attestation)
+  end
+
+  defp action_content(%Action.SettleInvocation{} = action) do
+    bytes(action.inv) + bytes(action.agent) + optional_bytes(action.resolution)
+  end
+
+  defp action_content(%Action.CrossOutput{} = action) do
+    bytes(action.src) + bytes(action.rcv) + bytes(action.crossing)
+  end
+
+  defp policy_content(policy) do
+    bytes(policy.tool) + bytes(policy.policy_digest)
+  end
+
+  defp inspection_content(attestation) do
+    bytes(attestation.id) +
+      bytes(attestation.inv) +
+      bytes(attestation.challenge) +
+      bytes(attestation.args_hash) +
+      bytes(attestation.policy_digest)
+  end
+
+  defp resolution_content(nil), do: 0
+
+  defp resolution_content(resolution) do
+    bytes(resolution.id) + bytes(resolution.inv)
+  end
+
+  defp cross_content(input) do
+    bytes(input.src) +
+      bytes(input.rcv) +
+      bytes(input.crossing) +
+      bytes(input.output_hash) +
+      bytes(input.descriptor) +
+      bytes(input.assignment) + evidence_content(input.evidence)
+  end
+
+  defp evidence_content(nil), do: 0
+
+  defp evidence_content(evidence) do
+    bytes(evidence.id) +
+      bytes(evidence.output) +
+      bytes(evidence.src) +
+      bytes(evidence.rcv) +
+      bytes(evidence.descriptor) +
+      bytes(evidence.assignment)
+  end
+
+  defp bytes(value), do: byte_size(value)
+  defp optional_bytes(nil), do: 0
+  defp optional_bytes(value), do: bytes(value)
+
+  defp put_index({:error, %Error{} = error}, index), do: {:error, %Error{error | index: index}}
+  defp put_index(result, _index), do: result
+
+  defp recovery_version(5, _index), do: :ok
+
+  defp recovery_version(_version, index) do
+    {:error, %Error{class: :recovery, reason: :invalid_version, index: index}}
+  end
+
+  defp envelope_sequence(value) when is_integer(value) and value > 0 do
+    if value <= Limits.max_accepted_sequence() do
+      :ok
+    else
+      boundary_error(:integer_out_of_range, [:sequence])
+    end
+  end
+
+  defp envelope_sequence(_value), do: boundary_error(:integer_out_of_range, [:sequence])
+
+  defp chain_sequence(value) when is_integer(value) and value >= 0 do
+    if value <= Limits.max_accepted_sequence() do
+      :ok
+    else
+      boundary_error(:integer_out_of_range, [:sequence])
+    end
+  end
+
+  defp chain_sequence(_value), do: boundary_error(:integer_out_of_range, [:sequence])
+
+  defp expected_sequence(sequence, sequence), do: :ok
+
+  defp expected_sequence(_declared, _actual) do
+    {:error, %Error{class: :recovery, reason: :sequence_mismatch}}
+  end
+
+  defp expected_head(_head, nil), do: :ok
+  defp expected_head(head, head), do: :ok
+
+  defp expected_head(_head, _last_digest) do
+    {:error, %Error{class: :recovery, reason: :final_anchor_mismatch}}
+  end
+
+  defp digest(value, _path) when is_binary(value) and byte_size(value) == 32, do: :ok
+  defp digest(_value, path), do: boundary_error(:invalid_type, path)
+
   defp optional_opaque(nil, _path), do: :ok
   defp optional_opaque(value, path), do: opaque(value, path)
 
@@ -448,7 +934,7 @@ defmodule ExArgus.Validation do
     end
   end
 
-  defp boundary_error(reason, path) do
-    {:error, %Error{class: :boundary, reason: reason, path: path}}
+  defp boundary_error(reason, path, index \\ nil) do
+    {:error, %Error{class: :boundary, reason: reason, path: path, index: index}}
   end
 end
