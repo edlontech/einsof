@@ -254,6 +254,7 @@ pub enum ErrorN {
     PreviousDigestMismatch,
     ActionMismatch,
     DigestMismatch,
+    ReplayRefused(KernelErrorN),
     RecoveryConsumed,
     FinalAnchorMismatch,
 }

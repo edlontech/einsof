@@ -17,6 +17,8 @@ pub const MAX_RETAINED_UTF8_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_ACCEPTED_SEQUENCE: u64 = 100_000;
 pub const MAX_RECOVERY_ENVELOPES: usize = 100_000;
 pub const MAX_REPLAY_CONTENT_BYTES: usize = 64 * 1024 * 1024;
+
+const _: () = assert!(MAX_ACCEPTED_SEQUENCE == MAX_RECOVERY_ENVELOPES as u64);
 pub const MAX_CAPABILITIES: usize = 15;
 pub const MAX_EGRESS_KINDS: usize = 4;
 pub const MAX_CONF_LEVELS: usize = 4;
@@ -263,6 +265,15 @@ fn checked_state_text(state: &KernelState) -> Result<TextBudget, ErrorN> {
 
 pub(crate) fn check_state(state: &KernelState) -> Result<(), ErrorN> {
     checked_state_text(state).map(|_| ())
+}
+
+pub(crate) fn check_recovery_link(state: &KernelState, sequence: u64) -> Result<(), ErrorN> {
+    check_state(state)?;
+    let next = sequence.checked_add(1).ok_or(ErrorN::SequenceExhausted)?;
+    if next > MAX_ACCEPTED_SEQUENCE {
+        return Err(ErrorN::SequenceExhausted);
+    }
+    Ok(())
 }
 
 fn add_label_key_if_absent<T: Clone + PartialEq>(
@@ -581,6 +592,18 @@ mod tests {
         );
         assert_eq!(
             preflight(&KernelState::initial(), MAX_ACCEPTED_SEQUENCE, &command),
+            Err(ErrorN::SequenceExhausted)
+        );
+    }
+
+    #[test]
+    fn recovery_link_count_accepts_exact_limit_and_rejects_next() {
+        assert_eq!(
+            check_recovery_link(&KernelState::initial(), MAX_RECOVERY_ENVELOPES as u64 - 1),
+            Ok(())
+        );
+        assert_eq!(
+            check_recovery_link(&KernelState::initial(), MAX_RECOVERY_ENVELOPES as u64),
             Err(ErrorN::SequenceExhausted)
         );
     }
