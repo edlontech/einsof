@@ -47,6 +47,8 @@ pub enum KernelError {
     InspectionNegative,
 
     // --- settlement / quarantine ---
+    /// A blocked record is not a valid pending invocation and cannot be settled.
+    BlockedPending,
     NotQuarantined,
     QuarantineResolutionRequired,
     ResolutionAttestationInvalid,

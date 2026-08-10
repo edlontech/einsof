@@ -157,6 +157,12 @@ def challengeRel (ac : Tzimtzum.ChallengeScope types.AgentId types.ToolId capabi
   ∧ ac.args_hash = cc.args_hash
   ∧ (ac.authorized ↔ cc.authorized = true)
 
+/-- Lift a record relation over the `Option` view: absent ↔ absent, present ↔ present-and-related. -/
+def optRel {α β : Type} (rel : α → β → Prop) : Option α → Option β → Prop
+  | none, none => True
+  | some a, some b => rel a b
+  | _, _ => False
+
 /-- Abstract ↔ concrete inspection attestation input. -/
 def inspectionAttestationRel
     (aa : Tzimtzum.InspectionAttestation types.InvocationId types.ChallengeId
@@ -169,15 +175,46 @@ def inspectionAttestationRel
   ∧ aa.policy_digest = ca.policy_digest
   ∧ (aa.positive ↔ ca.positive = true)
 
+/-- Abstract ↔ concrete quarantine-resolution attestation input. -/
+def resolutionAttestationRel
+    (aa : Tzimtzum.ResolutionAttestation types.InvocationId types.AttestationId)
+    (ca : types.ResolutionAttestation) : Prop :=
+  aa.id = ca.id ∧ aa.inv = ca.inv ∧ aa.outcome = outcomeA ca.outcome
+
+/-- Abstract ↔ concrete conformance attestation input. -/
+def conformanceAttestationRel
+    (aa : Tzimtzum.ConformanceAttestation types.AgentId types.AttestationId
+      types.AssignmentDigest types.ContentHash)
+    (ca : types.ConformanceAttestation) : Prop :=
+  aa.id = ca.id
+  ∧ aa.output = ca.output
+  ∧ aa.src = ca.src
+  ∧ aa.rcv = ca.rcv
+  ∧ aa.descriptor = ca.descriptor
+  ∧ aa.assignment = ca.assignment
+  ∧ (aa.positive ↔ ca.positive = true)
+
+/-- Abstract ↔ concrete boundary-crossing input. -/
+def crossInputRel
+    (aq : Tzimtzum.CrossInput types.AgentId types.AttestationId types.CrossingId
+      types.AssignmentDigest types.ContentHash)
+    (cq : types.CrossInput) : Prop :=
+  aq.src = cq.src
+  ∧ aq.rcv = cq.rcv
+  ∧ aq.crossing = cq.crossing
+  ∧ aq.output_hash = cq.output_hash
+  ∧ aq.descriptor = cq.descriptor
+  ∧ aq.fallback = fallbackA cq.fallback
+  ∧ aq.t_integ = integA cq.t_integ
+  ∧ aq.t_conf = cq.t_conf.map confA
+  ∧ aq.assignment = cq.assignment
+  ∧ optRel conformanceAttestationRel aq.evidence cq.evidence
+  ∧ aq.released_conf = confA cq.released_conf
+  ∧ aq.released_integ = integA cq.released_integ
+
 /-- Abstract ↔ concrete `CrossingGrant` record (the `u32` counters carry their `Nat` values). -/
 def crossingGrantRel (ag : Tzimtzum.CrossingGrant) (cg : types.CrossingGrant) : Prop :=
   ag.remaining = cg.remaining.val ∧ ag.provisioned = cg.provisioned.val
-
-/-- Lift a record relation over the `Option` view: absent ↔ absent, present ↔ present-and-related. -/
-def optRel {α β : Type} (rel : α → β → Prop) : Option α → Option β → Prop
-  | none, none => True
-  | some a, some b => rel a b
-  | _, _ => False
 
 /-! ## Get-style views
 

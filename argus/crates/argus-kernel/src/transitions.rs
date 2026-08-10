@@ -427,6 +427,9 @@ pub fn settle_invocation(
         return Err(KernelError::AgentInactive);
     }
     let disposition = j.disposition;
+    if disposition == Disposition::Blocked {
+        return Err(KernelError::BlockedPending);
+    }
     let clvl = j.policy.output_conf;
     let ilvl = j.policy.output_integ;
 

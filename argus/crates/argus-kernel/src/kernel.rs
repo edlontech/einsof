@@ -519,6 +519,31 @@ mod tests {
     }
 
     #[test]
+    fn settle_rejects_blocked_pending_record() {
+        let mut k = kernel();
+        k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();
+        let mut rec = permitted(
+            "a1",
+            snap(
+                ConfLevel::Restricted,
+                IntegLevel::Untrusted,
+                IntegLevel::Untrusted,
+                ConfLevel::Sensitive,
+                IntegLevel::Untrusted,
+                VecSet::new(),
+            ),
+        );
+        rec.disposition = Disposition::Blocked;
+        k.state.pending.insert(InvocationId::new("inv"), rec);
+
+        assert_eq!(
+            k.settle_invocation(InvocationId::new("inv"), Outcome::Success, None)
+                .unwrap_err(),
+            KernelError::BlockedPending
+        );
+    }
+
+    #[test]
     fn settle_ambiguous_quarantines_and_absorbs_nothing() {
         let mut k = kernel();
         k.delegate(AgentId::root(), AgentId::new("a1")).unwrap();

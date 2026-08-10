@@ -837,7 +837,7 @@ def collections.VecSet.at
   alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice T) self.items i
 
 /-- [argus_kernel::error::KernelError]
-    Source: 'crates/argus-kernel/src/error.rs', lines 4:0-71:1
+    Source: 'crates/argus-kernel/src/error.rs', lines 4:0-73:1
     Visibility: public -/
 @[discriminant isize]
 inductive error.KernelError where
@@ -868,6 +868,7 @@ inductive error.KernelError where
 | ChallengeScopeMismatch : error.KernelError
 | AttestationConsumed : error.KernelError
 | InspectionNegative : error.KernelError
+| BlockedPending : error.KernelError
 | NotQuarantined : error.KernelError
 | QuarantineResolutionRequired : error.KernelError
 | ResolutionAttestationInvalid : error.KernelError
@@ -3437,7 +3438,7 @@ impl_def types.Disposition.Insts.CoreCmpPartialEqDisposition :
 }
 
 /-- [argus_kernel::transitions::settle_invocation]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 415:0-486:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 415:0-489:1
     Visibility: public -/
 def transitions.settle_invocation
   (s : state.KernelState) (inv : types.InvocationId) (outcome : types.Outcome)
@@ -3458,46 +3459,130 @@ def transitions.settle_invocation
         types.AgentId.Insts.CoreCmpPartialEqAgentId s.agent_active a
     if b
     then
-      if j.quarantined
-      then
-        let b1 ←
-          types.Outcome.Insts.CoreCmpPartialEqOutcome.eq outcome
-            types.Outcome.Ambiguous
-        if b1
+      let b1 ←
+        types.Disposition.Insts.CoreCmpPartialEqDisposition.eq j.disposition
+          types.Disposition.Blocked
+      if b1
+      then ok (core.result.Result.Err error.KernelError.BlockedPending)
+      else
+        if j.quarantined
         then
-          ok (core.result.Result.Err
-            error.KernelError.QuarantineResolutionRequired)
-        else
-          let (att1, valid) ←
-            match att with
-            | none => ok (none, false)
-            | some r =>
-              do
-              let b2 ←
-                types.InvocationId.Insts.CoreCmpPartialEqInvocationId.eq 
-                  r.inv inv
-              let b3 ←
+          let b2 ←
+            types.Outcome.Insts.CoreCmpPartialEqOutcome.eq outcome
+              types.Outcome.Ambiguous
+          if b2
+          then
+            ok (core.result.Result.Err
+              error.KernelError.QuarantineResolutionRequired)
+          else
+            let (att1, valid) ←
+              match att with
+              | none => ok (none, false)
+              | some r =>
+                do
+                let b3 ←
+                  types.InvocationId.Insts.CoreCmpPartialEqInvocationId.eq
+                    r.inv inv
+                let b4 ←
+                  if b3
+                  then
+                    do
+                    let b5 ←
+                      types.Outcome.Insts.CoreCmpPartialEqOutcome.eq 
+                        r.outcome outcome
+                    if b5
+                    then
+                      let b6 ←
+                        collections.VecSet.contains
+                          types.AttestationId.Insts.CoreCloneClone
+                          types.AttestationId.Insts.CoreCmpPartialEqAttestationId
+                          s.consumed_attestations r.id
+                      ok (¬ b6)
+                    else ok false
+                  else ok false
+                ok (att, b4)
+            if valid
+            then
+              let vm ←
                 if b2
                 then
                   do
-                  let b4 ←
-                    types.Outcome.Insts.CoreCmpPartialEqOutcome.eq r.outcome
-                      outcome
-                  if b4
-                  then
-                    let b5 ←
-                      collections.VecSet.contains
-                        types.AttestationId.Insts.CoreCloneClone
-                        types.AttestationId.Insts.CoreCmpPartialEqAttestationId
-                        s.consumed_attestations r.id
-                    ok (¬ b5)
-                  else ok false
-                else ok false
-              ok (att, b3)
-          if valid
-          then
+                  let jq ←
+                    types.PendingInvocation.Insts.CoreCloneClone.clone j
+                  let ii ← types.InvocationId.Insts.CoreCloneClone.clone inv
+                  collections.VecMap.insert
+                    types.InvocationId.Insts.CoreCloneClone
+                    types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                    types.PendingInvocation.Insts.CoreCloneClone s.pending ii
+                    { jq with quarantined := true }
+                else
+                  collections.VecMap.remove
+                    types.InvocationId.Insts.CoreCloneClone
+                    types.InvocationId.Insts.CoreCmpPartialEqInvocationId
+                    types.PendingInvocation.Insts.CoreCloneClone s.pending inv
+              let b3 ←
+                core.cmp.PartialEq.ne.trait_default
+                  types.Disposition.Insts.CoreCmpPartialEqDisposition
+                  j.disposition types.Disposition.Permitted
+              let s1 ←
+                if b3
+                then state.KernelState.demote_all_of { s with pending := vm } a
+                else ok { s with pending := vm }
+              let b4 ←
+                core.cmp.PartialEq.ne.trait_default
+                  types.Outcome.Insts.CoreCmpPartialEqOutcome outcome
+                  types.Outcome.Ambiguous
+              let s2 ←
+                if b4
+                then
+                  do
+                  let ai ← types.AgentId.Insts.CoreCloneClone.clone a
+                  let vm1 ←
+                    collections.VecMapKVecSet.insert_into
+                      types.AgentId.Insts.CoreCloneClone
+                      types.AgentId.Insts.CoreCmpPartialEqAgentId
+                      types.ConfLevel.Insts.CoreCloneClone
+                      types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
+                      s1.taint_levels ai j.policy.output_conf
+                  let vm2 ←
+                    collections.VecMapKVecSet.insert_into
+                      types.AgentId.Insts.CoreCloneClone
+                      types.AgentId.Insts.CoreCmpPartialEqAgentId
+                      types.IntegLevel.Insts.CoreCloneClone
+                      types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
+                      s1.integ_levels ai j.policy.output_integ
+                  ok { s1 with taint_levels := vm1, integ_levels := vm2 }
+                else ok s1
+              match att1 with
+              | none =>
+                ok (core.result.Result.Ok (s2,
+                  event.KernelAction.SettleInvocation inv a j.disposition
+                  outcome j.policy.output_conf j.policy.output_integ none))
+              | some r =>
+                let ai ← types.AttestationId.Insts.CoreCloneClone.clone r.id
+                let vs ←
+                  collections.VecSet.insert
+                    types.AttestationId.Insts.CoreCloneClone
+                    types.AttestationId.Insts.CoreCmpPartialEqAttestationId
+                    s2.consumed_attestations ai
+                ok (core.result.Result.Ok
+                  ({ s2 with consumed_attestations := vs },
+                  event.KernelAction.SettleInvocation inv a j.disposition
+                  outcome j.policy.output_conf j.policy.output_integ (some
+                  ai)))
+            else
+              ok (core.result.Result.Err
+                error.KernelError.ResolutionAttestationInvalid)
+        else
+          let b2 := core.option.Option.is_some att
+          if b2
+          then ok (core.result.Result.Err error.KernelError.NotQuarantined)
+          else
+            let b3 ←
+              types.Outcome.Insts.CoreCmpPartialEqOutcome.eq outcome
+                types.Outcome.Ambiguous
             let vm ←
-              if b1
+              if b3
               then
                 do
                 let jq ← types.PendingInvocation.Insts.CoreCloneClone.clone j
@@ -3512,20 +3597,20 @@ def transitions.settle_invocation
                   types.InvocationId.Insts.CoreCloneClone
                   types.InvocationId.Insts.CoreCmpPartialEqInvocationId
                   types.PendingInvocation.Insts.CoreCloneClone s.pending inv
-            let b2 ←
+            let b4 ←
               core.cmp.PartialEq.ne.trait_default
                 types.Disposition.Insts.CoreCmpPartialEqDisposition
                 j.disposition types.Disposition.Permitted
             let s1 ←
-              if b2
+              if b4
               then state.KernelState.demote_all_of { s with pending := vm } a
               else ok { s with pending := vm }
-            let b3 ←
+            let b5 ←
               core.cmp.PartialEq.ne.trait_default
                 types.Outcome.Insts.CoreCmpPartialEqOutcome outcome
                 types.Outcome.Ambiguous
             let s2 ←
-              if b3
+              if b5
               then
                 do
                 let ai ← types.AgentId.Insts.CoreCloneClone.clone a
@@ -3545,7 +3630,7 @@ def transitions.settle_invocation
                     s1.integ_levels ai j.policy.output_integ
                 ok { s1 with taint_levels := vm1, integ_levels := vm2 }
               else ok s1
-            match att1 with
+            match att with
             | none =>
               ok (core.result.Result.Ok (s2,
                 event.KernelAction.SettleInvocation inv a j.disposition outcome
@@ -3561,83 +3646,10 @@ def transitions.settle_invocation
                 ({ s2 with consumed_attestations := vs },
                 event.KernelAction.SettleInvocation inv a j.disposition outcome
                 j.policy.output_conf j.policy.output_integ (some ai)))
-          else
-            ok (core.result.Result.Err
-              error.KernelError.ResolutionAttestationInvalid)
-      else
-        let b1 := core.option.Option.is_some att
-        if b1
-        then ok (core.result.Result.Err error.KernelError.NotQuarantined)
-        else
-          let b2 ←
-            types.Outcome.Insts.CoreCmpPartialEqOutcome.eq outcome
-              types.Outcome.Ambiguous
-          let vm ←
-            if b2
-            then
-              do
-              let jq ← types.PendingInvocation.Insts.CoreCloneClone.clone j
-              let ii ← types.InvocationId.Insts.CoreCloneClone.clone inv
-              collections.VecMap.insert types.InvocationId.Insts.CoreCloneClone
-                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-                types.PendingInvocation.Insts.CoreCloneClone s.pending ii
-                { jq with quarantined := true }
-            else
-              collections.VecMap.remove types.InvocationId.Insts.CoreCloneClone
-                types.InvocationId.Insts.CoreCmpPartialEqInvocationId
-                types.PendingInvocation.Insts.CoreCloneClone s.pending inv
-          let b3 ←
-            core.cmp.PartialEq.ne.trait_default
-              types.Disposition.Insts.CoreCmpPartialEqDisposition j.disposition
-              types.Disposition.Permitted
-          let s1 ←
-            if b3
-            then state.KernelState.demote_all_of { s with pending := vm } a
-            else ok { s with pending := vm }
-          let b4 ←
-            core.cmp.PartialEq.ne.trait_default
-              types.Outcome.Insts.CoreCmpPartialEqOutcome outcome
-              types.Outcome.Ambiguous
-          let s2 ←
-            if b4
-            then
-              do
-              let ai ← types.AgentId.Insts.CoreCloneClone.clone a
-              let vm1 ←
-                collections.VecMapKVecSet.insert_into
-                  types.AgentId.Insts.CoreCloneClone
-                  types.AgentId.Insts.CoreCmpPartialEqAgentId
-                  types.ConfLevel.Insts.CoreCloneClone
-                  types.ConfLevel.Insts.CoreCmpPartialEqConfLevel
-                  s1.taint_levels ai j.policy.output_conf
-              let vm2 ←
-                collections.VecMapKVecSet.insert_into
-                  types.AgentId.Insts.CoreCloneClone
-                  types.AgentId.Insts.CoreCmpPartialEqAgentId
-                  types.IntegLevel.Insts.CoreCloneClone
-                  types.IntegLevel.Insts.CoreCmpPartialEqIntegLevel
-                  s1.integ_levels ai j.policy.output_integ
-              ok { s1 with taint_levels := vm1, integ_levels := vm2 }
-            else ok s1
-          match att with
-          | none =>
-            ok (core.result.Result.Ok (s2, event.KernelAction.SettleInvocation
-              inv a j.disposition outcome j.policy.output_conf
-              j.policy.output_integ none))
-          | some r =>
-            let ai ← types.AttestationId.Insts.CoreCloneClone.clone r.id
-            let vs ←
-              collections.VecSet.insert
-                types.AttestationId.Insts.CoreCloneClone
-                types.AttestationId.Insts.CoreCmpPartialEqAttestationId
-                s2.consumed_attestations ai
-            ok (core.result.Result.Ok ({ s2 with consumed_attestations := vs },
-              event.KernelAction.SettleInvocation inv a j.disposition outcome
-              j.policy.output_conf j.policy.output_integ (some ai)))
     else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::check_capability]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 499:4-505:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 502:4-508:5 -/
 @[rust_loop_body]
 def transitions.check_capability_loop.body
   (s : state.KernelState) (a : types.AgentId)
@@ -3665,7 +3677,7 @@ def transitions.check_capability_loop.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::check_capability]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 499:4-505:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 502:4-508:5 -/
 @[rust_loop]
 def transitions.check_capability_loop
   (s : state.KernelState) (a : types.AgentId)
@@ -3677,7 +3689,7 @@ def transitions.check_capability_loop
     (ok1, i)
 
 /-- [argus_kernel::transitions::check_capability]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 496:0-507:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 499:0-510:1 -/
 @[reducible]
 def transitions.check_capability
   (s : state.KernelState) (a : types.AgentId)
@@ -3687,7 +3699,7 @@ def transitions.check_capability
   transitions.check_capability_loop s a snap true 0#usize
 
 /-- [argus_kernel::transitions::check_clearance]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 515:4-521:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 518:4-524:5 -/
 @[rust_loop_body]
 def transitions.check_clearance_loop0.body
   (snap : types.ActionPolicySnapshot) (st : collections.VecSet types.ConfLevel)
@@ -3711,7 +3723,7 @@ def transitions.check_clearance_loop0.body
   else ok (done (snap, ok1))
 
 /-- [argus_kernel::transitions::check_clearance]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 515:4-521:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 518:4-524:5 -/
 @[rust_loop]
 def transitions.check_clearance_loop0
   (snap : types.ActionPolicySnapshot) (ok1 : Bool)
@@ -3723,7 +3735,7 @@ def transitions.check_clearance_loop0
     (ok1, i)
 
 /-- [argus_kernel::transitions::check_clearance]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 523:4-531:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 526:4-534:5 -/
 @[rust_loop_body]
 def transitions.check_clearance_loop1.body
   (s : state.KernelState) (a : types.AgentId)
@@ -3766,7 +3778,7 @@ def transitions.check_clearance_loop1.body
   else ok (done (snap, ok1))
 
 /-- [argus_kernel::transitions::check_clearance]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 523:4-531:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 526:4-534:5 -/
 @[rust_loop]
 def transitions.check_clearance_loop1
   (s : state.KernelState) (a : types.AgentId)
@@ -3779,7 +3791,7 @@ def transitions.check_clearance_loop1
     (snap, ok1, i)
 
 /-- [argus_kernel::transitions::check_clearance]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 511:0-536:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 514:0-539:1 -/
 def transitions.check_clearance
   (s : state.KernelState) (a : types.AgentId)
   (snap : types.ActionPolicySnapshot) :
@@ -3794,7 +3806,7 @@ def transitions.check_clearance
   else ok false
 
 /-- [argus_kernel::transitions::check_flow]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 554:8-565:9 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 557:8-568:9 -/
 @[rust_loop_body]
 def transitions.check_flow_loop0_loop0.body
   (bg : background.BackgroundTheory)
@@ -3827,7 +3839,7 @@ def transitions.check_flow_loop0_loop0.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::check_flow]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 554:8-565:9 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 557:8-568:9 -/
 @[rust_loop]
 def transitions.check_flow_loop0_loop0
   (bg : background.BackgroundTheory)
@@ -3841,7 +3853,7 @@ def transitions.check_flow_loop0_loop0
     (ok1, e)
 
 /-- [argus_kernel::transitions::check_flow]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 551:4-567:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 554:4-570:5 -/
 @[rust_loop_body]
 def transitions.check_flow_loop0.body
   (bg : background.BackgroundTheory)
@@ -3863,7 +3875,7 @@ def transitions.check_flow_loop0.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::check_flow]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 551:4-567:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 554:4-570:5 -/
 @[rust_loop]
 def transitions.check_flow_loop0
   (bg : background.BackgroundTheory)
@@ -3877,7 +3889,7 @@ def transitions.check_flow_loop0
     (ok1, i)
 
 /-- [argus_kernel::transitions::check_flow]: loop body 3:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 575:16-587:17 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 578:16-590:17 -/
 @[rust_loop_body]
 def transitions.check_flow_loop1_loop0.body
   (bg : background.BackgroundTheory) (snap : types.ActionPolicySnapshot)
@@ -3916,7 +3928,7 @@ def transitions.check_flow_loop1_loop0.body
   else ok (done (snap, ok1))
 
 /-- [argus_kernel::transitions::check_flow]: loop 3:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 575:16-587:17 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 578:16-590:17 -/
 @[rust_loop]
 def transitions.check_flow_loop1_loop0
   (bg : background.BackgroundTheory) (snap : types.ActionPolicySnapshot)
@@ -3930,7 +3942,7 @@ def transitions.check_flow_loop1_loop0
     (ok1, e)
 
 /-- [argus_kernel::transitions::check_flow]: loop body 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 569:4-591:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 572:4-594:5 -/
 @[rust_loop_body]
 def transitions.check_flow_loop1.body
   (s : state.KernelState) (bg : background.BackgroundTheory)
@@ -3972,7 +3984,7 @@ def transitions.check_flow_loop1.body
   else ok (done (snap, ok1))
 
 /-- [argus_kernel::transitions::check_flow]: loop 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 569:4-591:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 572:4-594:5 -/
 @[rust_loop]
 def transitions.check_flow_loop1
   (s : state.KernelState) (bg : background.BackgroundTheory)
@@ -3986,7 +3998,7 @@ def transitions.check_flow_loop1
     (snap, ok1, i)
 
 /-- [argus_kernel::transitions::check_flow]: loop body 4:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 593:4-604:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 596:4-607:5 -/
 @[rust_loop_body]
 def transitions.check_flow_loop2.body
   (bg : background.BackgroundTheory) (snap : types.ActionPolicySnapshot)
@@ -4020,7 +4032,7 @@ def transitions.check_flow_loop2.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::check_flow]: loop 4:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 593:4-604:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 596:4-607:5 -/
 @[rust_loop]
 def transitions.check_flow_loop2
   (bg : background.BackgroundTheory) (snap : types.ActionPolicySnapshot)
@@ -4034,7 +4046,7 @@ def transitions.check_flow_loop2
     (ok1, e)
 
 /-- [argus_kernel::transitions::check_flow]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 540:0-606:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 543:0-609:1 -/
 def transitions.check_flow
   (s : state.KernelState) (bg : background.BackgroundTheory)
   (a : types.AgentId) (snap : types.ActionPolicySnapshot)
@@ -4048,7 +4060,7 @@ def transitions.check_flow
   transitions.check_flow_loop2 bg snap1 egr strict ok2 0#usize
 
 /-- [argus_kernel::transitions::check_integ]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 614:4-625:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 617:4-628:5 -/
 @[rust_loop_body]
 def transitions.check_integ_loop0.body
   (snap : types.ActionPolicySnapshot) (strict : Bool)
@@ -4080,7 +4092,7 @@ def transitions.check_integ_loop0.body
   else ok (done (snap, ok1))
 
 /-- [argus_kernel::transitions::check_integ]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 614:4-625:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 617:4-628:5 -/
 @[rust_loop]
 def transitions.check_integ_loop0
   (snap : types.ActionPolicySnapshot) (strict : Bool) (ok1 : Bool)
@@ -4092,7 +4104,7 @@ def transitions.check_integ_loop0
     (ok1, i)
 
 /-- [argus_kernel::transitions::check_integ]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 627:4-643:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 630:4-646:5 -/
 @[rust_loop_body]
 def transitions.check_integ_loop1.body
   (s : state.KernelState) (a : types.AgentId)
@@ -4149,7 +4161,7 @@ def transitions.check_integ_loop1.body
   else ok (done (snap, strict, ok1))
 
 /-- [argus_kernel::transitions::check_integ]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 627:4-643:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 630:4-646:5 -/
 @[rust_loop]
 def transitions.check_integ_loop1
   (s : state.KernelState) (a : types.AgentId)
@@ -4163,7 +4175,7 @@ def transitions.check_integ_loop1
     (snap, strict, ok1, i)
 
 /-- [argus_kernel::transitions::check_integ]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 610:0-653:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 613:0-656:1 -/
 def transitions.check_integ
   (s : state.KernelState) (a : types.AgentId)
   (snap : types.ActionPolicySnapshot) (strict : Bool) :
@@ -4188,7 +4200,7 @@ def transitions.check_integ
   else ok false
 
 /-- [argus_kernel::transitions::egress_narrows]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 659:4-664:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 662:4-667:5 -/
 @[rust_loop_body]
 def transitions.egress_narrows_loop.body
   (egr : collections.VecSet types.EgressKind)
@@ -4215,7 +4227,7 @@ def transitions.egress_narrows_loop.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::egress_narrows]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 659:4-664:5 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 662:4-667:5 -/
 @[rust_loop]
 def transitions.egress_narrows_loop
   (egr : collections.VecSet types.EgressKind)
@@ -4228,7 +4240,7 @@ def transitions.egress_narrows_loop
     (ok1, i)
 
 /-- [argus_kernel::transitions::egress_narrows]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 656:0-666:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 659:0-669:1 -/
 @[reducible]
 def transitions.egress_narrows
   (egr : collections.VecSet types.EgressKind)
@@ -4238,7 +4250,7 @@ def transitions.egress_narrows
   transitions.egress_narrows_loop egr declared true 0#usize
 
 /-- [argus_kernel::transitions::egress_covers]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 669:0-675:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 672:0-678:1 -/
 def transitions.egress_covers
   (declared : collections.VecSet types.EgressKind)
   (egr : collections.VecSet types.EgressKind) :
@@ -4256,7 +4268,7 @@ def transitions.egress_covers
     ok (¬ b1)
 
 /-- [argus_kernel::transitions::begin_admissible]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 678:0-691:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 681:0-694:1 -/
 def transitions.begin_admissible
   (s : state.KernelState) (bg : background.BackgroundTheory)
   (a : types.AgentId) (snap : types.ActionPolicySnapshot)
@@ -4280,7 +4292,7 @@ def transitions.begin_admissible
   else ok false
 
 /-- [argus_kernel::transitions::begin_invocation]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 698:0-831:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 701:0-834:1
     Visibility: public -/
 def transitions.begin_invocation
   (s : state.KernelState) (bg : background.BackgroundTheory)
@@ -4558,7 +4570,7 @@ def transitions.begin_invocation
   else ok (core.result.Result.Err error.KernelError.AgentInactive)
 
 /-- [argus_kernel::transitions::authorize_admits]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 835:0-849:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 838:0-852:1 -/
 def transitions.authorize_admits
   (s : state.KernelState) (bg : background.BackgroundTheory)
   (inv : types.InvocationId) (sc : types.ChallengeScope) :
@@ -4673,7 +4685,7 @@ impl_def types.ChallengeId.Insts.CoreCmpPartialEqChallengeId :
 }
 
 /-- [argus_kernel::transitions::authorize_inspected]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 855:0-906:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 858:0-909:1
     Visibility: public -/
 def transitions.authorize_inspected
   (s : state.KernelState) (bg : background.BackgroundTheory)
@@ -4817,7 +4829,7 @@ structure types.CrossInput where
   released_integ : types.IntegLevel
 
 /-- [argus_kernel::transitions::endorsed_ok]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 914:0-938:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 917:0-941:1 -/
 def transitions.endorsed_ok
   (s : state.KernelState) (q : types.CrossInput) : Result Bool := do
   let (s1, evidence_ok) ←
@@ -4877,7 +4889,7 @@ def transitions.endorsed_ok
   else ok false
 
 /-- [argus_kernel::transitions::cross_holds]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 955:12-961:13 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 958:12-964:13 -/
 @[rust_loop_body]
 def transitions.cross_holds_loop0.body
   (vs : collections.VecSet types.AgentId)
@@ -4951,7 +4963,7 @@ def transitions.cross_holds_loop0.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::cross_holds]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 955:12-961:13 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 958:12-964:13 -/
 @[rust_loop]
 def transitions.cross_holds_loop0
   (vs : collections.VecSet types.AgentId)
@@ -4978,7 +4990,7 @@ def transitions.cross_holds_loop0
     (ok1, i)
 
 /-- [argus_kernel::transitions::cross_holds]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 964:12-970:13 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 967:12-973:13 -/
 @[rust_loop_body]
 def transitions.cross_holds_loop1.body
   (vs : collections.VecSet types.AgentId)
@@ -5031,7 +5043,7 @@ def transitions.cross_holds_loop1.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::cross_holds]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 964:12-970:13 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 967:12-973:13 -/
 @[rust_loop]
 def transitions.cross_holds_loop1
   (vs : collections.VecSet types.AgentId)
@@ -5057,7 +5069,7 @@ def transitions.cross_holds_loop1
     (ok1, i)
 
 /-- [argus_kernel::transitions::cross_holds]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 943:0-975:1 -/
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 946:0-978:1 -/
 def transitions.cross_holds
   (s : state.KernelState) (bg : background.BackgroundTheory)
   (q : types.CrossInput) (branch : types.CrossBranch) :
@@ -5102,7 +5114,7 @@ def types.CrossBranch.Insts.CoreCmpPartialEqCrossBranch.eq
   ok (self1 = other1)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 996:4-1004:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 999:4-1007:5
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop0.body
@@ -5139,7 +5151,7 @@ def transitions.cross_output_loop0.body
   else ok (done src_in_flight)
 
 /-- [argus_kernel::transitions::cross_output]: loop 0:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 996:4-1004:5
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 999:4-1007:5
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop0
@@ -5153,7 +5165,7 @@ def transitions.cross_output_loop0
     (src_in_flight, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1038:16-1044:17
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1041:16-1047:17
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop1.body
@@ -5178,7 +5190,7 @@ def transitions.cross_output_loop1.body
   else ok (done ok1)
 
 /-- [argus_kernel::transitions::cross_output]: loop 1:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1038:16-1044:17
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1041:16-1047:17
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop1
@@ -5191,7 +5203,7 @@ def transitions.cross_output_loop1
     (ok1, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop2.body
@@ -5221,7 +5233,7 @@ def transitions.cross_output_loop2.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 2:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop2
@@ -5236,7 +5248,7 @@ def transitions.cross_output_loop2
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 3:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop3.body
@@ -5266,7 +5278,7 @@ def transitions.cross_output_loop3.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 3:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop3
@@ -5281,7 +5293,7 @@ def transitions.cross_output_loop3
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 4:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop4.body
@@ -5311,7 +5323,7 @@ def transitions.cross_output_loop4.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 4:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop4
@@ -5326,7 +5338,7 @@ def transitions.cross_output_loop4
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 5:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop5.body
@@ -5356,7 +5368,7 @@ def transitions.cross_output_loop5.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 5:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop5
@@ -5371,7 +5383,7 @@ def transitions.cross_output_loop5
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 6:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop6.body
@@ -5401,7 +5413,7 @@ def transitions.cross_output_loop6.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 6:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop6
@@ -5416,7 +5428,7 @@ def transitions.cross_output_loop6
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 7:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop7.body
@@ -5446,7 +5458,7 @@ def transitions.cross_output_loop7.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 7:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop7
@@ -5461,7 +5473,7 @@ def transitions.cross_output_loop7
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 8:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop8.body
@@ -5491,7 +5503,7 @@ def transitions.cross_output_loop8.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 8:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop8
@@ -5506,7 +5518,7 @@ def transitions.cross_output_loop8
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 9:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop9.body
@@ -5536,7 +5548,7 @@ def transitions.cross_output_loop9.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 9:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop9
@@ -5551,7 +5563,7 @@ def transitions.cross_output_loop9
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 10:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop10.body
@@ -5581,7 +5593,7 @@ def transitions.cross_output_loop10.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 10:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop10
@@ -5596,7 +5608,7 @@ def transitions.cross_output_loop10
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 11:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop11.body
@@ -5626,7 +5638,7 @@ def transitions.cross_output_loop11.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 11:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop11
@@ -5641,7 +5653,7 @@ def transitions.cross_output_loop11
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 12:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop12.body
@@ -5671,7 +5683,7 @@ def transitions.cross_output_loop12.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 12:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1072:12-1076:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1075:12-1079:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop12
@@ -5686,7 +5698,7 @@ def transitions.cross_output_loop12
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]: loop body 13:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop_body]
 def transitions.cross_output_loop13.body
@@ -5716,7 +5728,7 @@ def transitions.cross_output_loop13.body
   else ok (done vm)
 
 /-- [argus_kernel::transitions::cross_output]: loop 13:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 1079:12-1083:13
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 1082:12-1086:13
     Visibility: public -/
 @[rust_loop]
 def transitions.cross_output_loop13
@@ -5731,7 +5743,7 @@ def transitions.cross_output_loop13
     (vm, i)
 
 /-- [argus_kernel::transitions::cross_output]:
-    Source: 'crates/argus-kernel/src/transitions.rs', lines 982:0-1110:1
+    Source: 'crates/argus-kernel/src/transitions.rs', lines 985:0-1113:1
     Visibility: public -/
 def transitions.cross_output
   (s : state.KernelState) (bg : background.BackgroundTheory)
