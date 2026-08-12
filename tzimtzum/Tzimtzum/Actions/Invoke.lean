@@ -269,25 +269,26 @@ kav_action begin_invocation (a : AgentId) (inv : InvocationId) (chal : Challenge
     (egr : EgressKind → Prop) (ah : ContentHash) (authorized : Prop) (v : Verdict) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require s.agent_active a
-  require a ≠ s.root_agent
-  require s.tool_registered snap.tool
+  require active : s.agent_active a
+  require not_root : a ≠ s.root_agent
+  require tool_registered : s.tool_registered snap.tool
  -- Snapshot coherence: an incoherent band is a boundary rejection, never a kernel branch.
-  require le_integ snap.integ_inspect snap.integ_floor
+  require band_coherent : le_integ snap.integ_inspect snap.integ_floor
  -- The invocation slot, consumed identifier history, and challenge slot must all be fresh.
-  require s.pending inv = none
-  require ¬ s.consumed_ids inv
-  require s.challenges inv = none
+  require slot_free : s.pending inv = none
+  require id_fresh : ¬ s.consumed_ids inv
+  require challenge_fresh : s.challenges inv = none
  -- Narrowing.
-  require ∀ (E : EgressKind), egr E → snap.declared_egress E
+  require egress_narrowing : ∀ (E : EgressKind), egr E → snap.declared_egress E
  -- Coverage: an egress-bearing action cannot be admitted on an empty attestation.
-  require (∃ (E : EgressKind), snap.declared_egress E) → (∃ (E : EgressKind), egr E)
+  require egress_coverage :
+    (∃ (E : EgressKind), snap.declared_egress E) → (∃ (E : EgressKind), egr E)
  -- Each verdict must agree with the admission predicates; denial can transition only in monitor mode.
-  require v = Verdict.allow → beginAllow s a snap egr authorized
-  require v = Verdict.inspection_required →
+  require verdict_allow : v = Verdict.allow → beginAllow s a snap egr authorized
+  require verdict_inspect : v = Verdict.inspection_required →
     beginAdmissible s a snap egr authorized ∧ ¬ beginAllow s a snap egr authorized
-  require v = Verdict.deny → ¬ beginAdmissible s a snap egr authorized
-  require v = Verdict.deny → s.mode = Mode.monitor
+  require verdict_deny : v = Verdict.deny → ¬ beginAdmissible s a snap egr authorized
+  require deny_monitor : v = Verdict.deny → s.mode = Mode.monitor
  -- Match on verdict and mode constructors so each update branch has a direct case split.
   pending := fun I =>
     if I = inv then
