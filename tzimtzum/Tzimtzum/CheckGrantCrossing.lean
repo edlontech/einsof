@@ -1,6 +1,9 @@
 import Tzimtzum.Soundness.Common
 
-/-! `grant_crossing` preserves the bundle (one theorem per sub-bundle). -/
+/-! `grant_crossing` preserves the bundle (one theorem per sub-bundle). Provisioning sets
+one active agent's exact-digest grant with `remaining = provisioned`, so `grant_bounded`,
+`grant_active`, and `grant_pinned` hold on the new entry directly and everything else is a
+frame; every conjunct is fully automated (lite cascade; gates stay atomic). -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true
@@ -12,46 +15,50 @@ namespace Tzimtzum
 variable {AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
   CrossingId AssignmentDigest PolicyDigest ContentHash : Type}
 
-theorem presS_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat)
-    (s s' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-      CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (hinv : allInv s) (hg : (grant_crossing grantor agent d n).guard s) (hn : (grant_crossing grantor agent d n).next s s') : invS s' := by
+/-- The state at this file's sort tuple. The ascription in each `Preserves` statement pins
+the sorts the action's arguments do not determine. -/
+local notation "St!" => St AgentId ToolId InvocationId CapKind EgressKind ChallengeId
+  AttestationId CrossingId AssignmentDigest PolicyDigest ContentHash
+
+/-- `invS` (9 structural conjuncts): fully automated. -/
+theorem presS_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat) :
+    Preserves (grant_crossing grantor agent d n : Kav.Action St!) invS := by
+  intro s s' hinv hg hn
   kav_discharge_lite grant_crossing
 
-theorem presP_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat)
-    (s s' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-      CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (hinv : allInv s) (hg : (grant_crossing grantor agent d n).guard s) (hn : (grant_crossing grantor agent d n).next s s') : invP s' := by
+/-- `invP` (12 pending/gate conjuncts): fully automated. -/
+theorem presP_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat) :
+    Preserves (grant_crossing grantor agent d n : Kav.Action St!) invP := by
+  intro s s' hinv hg hn
   kav_discharge_lite grant_crossing
 
-theorem presPP_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat)
-    (s s' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-      CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (hinv : allInv s) (hg : (grant_crossing grantor agent d n).guard s) (hn : (grant_crossing grantor agent d n).next s s') : invPP s' := by
+/-- `invPP` (2 pairwise conjuncts): fully automated. -/
+theorem presPP_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat) :
+    Preserves (grant_crossing grantor agent d n : Kav.Action St!) invPP := by
+  intro s s' hinv hg hn
   kav_discharge_lite grant_crossing
 
-theorem presE_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat)
-    (s s' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-      CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (hinv : allInv s) (hg : (grant_crossing grantor agent d n).guard s) (hn : (grant_crossing grantor agent d n).next s s') : invE s' := by
+/-- `invE` (6 evidence conjuncts): fully automated. -/
+theorem presE_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat) :
+    Preserves (grant_crossing grantor agent d n : Kav.Action St!) invE := by
+  intro s s' hinv hg hn
   kav_discharge_lite grant_crossing
 
-theorem presC_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat)
-    (s s' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-      CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (hinv : allInv s) (hg : (grant_crossing grantor agent d n).guard s) (hn : (grant_crossing grantor agent d n).next s s') : invC s' := by
+/-- `invC` (3 crossing conjuncts): fully automated. -/
+theorem presC_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat) :
+    Preserves (grant_crossing grantor agent d n : Kav.Action St!) invC := by
+  intro s s' hinv hg hn
   kav_discharge_lite grant_crossing
 
 /-- Combines preservation of all invariant sub-bundles. -/
-theorem pres_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat)
-    (s s' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-      CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (hinv : allInv s) (hg : (grant_crossing grantor agent d n).guard s) (hn : (grant_crossing grantor agent d n).next s s') : allInv s' :=
-  ⟨presS_grant_crossing grantor agent d n s s' hinv hg hn,
-   presP_grant_crossing grantor agent d n s s' hinv hg hn,
-   presPP_grant_crossing grantor agent d n s s' hinv hg hn,
-   presE_grant_crossing grantor agent d n s s' hinv hg hn,
-   presC_grant_crossing grantor agent d n s s' hinv hg hn⟩
+theorem pres_grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat) :
+    Preserves (grant_crossing grantor agent d n : Kav.Action St!) allInv :=
+  fun s s' hinv hg hn =>
+    ⟨presS_grant_crossing grantor agent d n s s' hinv hg hn,
+     presP_grant_crossing grantor agent d n s s' hinv hg hn,
+     presPP_grant_crossing grantor agent d n s s' hinv hg hn,
+     presE_grant_crossing grantor agent d n s s' hinv hg hn,
+     presC_grant_crossing grantor agent d n s s' hinv hg hn⟩
 
 -- The proof must use only `propext`, `Classical.choice`, and `Quot.sound`.
 -- Native reduction would add `Lean.ofReduceBool` to the trust base.

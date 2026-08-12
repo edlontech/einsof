@@ -24,7 +24,7 @@ pending snapshot to name a registered tool. -/
 kav_action register_tool (tool : ToolId) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require ¬ s.tool_registered tool
+  require fresh : ¬ s.tool_registered tool
   tool_registered := fun T => s.tool_registered T ∨ T = tool
 
 /-! `unregister_tool` removes a registered tool only when no pending record or challenge scope
@@ -33,11 +33,12 @@ references it. This keeps every retained pending or challenged tool identity reg
 kav_action unregister_tool (tool : ToolId) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require s.tool_registered tool
-  require ∀ (I : InvocationId) (J : PendingInvocation AgentId ToolId CapKind EgressKind
-      AttestationId PolicyDigest), s.pending I = some J → J.policy.tool ≠ tool
-  require ∀ (I : InvocationId) (sc : ChallengeScope AgentId ToolId CapKind EgressKind
-      ChallengeId PolicyDigest ContentHash), s.challenges I = some sc → sc.policy.tool ≠ tool
+  require registered : s.tool_registered tool
+  require no_pending_use : ∀ (I : InvocationId) (J : PendingInvocation AgentId ToolId CapKind
+      EgressKind AttestationId PolicyDigest), s.pending I = some J → J.policy.tool ≠ tool
+  require no_challenge_use : ∀ (I : InvocationId) (sc : ChallengeScope AgentId ToolId CapKind
+      EgressKind ChallengeId PolicyDigest ContentHash),
+    s.challenges I = some sc → sc.policy.tool ≠ tool
   tool_registered := fun T => s.tool_registered T ∧ T ≠ tool
 
 /-! ## Agent tree -/
@@ -49,13 +50,13 @@ open Classical in
 kav_action delegate (grantor grantee : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require s.agent_active grantor
-  require ¬ s.agent_active grantee
-  require grantee ≠ s.root_agent
+  require grantor_active : s.agent_active grantor
+  require grantee_fresh : ¬ s.agent_active grantee
+  require grantee_not_root : grantee ≠ s.root_agent
  -- The grantee cannot already be a parent. Reusing such an identifier would remove parent
  -- edges from active children, leaving them without a revocable parent and violating
  -- `capability_subsumption`.
-  require ∀ (C : AgentId), ¬ s.agent_parent C grantee
+  require grantee_no_children : ∀ (C : AgentId), ¬ s.agent_parent C grantee
   agent_active := fun A => s.agent_active A ∨ A = grantee
   agent_parent := fun C P =>
     (C = grantee ∧ P = grantor) ∨ (s.agent_parent C P ∧ C ≠ grantee ∧ P ≠ grantee)
@@ -71,10 +72,10 @@ kav_action delegate (grantor grantee : AgentId) :
 kav_action grant_capability (prnt child : AgentId) (cap : CapKind) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require s.agent_active prnt
-  require s.agent_active child
-  require s.agent_parent child prnt
-  require s.agent_cap prnt cap
+  require parent_active : s.agent_active prnt
+  require child_active : s.agent_active child
+  require parent_edge : s.agent_parent child prnt
+  require parent_holds : s.agent_cap prnt cap
   agent_cap := fun N C => (N = child ∧ C = cap) ∨ s.agent_cap N C
 
 /-! ## The operator plane -/
@@ -87,9 +88,9 @@ open Classical in
 kav_action grant_crossing (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require grantor = s.root_agent
-  require s.agent_active grantor
-  require s.agent_active agent
+  require root_grantor : grantor = s.root_agent
+  require grantor_active : s.agent_active grantor
+  require agent_active : s.agent_active agent
   crossing_grants := fun A D =>
     if A = agent ∧ D = d then some { remaining := n, provisioned := n }
     else s.crossing_grants A D
@@ -105,10 +106,10 @@ pending invocations (quarantined included), open challenges, and crossing grants
 kav_action revoke (prnt target : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require s.agent_parent target prnt
-  require s.agent_active prnt
-  require s.agent_active target
-  require target ≠ s.root_agent
+  require parent_edge : s.agent_parent target prnt
+  require parent_active : s.agent_active prnt
+  require target_active : s.agent_active target
+  require target_not_root : target ≠ s.root_agent
   agent_active := fun A => s.agent_active A ∧ A ≠ target
   agent_parent := fun C P => s.agent_parent C P ∧ C ≠ target
   agent_cap := fun A C => s.agent_cap A C ∧ A ≠ target
@@ -124,10 +125,10 @@ set. -/
 kav_action cascade_revoke (child prnt : AgentId) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require s.agent_parent child prnt
-  require ¬ s.agent_active prnt
-  require s.agent_active child
-  require child ≠ s.root_agent
+  require parent_edge : s.agent_parent child prnt
+  require parent_inactive : ¬ s.agent_active prnt
+  require child_active : s.agent_active child
+  require child_not_root : child ≠ s.root_agent
   agent_active := fun A => s.agent_active A ∧ A ≠ child
   agent_parent := fun C P => s.agent_parent C P ∧ C ≠ child
   agent_cap := fun A C => s.agent_cap A C ∧ A ≠ child
