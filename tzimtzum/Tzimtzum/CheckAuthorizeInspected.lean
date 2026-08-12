@@ -28,10 +28,13 @@ local notation "St!" => St AgentId ToolId InvocationId CapKind EgressKind Challe
 
 /-! ## Inversion helpers
 
-The only positional destructuring of the action's `guard`/`next` conjunctions lives in this
-section; every proof below goes through these named lemmas. -/
+Built on the `kav_action`-generated projections (`next_taint_levels`, `next_pending`,
+`guard_admit_pos`, …): nothing in this file destructures the action's `guard`/`next`
+conjunctions positionally. -/
 
 section Inversion
+
+open authorize_inspected
 
 variable {inv : InvocationId}
   {sc : ChallengeScope AgentId ToolId CapKind EgressKind ChallengeId PolicyDigest ContentHash}
@@ -53,29 +56,25 @@ private def admittedRecord
 
 /-- Taint labels are framed. -/
 private theorem next_taint (hn : (authorize_inspected inv sc att admit).next s s') :
-    s'.taint_levels = s.taint_levels := by
-  obtain ⟨-, -, -, ht, -⟩ := hn
-  exact ht
+    s'.taint_levels = s.taint_levels :=
+  next_taint_levels hn
 
 /-- Integrity labels are framed. -/
 private theorem next_integ (hn : (authorize_inspected inv sc att admit).next s s') :
-    s'.integ_levels = s.integ_levels := by
-  obtain ⟨-, -, -, -, hi, -⟩ := hn
-  exact hi
+    s'.integ_levels = s.integ_levels :=
+  next_integ_levels hn
 
 /-- The flow-ALLOW relation is framed (the allow ceiling is immutable background). -/
 private theorem next_flow_allows (hn : (authorize_inspected inv sc att admit).next s s') :
     s'.flow_allows = s.flow_allows := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, hallow, -⟩ := hn
   funext L E
-  simp only [St.flow_allows, hallow]
+  simp only [St.flow_allows, next_egress_allow_ceiling hn]
 
 /-- The flow-INSPECT relation is framed (the inspect ceiling is immutable background). -/
 private theorem next_flow_inspects (hn : (authorize_inspected inv sc att admit).next s s') :
     s'.flow_inspects = s.flow_inspects := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, hinspect, -⟩ := hn
   funext L E
-  simp only [St.flow_inspects, hinspect]
+  simp only [St.flow_inspects, next_egress_inspect_ceiling hn]
 
 /-- A record pending after `authorize_inspected` is the newly admitted one at the resolved
 key, or a pre-existing record at an untouched key. -/
@@ -85,8 +84,7 @@ private theorem pending_cases {I : InvocationId}
     (hJ : s'.pending I = some J) :
     (I = inv ∧ admit = true ∧ J = admittedRecord sc att)
     ∨ (¬(I = inv ∧ admit = true) ∧ s.pending I = some J) := by
-  obtain ⟨-, -, -, -, -, hpen, -⟩ := hn
-  rw [hpen] at hJ
+  rw [next_pending hn] at hJ
   by_cases h : I = inv ∧ admit = true
   · simp only [if_pos h] at hJ
     exact Or.inl ⟨h.1, h.2, (Option.some.inj hJ).symm⟩
@@ -96,9 +94,8 @@ private theorem pending_cases {I : InvocationId}
 /-- An admitting guard re-checked the full begin-time admission gate at the current state. -/
 private theorem admitted_gate (hg : (authorize_inspected inv sc att admit).guard s)
     (hadm : admit = true) :
-    beginAdmissible s sc.agent sc.policy sc.egress sc.authorized := by
-  obtain ⟨-, -, -, -, -, -, -, hadmit, -⟩ := hg
-  exact (hadmit hadm).2.toBeginAdmissible
+    beginAdmissible s sc.agent sc.policy sc.egress sc.authorized :=
+  (guard_admit_pos hg hadm).2.toBeginAdmissible
 
 end Inversion
 

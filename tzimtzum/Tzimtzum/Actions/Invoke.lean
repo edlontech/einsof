@@ -325,20 +325,20 @@ kav_action authorize_inspected (inv : InvocationId)
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
  -- The challenge map contains exactly this scope at the invocation key.
-  require s.challenges inv = some sc
+  require challenge_bound : s.challenges inv = some sc
  -- Exact scope equality: invocation, challenge attribution, arguments, policy.
-  require att.inv = inv
-  require att.challenge = sc.challenge
-  require att.args_hash = sc.args_hash
-  require att.policy_digest = sc.policy.policy_digest
+  require scope_invocation : att.inv = inv
+  require scope_challenge : att.challenge = sc.challenge
+  require scope_args : att.args_hash = sc.args_hash
+  require scope_policy : att.policy_digest = sc.policy.policy_digest
  -- One-use.
-  require ¬ s.consumed_attestations att.id
+  require attestation_fresh : ¬ s.consumed_attestations att.id
  -- The invocation identifier was consumed when the challenge was created.
-  require s.consumed_ids inv
+  require id_consumed : s.consumed_ids inv
  -- Admission needs both a positive attestation and current live admission.
-  require admit = true → att.positive ∧ authorizeAdmits s inv sc
+  require admit_pos : admit = true → att.positive ∧ authorizeAdmits s inv sc
  -- Denial is the complementary branch.
-  require admit = false → ¬ att.positive ∨ ¬ authorizeAdmits s inv sc
+  require admit_neg : admit = false → ¬ att.positive ∨ ¬ authorizeAdmits s inv sc
   pending := fun I =>
     if I = inv ∧ admit = true then
       some { agent := sc.agent, policy := sc.policy, egress := sc.egress,
