@@ -832,7 +832,8 @@ theorem ingestHoldsAbs_spec (st : state.KernelState) (bg : background.Background
     (hR : R st bg a) (agent : types.AgentId) (pconf : types.ConfLevel) (pinteg : types.IntegLevel) :
     transitions.ingest_holds st bg agent pconf pinteg ⦃ b =>
       b = true ↔ Tzimtzum.ingestHolds a agent (confA pconf) (integA pinteg) ⦄ := by
-  unfold transitions.ingest_holds Tzimtzum.ingestHolds
+  unfold transitions.ingest_holds
+  simp only [Tzimtzum.ingestHolds_iff]
   obtain ⟨bc, hbcEq, hbc⟩ := spec_imp_exists (ingestConfHold_spec st bg agent pconf hR.ndPending)
   rw [hbcEq]; simp only [bind_tc_ok]
   by_cases hbcv : bc = true

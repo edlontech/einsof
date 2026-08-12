@@ -249,7 +249,7 @@ theorem presP_ingest (a : AgentId) (src : Option AgentId) (pconf : ConfLevel)
     · subst L
       have hd :=
         ingest_contained_owner_permitted a src pconf pinteg d s s' hg hn I J hJ hcontained howner
-      exact (hpermit hd).2.2 I J hOld howner
+      exact (hpermit hd).integ I J hOld howner
   · have hnext := hn
     have hguard := hg
     obtain ⟨-, -, -, hpermit, -, -⟩ := hguard
@@ -264,7 +264,7 @@ theorem presP_ingest (a : AgentId) (src : Option AgentId) (pconf : ConfLevel)
     · subst L
       have hd :=
         ingest_contained_owner_permitted a src pconf pinteg d s s' hg hn I J hJ hcontained howner
-      rcases (hpermit hd).2.2 I J hOld howner with h | ⟨h, -⟩
+      rcases (hpermit hd).integ I J hOld howner with h | ⟨h, -⟩
       · exact Or.inl h
       · exact Or.inr h
   · have hnext := hn
@@ -283,7 +283,7 @@ theorem presP_ingest (a : AgentId) (src : Option AgentId) (pconf : ConfLevel)
       · subst L
         have hd :=
           ingest_contained_owner_permitted a src pconf pinteg d s s' hg hn I J hJ hcontained howner
-        exact (hpermit hd).2.1 I J hOldJ howner
+        exact (hpermit hd).clear I J hOldJ howner
     · have hOldK :=
         ingest_contained_pending_preimage a src pconf pinteg d s s' hn I2 K hK hKcontained
       exact hclear L I J hOldJ hcontained

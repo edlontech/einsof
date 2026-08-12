@@ -30,7 +30,8 @@ theorem authorizeAdmits_spec (st : state.KernelState) (bg : background.Backgroun
     transitions.authorize_admits st bg inv sc ⦃ b =>
       b = true ↔ Tzimtzum.authorizeAdmits a inv scA ⦄ := by
   obtain ⟨hchal, hag, hsnap, hegr, hah, hau⟩ := hsc
-  unfold transitions.authorize_admits Tzimtzum.authorizeAdmits
+  unfold transitions.authorize_admits
+  simp only [Tzimtzum.authorizeAdmits_iff]
   obtain ⟨ba, hbaEq, hba⟩ := spec_imp_exists
     (vecSetContains_spec types.AgentId.Insts.CoreCloneClone
       types.AgentId.Insts.CoreCmpPartialEqAgentId agentId_eq_spec st.agent_active sc.agent)

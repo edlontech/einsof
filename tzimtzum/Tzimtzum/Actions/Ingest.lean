@@ -55,11 +55,21 @@ def ingestClearHold
     s.pending I = some J → J.agent = a → clearance_admits pconf J.policy
 
 /-- All three holds. -/
-def ingestHolds
+structure ingestHolds
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (a : AgentId) (pconf : ConfLevel) (pinteg : IntegLevel) : Prop :=
-  ingestConfHold s a pconf ∧ ingestClearHold s a pconf ∧ ingestIntegHold s a pinteg
+    (a : AgentId) (pconf : ConfLevel) (pinteg : IntegLevel) : Prop where
+  conf : ingestConfHold s a pconf
+  clear : ingestClearHold s a pconf
+  integ : ingestIntegHold s a pinteg
+
+theorem ingestHolds_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (pconf : ConfLevel) (pinteg : IntegLevel) :
+    ingestHolds s a pconf pinteg ↔
+      (ingestConfHold s a pconf ∧ ingestClearHold s a pconf ∧ ingestIntegHold s a pinteg) :=
+  ⟨fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩, fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩⟩
 
 /-! `ingest (a, prov)` where `prov = (pconf, pinteg)`, plus the enforcement `disposition`.
 

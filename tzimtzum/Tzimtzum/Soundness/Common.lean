@@ -58,10 +58,10 @@ macro "kav_discharge " head:ident : tactic => `(tactic| (
   (repeat' apply And.intro);
   all_goals_fresh (
     (tzimtzum_simp_core $head) <;>
-    (try simp only [beginAllow, beginAdmissible, checkCapability, checkClearance,
-        checkFlowStrict, checkFlowAdmissible, checkIntegStrict, checkIntegAdmissible,
-        authorizeAdmits, endorsedOK, crossHolds,
-        ingestHolds, ingestConfHold, ingestClearHold, ingestIntegHold] at *) <;>
+    (try simp only [beginAllow_iff, beginAdmissible_iff, checkCapability, checkClearance_iff,
+        checkFlowStrict_iff, checkFlowAdmissible_iff, checkIntegStrict_iff,
+        checkIntegAdmissible_iff, authorizeAdmits_iff, endorsedOK_iff, crossHolds_iff,
+        ingestHolds_iff, ingestConfHold, ingestClearHold, ingestIntegHold] at *) <;>
       (first | trivial | grind | (simp_all <;> grind) | auto | duper [*]))))
 
 /-- Lite cascade: gate predicates as atoms. For frame-ish conjuncts. -/

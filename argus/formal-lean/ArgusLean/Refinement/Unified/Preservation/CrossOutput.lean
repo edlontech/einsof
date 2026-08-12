@@ -295,7 +295,7 @@ theorem endorsedOK_spec (st : state.KernelState) (bg : background.BackgroundTheo
   obtain ⟨b, hbEq, hb⟩ := spec_imp_exists (endorsedOKC_spec st q)
   rw [hbEq]
   simp only [spec_ok]
-  rw [hb, Tzimtzum.endorsedOK, endorsedEvidence_bridge st bg a hR q qA hq,
+  rw [hb, Tzimtzum.endorsedOK_iff, endorsedEvidence_bridge st bg a hR q qA hq,
     endorsedGrant_bridge st bg a hR q qA hq]
 
 
@@ -560,7 +560,7 @@ theorem crossHoldsEndorsed_spec (st : state.KernelState) (bg : background.Backgr
     (ingestHoldsAbs_spec st bg a hR q.rcv q.released_conf q.released_integ)
   rw [hbEq]
   simp only [spec_ok]
-  unfold Tzimtzum.crossHolds
+  simp only [Tzimtzum.crossHolds_iff]
   rw [hrcv, hrelConf, hrelInteg]
   simpa using hb
 
@@ -598,7 +598,7 @@ theorem crossHoldsUnendorsed_spec (st : state.KernelState) (bg : background.Back
   rw [hbEq]
   simp only [spec_ok]
   rw [hb, hbConf, unendorsedHolds_bridge st bg a hR q.src q.rcv srcTaint hst srcInteg hsi]
-  unfold Tzimtzum.crossHolds
+  simp only [Tzimtzum.crossHolds_iff]
   rw [hsrc, hrcv]
   simp
 
@@ -609,7 +609,7 @@ theorem crossHoldsFail_spec (st : state.KernelState) (bg : background.Background
       types.AssignmentDigest types.ContentHash) :
     transitions.cross_holds st bg q .Fail ⦃ b =>
       b = true ↔ Tzimtzum.crossHolds a qA .fail ⦄ := by
-  simp [transitions.cross_holds, Tzimtzum.crossHolds]
+  simp [transitions.cross_holds, Tzimtzum.crossHolds_iff]
 
 
 /-! ## Label-copy post state -/
@@ -2206,7 +2206,7 @@ theorem cross_output_preservesR (st : state.KernelState) (bg : background.Backgr
         (crossHoldsFail_spec st bg a q qA)
       rw [hholdsEq] at hok
       simp only [bind_tc_ok] at hok
-      have hh : holds = true := hholds.mpr (by simp [Tzimtzum.crossHolds])
+      have hh : holds = true := hholds.mpr (by simp [Tzimtzum.crossHolds_iff])
       simp only [hh, reduceIte] at hok
       have hguard : (Tzimtzum.cross_output qA .fail .permitted).guard a :=
         ⟨hactSrc, hactRcv, hsrcFree, hfreshCross, by simp, by simp,

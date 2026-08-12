@@ -57,26 +57,54 @@ structure CrossInput (AgentId AttestationId CrossingId AssignmentDigest ContentH
 
 /-- `endorsedOK` holds exactly when evidence is positive, fresh, scope-matching, and paired
 with a receiver grant for the exact assignment that has a remaining use. -/
-def endorsedOK
+structure endorsedOK
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (q : CrossInput AgentId AttestationId CrossingId AssignmentDigest ContentHash) : Prop :=
-  (∃ e, q.evidence = some e ∧ e.positive ∧ ¬ s.consumed_attestations e.id
+    (q : CrossInput AgentId AttestationId CrossingId AssignmentDigest ContentHash) :
+    Prop where
+  /-- Fresh, positive, exactly-scoped crossing evidence. -/
+  evidence : ∃ e, q.evidence = some e ∧ e.positive ∧ ¬ s.consumed_attestations e.id
     ∧ e.output = q.output_hash ∧ e.src = q.src ∧ e.rcv = q.rcv
-    ∧ e.descriptor = q.descriptor ∧ e.assignment = q.assignment)
-  ∧ (∃ g, s.crossing_grants q.rcv q.assignment = some g ∧ 0 < g.remaining)
+    ∧ e.descriptor = q.descriptor ∧ e.assignment = q.assignment
+  /-- A live receiver grant with remaining budget. -/
+  grant : ∃ g, s.crossing_grants q.rcv q.assignment = some g ∧ 0 < g.remaining
+
+theorem endorsedOK_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (q : CrossInput AgentId AttestationId CrossingId AssignmentDigest ContentHash) :
+    endorsedOK s q ↔
+      ((∃ e, q.evidence = some e ∧ e.positive ∧ ¬ s.consumed_attestations e.id
+        ∧ e.output = q.output_hash ∧ e.src = q.src ∧ e.rcv = q.rcv
+        ∧ e.descriptor = q.descriptor ∧ e.assignment = q.assignment)
+      ∧ (∃ g, s.crossing_grants q.rcv q.assignment = some g ∧ 0 < g.remaining)) :=
+  ⟨fun ⟨h1, h2⟩ ↦ ⟨h1, h2⟩, fun ⟨h1, h2⟩ ↦ ⟨h1, h2⟩⟩
 
 /-- Holds that protect receiver pending records for each label-releasing branch. -/
-def crossHolds
+structure crossHolds
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
     (q : CrossInput AgentId AttestationId CrossingId AssignmentDigest ContentHash)
-    (branch : CrossBranch) : Prop :=
-  (branch = CrossBranch.endorsed → ingestHolds s q.rcv q.released_conf q.released_integ)
-  ∧ (branch = CrossBranch.unendorsed →
-      (∀ (L : ConfLevel), s.taint_levels q.src L →
-        ingestConfHold s q.rcv L ∧ ingestClearHold s q.rcv L)
-      ∧ (∀ (Li : IntegLevel), s.integ_levels q.src Li → ingestIntegHold s q.rcv Li))
+    (branch : CrossBranch) : Prop where
+  endorsed : branch = CrossBranch.endorsed →
+    ingestHolds s q.rcv q.released_conf q.released_integ
+  unendorsed : branch = CrossBranch.unendorsed →
+    (∀ (L : ConfLevel), s.taint_levels q.src L →
+      ingestConfHold s q.rcv L ∧ ingestClearHold s q.rcv L)
+    ∧ (∀ (Li : IntegLevel), s.integ_levels q.src Li → ingestIntegHold s q.rcv Li)
+
+theorem crossHolds_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (q : CrossInput AgentId AttestationId CrossingId AssignmentDigest ContentHash)
+    (branch : CrossBranch) :
+    crossHolds s q branch ↔
+      ((branch = CrossBranch.endorsed → ingestHolds s q.rcv q.released_conf q.released_integ)
+      ∧ (branch = CrossBranch.unendorsed →
+          (∀ (L : ConfLevel), s.taint_levels q.src L →
+            ingestConfHold s q.rcv L ∧ ingestClearHold s q.rcv L)
+          ∧ (∀ (Li : IntegLevel), s.integ_levels q.src Li → ingestIntegHold s q.rcv Li))) :=
+  ⟨fun ⟨h1, h2⟩ ↦ ⟨h1, h2⟩, fun ⟨h1, h2⟩ ↦ ⟨h1, h2⟩⟩
 
 open Classical in
 kav_action cross_output

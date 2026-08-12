@@ -1777,7 +1777,8 @@ theorem beginAdmissible_spec (st : state.KernelState) (bg : background.Backgroun
     (hcapI : vmSetLen st.integ_levels agent + st.pending.entries.val.length ≤ Usize.max) :
     transitions.begin_admissible st bg agent snap egr authorized ⦃ b =>
       b = true ↔ Tzimtzum.beginAdmissible a agent snapA egrA authorizedA ⦄ := by
-  unfold transitions.begin_admissible Tzimtzum.beginAdmissible
+  unfold transitions.begin_admissible
+  simp only [Tzimtzum.beginAdmissible_iff]
   obtain ⟨bc, hbcEq, hbc⟩ := spec_imp_exists (checkCapability_spec st agent snap)
   rw [hbcEq]
   simp only [bind_tc_ok]
@@ -2270,12 +2271,10 @@ theorem begin_invocation_preservesR
   unfold AuAgree at hAu
   have hAllow : Tzimtzum.beginAllow a agent snapA egrA authorizedA ↔
       bcap = true ∧ authorized = true ∧ bclear = true ∧ bfs = true ∧ bis = true := by
-    unfold Tzimtzum.beginAllow
-    rw [hCap, hAu, hClear, hFlowS, hIntegS]
+    rw [Tzimtzum.beginAllow_iff, hCap, hAu, hClear, hFlowS, hIntegS]
   have hAdm : Tzimtzum.beginAdmissible a agent snapA egrA authorizedA ↔
       bcap = true ∧ authorized = true ∧ bclear = true ∧ bfa = true ∧ bia = true := by
-    unfold Tzimtzum.beginAdmissible
-    rw [hCap, hAu, hClear, hFlowA, hIntegA]
+    rw [Tzimtzum.beginAdmissible_iff, hCap, hAu, hClear, hFlowA, hIntegA]
   have hguardBase :
       a.agent_active agent ∧ agent ≠ a.root_agent ∧ a.tool_registered snapA.tool ∧
       Tzimtzum.le_integ snapA.integ_inspect snapA.integ_floor ∧

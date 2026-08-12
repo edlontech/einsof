@@ -44,166 +44,203 @@ def checkCapability
 
 /-- Clearance check for the current speculative taint and for the new output provenance.
 The new output must clear both each existing pending record and its own snapshot ceiling. -/
-def checkClearance
+structure checkClearance
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) : Prop :=
-  (∀ (L : ConfLevel), speculative_taint s a L → clearance_admits L snap)
-  ∧ (∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
-      s.pending I = some J → J.agent = a → clearance_admits snap.output_conf J.policy)
-  ∧ clearance_admits snap.output_conf snap
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) :
+    Prop where
+  /-- Speculative-taint arm: the agent's worst-case taint clears the snapshot ceiling. -/
+  speculative : ∀ (L : ConfLevel), speculative_taint s a L → clearance_admits L snap
+  /-- Pending arm: the new output clears every existing pending record's ceiling. -/
+  pending : ∀ (I : InvocationId)
+    (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+    s.pending I = some J → J.agent = a → clearance_admits snap.output_conf J.policy
+  /-- Self arm: the new output clears its own snapshot ceiling. -/
+  self : clearance_admits snap.output_conf snap
+
+theorem checkClearance_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) :
+    checkClearance s a snap ↔
+      ((∀ (L : ConfLevel), speculative_taint s a L → clearance_admits L snap)
+      ∧ (∀ (I : InvocationId)
+          (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+          s.pending I = some J → J.agent = a → clearance_admits snap.output_conf J.policy)
+      ∧ clearance_admits snap.output_conf snap) :=
+  ⟨fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩, fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩⟩
 
 /-- CHECK 3a/3b/3c on their strict ALLOW arms. -/
-def checkFlowStrict
+structure checkFlowStrict
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
     (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
-    (egr : EgressKind → Prop) : Prop :=
-  (∀ (L : ConfLevel) (E : EgressKind),
-    speculative_taint s a L → egr E → s.flow_allows L E)
-  ∧ (∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
-      (E : EgressKind),
-      s.pending I = some J → J.agent = a → J.egress E → s.flow_allows snap.output_conf E)
-  ∧ (∀ (E : EgressKind), egr E → s.flow_allows snap.output_conf E)
+    (egr : EgressKind → Prop) : Prop where
+  speculative : ∀ (L : ConfLevel) (E : EgressKind),
+    speculative_taint s a L → egr E → s.flow_allows L E
+  pending_pairs : ∀ (I : InvocationId)
+    (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
+    (E : EgressKind),
+    s.pending I = some J → J.agent = a → J.egress E → s.flow_allows snap.output_conf E
+  newcomer : ∀ (E : EgressKind), egr E → s.flow_allows snap.output_conf E
+
+theorem checkFlowStrict_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
+    (egr : EgressKind → Prop) :
+    checkFlowStrict s a snap egr ↔
+      ((∀ (L : ConfLevel) (E : EgressKind),
+        speculative_taint s a L → egr E → s.flow_allows L E)
+      ∧ (∀ (I : InvocationId)
+          (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
+          (E : EgressKind),
+          s.pending I = some J → J.agent = a → J.egress E → s.flow_allows snap.output_conf E)
+      ∧ (∀ (E : EgressKind), egr E → s.flow_allows snap.output_conf E)) :=
+  ⟨fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩, fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩⟩
 
 /-- Flow admissibility check. A pending record in the inspect band must already be vouched;
 the newcomer receives its vouch only through inspection resolution. -/
-def checkFlowAdmissible
+structure checkFlowAdmissible
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
     (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
-    (egr : EgressKind → Prop) : Prop :=
-  (∀ (L : ConfLevel) (E : EgressKind),
-    speculative_taint s a L → egr E → s.flow_allows L E ∨ s.flow_inspects L E)
-  ∧ (∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
-      (E : EgressKind),
-      s.pending I = some J → J.agent = a → J.egress E →
-        s.flow_allows snap.output_conf E
-        ∨ (s.flow_inspects snap.output_conf E ∧ vouched J))
-  ∧ (∀ (E : EgressKind), egr E →
-      s.flow_allows snap.output_conf E ∨ s.flow_inspects snap.output_conf E)
+    (egr : EgressKind → Prop) : Prop where
+  /-- Speculative-taint arm: every worst-case taint level is in the allow or inspect band. -/
+  speculative : ∀ (L : ConfLevel) (E : EgressKind),
+    speculative_taint s a L → egr E → s.flow_allows L E ∨ s.flow_inspects L E
+  /-- Pending arm: the new output is compatible with every existing pending record's egress. -/
+  pending_pairs : ∀ (I : InvocationId)
+    (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
+    (E : EgressKind),
+    s.pending I = some J → J.agent = a → J.egress E →
+      s.flow_allows snap.output_conf E
+      ∨ (s.flow_inspects snap.output_conf E ∧ vouched J)
+  /-- Newcomer arm: the new output is in the allow or inspect band on its own egress. -/
+  newcomer : ∀ (E : EgressKind), egr E →
+    s.flow_allows snap.output_conf E ∨ s.flow_inspects snap.output_conf E
+
+theorem checkFlowAdmissible_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
+    (egr : EgressKind → Prop) :
+    checkFlowAdmissible s a snap egr ↔
+      ((∀ (L : ConfLevel) (E : EgressKind),
+        speculative_taint s a L → egr E → s.flow_allows L E ∨ s.flow_inspects L E)
+      ∧ (∀ (I : InvocationId)
+          (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
+          (E : EgressKind),
+          s.pending I = some J → J.agent = a → J.egress E →
+            s.flow_allows snap.output_conf E
+            ∨ (s.flow_inspects snap.output_conf E ∧ vouched J))
+      ∧ (∀ (E : EgressKind), egr E →
+          s.flow_allows snap.output_conf E ∨ s.flow_inspects snap.output_conf E)) :=
+  ⟨fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩, fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩⟩
 
 /-- CHECK 5a/5b/5c on their strict ALLOW arms. 5b is the "web_fetch settles while
 delete_repo is in flight" hazard, read off frozen snapshots. -/
-def checkIntegStrict
+structure checkIntegStrict
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) : Prop :=
-  (∀ (L : IntegLevel), speculative_integ s a L → integ_allows L snap)
-  ∧ (∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
-      s.pending I = some J → J.agent = a → integ_allows snap.output_integ J.policy)
-  ∧ integ_allows snap.output_integ snap
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) :
+    Prop where
+  speculative : ∀ (L : IntegLevel), speculative_integ s a L → integ_allows L snap
+  pending_pairs : ∀ (I : InvocationId)
+    (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+    s.pending I = some J → J.agent = a → integ_allows snap.output_integ J.policy
+  newcomer : integ_allows snap.output_integ snap
+
+theorem checkIntegStrict_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) :
+    checkIntegStrict s a snap ↔
+      ((∀ (L : IntegLevel), speculative_integ s a L → integ_allows L snap)
+      ∧ (∀ (I : InvocationId)
+          (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+          s.pending I = some J → J.agent = a → integ_allows snap.output_integ J.policy)
+      ∧ integ_allows snap.output_integ snap) :=
+  ⟨fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩, fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩⟩
 
 /-- Integrity admissibility check with the same pending-record vouch rule as flow admission. -/
-def checkIntegAdmissible
+structure checkIntegAdmissible
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
-    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) : Prop :=
-  (∀ (L : IntegLevel), speculative_integ s a L → integ_allows L snap ∨ integ_inspects L snap)
-  ∧ (∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
-      s.pending I = some J → J.agent = a →
-        integ_allows snap.output_integ J.policy
-        ∨ (integ_inspects snap.output_integ J.policy ∧ vouched J))
-  ∧ (integ_allows snap.output_integ snap ∨ integ_inspects snap.output_integ snap)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) :
+    Prop where
+  /-- Speculative-integrity arm: every worst-case level is in the allow or inspect band. -/
+  speculative : ∀ (L : IntegLevel),
+    speculative_integ s a L → integ_allows L snap ∨ integ_inspects L snap
+  /-- Pending arm: the new output integrity is compatible with every existing record's floor. -/
+  pending_pairs : ∀ (I : InvocationId)
+    (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+    s.pending I = some J → J.agent = a →
+      integ_allows snap.output_integ J.policy
+      ∨ (integ_inspects snap.output_integ J.policy ∧ vouched J)
+  /-- Newcomer arm: the new output integrity clears or inspect-bands its own floor. -/
+  newcomer : integ_allows snap.output_integ snap ∨ integ_inspects snap.output_integ snap
+
+theorem checkIntegAdmissible_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest) :
+    checkIntegAdmissible s a snap ↔
+      ((∀ (L : IntegLevel),
+        speculative_integ s a L → integ_allows L snap ∨ integ_inspects L snap)
+      ∧ (∀ (I : InvocationId)
+          (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+          s.pending I = some J → J.agent = a →
+            integ_allows snap.output_integ J.policy
+            ∨ (integ_inspects snap.output_integ J.policy ∧ vouched J))
+      ∧ (integ_allows snap.output_integ snap ∨ integ_inspects snap.output_integ snap)) :=
+  ⟨fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩, fun ⟨h1, h2, h3⟩ ↦ ⟨h1, h2, h3⟩⟩
 
 /-- Strict admission: capabilities, authorization, clearance, flow, and integrity all allow. -/
-def beginAllow
+structure beginAllow
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
     (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
-    (egr : EgressKind → Prop) (authorized : Prop) : Prop :=
-  checkCapability s a snap ∧ authorized ∧ checkClearance s a snap
-  ∧ checkFlowStrict s a snap egr ∧ checkIntegStrict s a snap
+    (egr : EgressKind → Prop) (authorized : Prop) : Prop where
+  capability : checkCapability s a snap
+  authorized : authorized
+  clearance : checkClearance s a snap
+  flow : checkFlowStrict s a snap egr
+  integ : checkIntegStrict s a snap
+
+theorem beginAllow_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
+    (egr : EgressKind → Prop) (authorized : Prop) :
+    beginAllow s a snap egr authorized ↔
+      (checkCapability s a snap ∧ authorized ∧ checkClearance s a snap
+      ∧ checkFlowStrict s a snap egr ∧ checkIntegStrict s a snap) :=
+  ⟨fun ⟨h1, h2, h3, h4, h5⟩ ↦ ⟨h1, h2, h3, h4, h5⟩,
+   fun ⟨h1, h2, h3, h4, h5⟩ ↦ ⟨h1, h2, h3, h4, h5⟩⟩
 
 /-- Verdict ≠ `deny`: every check on ALLOW-or-INSPECT. -/
-def beginAdmissible
+structure beginAdmissible
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
     (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
-    (egr : EgressKind → Prop) (authorized : Prop) : Prop :=
-  checkCapability s a snap ∧ authorized ∧ checkClearance s a snap
-  ∧ checkFlowAdmissible s a snap egr ∧ checkIntegAdmissible s a snap
+    (egr : EgressKind → Prop) (authorized : Prop) : Prop where
+  capability : checkCapability s a snap
+  authorized : authorized
+  clearance : checkClearance s a snap
+  flow : checkFlowAdmissible s a snap egr
+  integ : checkIntegAdmissible s a snap
 
-/-! ### Named gate accessors
-
-Dot access (`(admitted).flow.speculative`, …) replaces `h.2.2.2.1`-style anonymous
-projections in preservation proofs. The projection spelling of each gate arm lives here. -/
-
-section GateAccessors
-
-variable {s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-    CrossingId AssignmentDigest PolicyDigest ContentHash}
-  {a : AgentId} {snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest}
-  {egr : EgressKind → Prop} {authorized : Prop}
-
-/-- Speculative-taint arm: the agent's worst-case taint clears the snapshot ceiling. -/
-theorem checkClearance.speculative (h : checkClearance s a snap) :
-    ∀ (L : ConfLevel), speculative_taint s a L → clearance_admits L snap := h.1
-
-/-- Pending arm: the new output clears every existing pending record's ceiling. -/
-theorem checkClearance.pending (h : checkClearance s a snap) :
-    ∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
-      s.pending I = some J → J.agent = a → clearance_admits snap.output_conf J.policy := h.2.1
-
-/-- Self arm: the new output clears its own snapshot ceiling. -/
-theorem checkClearance.self (h : checkClearance s a snap) :
-    clearance_admits snap.output_conf snap := h.2.2
-
-/-- Speculative-taint arm: every worst-case taint level is in the allow or inspect band. -/
-theorem checkFlowAdmissible.speculative (h : checkFlowAdmissible s a snap egr) :
-    ∀ (L : ConfLevel) (E : EgressKind), speculative_taint s a L → egr E →
-      s.flow_allows L E ∨ s.flow_inspects L E := h.1
-
-/-- Pending arm: the new output is compatible with every existing pending record's egress. -/
-theorem checkFlowAdmissible.pending_pairs (h : checkFlowAdmissible s a snap egr) :
-    ∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
-      (E : EgressKind),
-      s.pending I = some J → J.agent = a → J.egress E →
-        s.flow_allows snap.output_conf E
-        ∨ (s.flow_inspects snap.output_conf E ∧ vouched J) := h.2.1
-
-/-- Newcomer arm: the new output is in the allow or inspect band on its own egress. -/
-theorem checkFlowAdmissible.newcomer (h : checkFlowAdmissible s a snap egr) :
-    ∀ (E : EgressKind), egr E →
-      s.flow_allows snap.output_conf E ∨ s.flow_inspects snap.output_conf E := h.2.2
-
-/-- Speculative-integrity arm: every worst-case level is in the allow or inspect band. -/
-theorem checkIntegAdmissible.speculative (h : checkIntegAdmissible s a snap) :
-    ∀ (L : IntegLevel), speculative_integ s a L →
-      integ_allows L snap ∨ integ_inspects L snap := h.1
-
-/-- Pending arm: the new output integrity is compatible with every existing record's floor. -/
-theorem checkIntegAdmissible.pending_pairs (h : checkIntegAdmissible s a snap) :
-    ∀ (I : InvocationId)
-      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
-      s.pending I = some J → J.agent = a →
-        integ_allows snap.output_integ J.policy
-        ∨ (integ_inspects snap.output_integ J.policy ∧ vouched J) := h.2.1
-
-/-- Newcomer arm: the new output integrity clears or inspect-bands its own floor. -/
-theorem checkIntegAdmissible.newcomer (h : checkIntegAdmissible s a snap) :
-    integ_allows snap.output_integ snap ∨ integ_inspects snap.output_integ snap := h.2.2
-
-theorem beginAdmissible.capability (h : beginAdmissible s a snap egr authorized) :
-    checkCapability s a snap := h.1
-
-theorem beginAdmissible.clearance (h : beginAdmissible s a snap egr authorized) :
-    checkClearance s a snap := h.2.2.1
-
-theorem beginAdmissible.flow (h : beginAdmissible s a snap egr authorized) :
-    checkFlowAdmissible s a snap egr := h.2.2.2.1
-
-theorem beginAdmissible.integ (h : beginAdmissible s a snap egr authorized) :
-    checkIntegAdmissible s a snap := h.2.2.2.2
-
-end GateAccessors
+theorem beginAdmissible_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (a : AgentId) (snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest)
+    (egr : EgressKind → Prop) (authorized : Prop) :
+    beginAdmissible s a snap egr authorized ↔
+      (checkCapability s a snap ∧ authorized ∧ checkClearance s a snap
+      ∧ checkFlowAdmissible s a snap egr ∧ checkIntegAdmissible s a snap) :=
+  ⟨fun ⟨h1, h2, h3, h4, h5⟩ ↦ ⟨h1, h2, h3, h4, h5⟩,
+   fun ⟨h1, h2, h3, h4, h5⟩ ↦ ⟨h1, h2, h3, h4, h5⟩⟩
 
 /-- The trichotomy is a total complementary partition: strict ALLOW implies admissible. -/
 theorem beginAllow_admissible
@@ -214,11 +251,11 @@ theorem beginAllow_admissible
     beginAllow s a snap egr authorized → beginAdmissible s a snap egr authorized := by
   rintro ⟨hcap, hauth, hclr, ⟨f1, f2, f3⟩, ⟨i1, i2, i3⟩⟩
   exact ⟨hcap, hauth, hclr,
-    ⟨fun L E h1 h2 => Or.inl (f1 L E h1 h2),
-     fun I J E h1 h2 h3 => Or.inl (f2 I J E h1 h2 h3),
-     fun E h => Or.inl (f3 E h)⟩,
-    ⟨fun L h => Or.inl (i1 L h),
-     fun I J h1 h2 => Or.inl (i2 I J h1 h2),
+    ⟨fun L E h1 h2 ↦ Or.inl (f1 L E h1 h2),
+     fun I J E h1 h2 h3 ↦ Or.inl (f2 I J E h1 h2 h3),
+     fun E h ↦ Or.inl (f3 E h)⟩,
+    ⟨fun L h ↦ Or.inl (i1 L h),
+     fun I J h1 h2 ↦ Or.inl (i2 I J h1 h2),
      Or.inl i3⟩⟩
 
 /-! ## `begin_invocation`
@@ -288,29 +325,40 @@ kav_action begin_invocation (a : AgentId) (inv : InvocationId) (chal : Challenge
 
 /-- Live challenge-resolution admission: structural conditions and the current admissible gate.
 The positive and negative branches use complementary conditions. -/
-def authorizeAdmits
+structure authorizeAdmits
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
       CrossingId AssignmentDigest PolicyDigest ContentHash)
     (inv : InvocationId)
     (sc : ChallengeScope AgentId ToolId CapKind EgressKind ChallengeId PolicyDigest
-      ContentHash) : Prop :=
-  s.agent_active sc.agent
-  ∧ sc.agent ≠ s.root_agent
-  ∧ s.tool_registered sc.policy.tool
-  ∧ le_integ sc.policy.integ_inspect sc.policy.integ_floor
-  ∧ s.pending inv = none
-  ∧ (∀ (E : EgressKind), sc.egress E → sc.policy.declared_egress E)
-  ∧ ((∃ (E : EgressKind), sc.policy.declared_egress E) → (∃ (E : EgressKind), sc.egress E))
-  ∧ beginAdmissible s sc.agent sc.policy sc.egress sc.authorized
+      ContentHash) : Prop where
+  active : s.agent_active sc.agent
+  not_root : sc.agent ≠ s.root_agent
+  tool_registered : s.tool_registered sc.policy.tool
+  band_coherent : le_integ sc.policy.integ_inspect sc.policy.integ_floor
+  slot_free : s.pending inv = none
+  egress_narrowing : ∀ (E : EgressKind), sc.egress E → sc.policy.declared_egress E
+  egress_coverage :
+    (∃ (E : EgressKind), sc.policy.declared_egress E) → (∃ (E : EgressKind), sc.egress E)
+  /-- The live begin-time admission gate carried by `authorizeAdmits`. -/
+  toBeginAdmissible : beginAdmissible s sc.agent sc.policy sc.egress sc.authorized
 
-/-- The live begin-time admission gate carried by `authorizeAdmits`. -/
-theorem authorizeAdmits.toBeginAdmissible
-    {s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
-      CrossingId AssignmentDigest PolicyDigest ContentHash}
-    {inv : InvocationId}
-    {sc : ChallengeScope AgentId ToolId CapKind EgressKind ChallengeId PolicyDigest ContentHash}
-    (h : authorizeAdmits s inv sc) :
-    beginAdmissible s sc.agent sc.policy sc.egress sc.authorized := h.2.2.2.2.2.2.2
+theorem authorizeAdmits_iff
+    (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash)
+    (inv : InvocationId)
+    (sc : ChallengeScope AgentId ToolId CapKind EgressKind ChallengeId PolicyDigest
+      ContentHash) :
+    authorizeAdmits s inv sc ↔
+      (s.agent_active sc.agent
+      ∧ sc.agent ≠ s.root_agent
+      ∧ s.tool_registered sc.policy.tool
+      ∧ le_integ sc.policy.integ_inspect sc.policy.integ_floor
+      ∧ s.pending inv = none
+      ∧ (∀ (E : EgressKind), sc.egress E → sc.policy.declared_egress E)
+      ∧ ((∃ (E : EgressKind), sc.policy.declared_egress E) → (∃ (E : EgressKind), sc.egress E))
+      ∧ beginAdmissible s sc.agent sc.policy sc.egress sc.authorized) :=
+  ⟨fun ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ ↦ ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩,
+   fun ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ ↦ ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩⟩
 
 /-! `sc` is checked against the stored challenge before updates read it. `admit` is constrained
 by the attestation verdict and the live admission predicate. -/

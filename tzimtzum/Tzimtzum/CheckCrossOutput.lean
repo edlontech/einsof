@@ -257,9 +257,9 @@ theorem presP_cross_output
     rcases hL with hL | ⟨hb, howner, rfl⟩ | ⟨hb, howner, hsrc⟩
     · exact hinteg L I J hL hOld hcontained
     · exact (cross_contained_owner_holds q branch dispo s s' hg hn I J hJ hcontained
-        howner).1 hb |>.2.2 I J hOld howner
+        howner).endorsed hb |>.integ I J hOld howner
     · exact (cross_contained_owner_holds q branch dispo s s' hg hn I J hJ hcontained
-        howner).2 hb |>.2 L hsrc I J hOld howner
+        howner).unendorsed hb |>.2 L hsrc I J hOld howner
   · have hnext := hn
     obtain ⟨-, -, -, -, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hnext
     obtain ⟨-, ⟨-, -, -, -, -, -, -, -, -, -, hinteg, -⟩, -, -, -⟩ := hinv
@@ -269,7 +269,7 @@ theorem presP_cross_output
     rcases hL with hL | ⟨hb, howner, rfl⟩ | ⟨hb, howner, hsrc⟩
     · exact hinteg L I J hL hOld hcontained
     · rcases (cross_contained_owner_holds q branch dispo s s' hg hn I J hJ hcontained
-          howner).1 hb |>.2.2 I J hOld howner with h | ⟨h, -⟩
+          howner).endorsed hb |>.integ I J hOld howner with h | ⟨h, -⟩
       · exact Or.inl h
       · exact Or.inr h
     · rcases (cross_contained_owner_holds q branch dispo s s' hg hn I J hJ hcontained
@@ -287,7 +287,7 @@ theorem presP_cross_output
       rcases hL with hL | ⟨hb, howner, rfl⟩ | ⟨hb, howner, hsrc⟩
       · exact hclear L I J hOldJ hcontained (Or.inl hL)
       · exact (cross_contained_owner_holds q branch dispo s s' hg hn I J hJ hcontained
-          howner).1 hb |>.2.1 I J hOldJ howner
+          howner).endorsed hb |>.clear I J hOldJ howner
       · exact (cross_contained_owner_holds q branch dispo s s' hg hn I J hJ hcontained
           howner).2 hb |>.1 L hsrc |>.2 I J hOldJ howner
     · have hOldK :=
