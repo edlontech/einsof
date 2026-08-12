@@ -35,7 +35,7 @@ elab "all_goals_fresh " tac:tacticSeq : tactic => do
 /-- The names every cascade unfolds: the bundle, the conjuncts, the derived gates, and the
 `Kav.Action` projections. -/
 macro "tzimtzum_simp_core" head:ident : tactic => `(tactic| (
-  try simp only [$head:ident, allInv, invS, invP, invPP, invE, invC,
+  try simp only [$head:ident, allInv_iff, invS_iff, invP_iff, invPP_iff, invE_iff, invC_iff,
     root_always_active, parent_implies_active, single_parent, no_self_parent,
     root_no_parent, capability_subsumption, root_all_caps, revocation_clean, pending_active,
     pending_unique, pending_registered, root_no_pending, pending_ids_consumed,
@@ -54,8 +54,7 @@ macro "tzimtzum_simp_core" head:ident : tactic => `(tactic| (
 
 /-- Full cascade: gate predicates unfolded. For the conjuncts the gate makes inductive. -/
 macro "kav_discharge " head:ident : tactic => `(tactic| (
-  (try unfold allInv) <;> (try unfold invS) <;> (try unfold invP) <;> (try unfold invPP) <;>
-    (try unfold invE) <;> (try unfold invC) <;>
+  (try simp only [allInv_iff, invS_iff, invP_iff, invPP_iff, invE_iff, invC_iff]);
   (repeat' apply And.intro);
   all_goals_fresh (
     (tzimtzum_simp_core $head) <;>
@@ -67,8 +66,7 @@ macro "kav_discharge " head:ident : tactic => `(tactic| (
 
 /-- Lite cascade: gate predicates as atoms. For frame-ish conjuncts. -/
 macro "kav_discharge_lite " head:ident : tactic => `(tactic| (
-  (try unfold allInv) <;> (try unfold invS) <;> (try unfold invP) <;> (try unfold invPP) <;>
-    (try unfold invE) <;> (try unfold invC) <;>
+  (try simp only [allInv_iff, invS_iff, invP_iff, invPP_iff, invE_iff, invC_iff]);
   (repeat' apply And.intro);
   all_goals_fresh (
     (tzimtzum_simp_core $head) <;>

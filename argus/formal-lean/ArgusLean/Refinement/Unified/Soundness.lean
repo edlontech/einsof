@@ -179,9 +179,7 @@ theorem reachable_concrete_safe
   | @step c c' cmd ev hcpre hok ih =>
       obtain ⟨a, hR, hreach⟩ := ih
       have hAll : Tzimtzum.allInv a := Tzimtzum.kav_soundP a hreach
-      have hScoped : Tzimtzum.challenge_scoped a := by
-        unfold Tzimtzum.allInv at hAll
-        exact hAll.2.2.2.1.1
+      have hScoped : Tzimtzum.challenge_scoped a := hAll.challenge_scoped
       have hPre : StepPre c a snapRel cmd :=
         hcap.step_capacity c a cmd c' ev hcpre hR hok
       have hFid : StepFidelity egRel auRel cmd := hfid c c' cmd ev hcpre hok
