@@ -38,25 +38,25 @@ kav_action settle_invocation (inv : InvocationId) (a : AgentId) (dispo : Disposi
     (att : Option (ResolutionAttestation InvocationId AttestationId)) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require ∃ J, s.pending inv = some J
-  require s.agent_active a
-  require dispo ≠ Disposition.blocked
+  require pending_exists : ∃ J, s.pending inv = some J
+  require active : s.agent_active a
+  require not_blocked : dispo ≠ Disposition.blocked
  -- The owning agent, the record's disposition, and the absorbed pair are all pinned to the
  -- record by guard: each is an input, none is a free choice, and the absorbed pair is
  -- the FROZEN provenance rather than live policy.
-  require ∀ (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId
-      PolicyDigest), s.pending inv = some J →
+  require record_pinned : ∀ (J : PendingInvocation AgentId ToolId CapKind EgressKind
+      AttestationId PolicyDigest), s.pending inv = some J →
     a = J.agent ∧ dispo = J.disposition
     ∧ clvl = J.policy.output_conf ∧ ilvl = J.policy.output_integ
  -- Quarantined: only the attested resolution arm, and it may not re-declare `ambiguous`.
-  require ∀ (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId
-      PolicyDigest), s.pending inv = some J → J.quarantined →
+  require quarantined_attested : ∀ (J : PendingInvocation AgentId ToolId CapKind EgressKind
+      AttestationId PolicyDigest), s.pending inv = some J → J.quarantined →
     outcome ≠ Outcome.ambiguous
     ∧ ∃ r, att = some r ∧ r.inv = inv ∧ r.outcome = outcome
         ∧ ¬ s.consumed_attestations r.id
  -- Not quarantined: no attestation is consumed.
-  require ∀ (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId
-      PolicyDigest), s.pending inv = some J → ¬ J.quarantined → att = none
+  require unquarantined_plain : ∀ (J : PendingInvocation AgentId ToolId CapKind EgressKind
+      AttestationId PolicyDigest), s.pending inv = some J → ¬ J.quarantined → att = none
   pending :=
     if dispo = Disposition.permitted then settleAt s.pending inv outcome
     else demoteAllOf (settleAt s.pending inv outcome) a
