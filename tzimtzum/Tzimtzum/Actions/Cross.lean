@@ -115,29 +115,31 @@ kav_action cross_output
  -- `src = rcv` is deliberately not excluded: the no-in-flight-source guard then empties
  -- the receiver's pending set, every hold is vacuous, and min-semantics keeps the label
  -- insertions monotone-safe.
-  require s.agent_active q.src
-  require s.agent_active q.rcv
+  require src_active : s.agent_active q.src
+  require rcv_active : s.agent_active q.rcv
  -- A source with pending work has speculative labels, so it cannot cross output.
-  require ∀ (I : InvocationId)
+  require no_inflight_source : ∀ (I : InvocationId)
       (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
       s.pending I = some J → J.agent ≠ q.src
  -- A crossing identifier is consumed exactly once, regardless of branch.
-  require ¬ s.consumed_crossings q.crossing
+  require crossing_fresh : ¬ s.consumed_crossings q.crossing
  -- Branch selection: a total complementary partition over (endorsedOK, declared fallback).
-  require branch = CrossBranch.endorsed → endorsedOK s q
-  require branch = CrossBranch.unendorsed →
+  require branch_endorsed : branch = CrossBranch.endorsed → endorsedOK s q
+  require branch_unendorsed : branch = CrossBranch.unendorsed →
     ¬ endorsedOK s q ∧ q.fallback = Fallback.release_unendorsed
-  require branch = CrossBranch.fail → ¬ endorsedOK s q ∧ q.fallback = Fallback.fail
+  require branch_fail : branch = CrossBranch.fail →
+    ¬ endorsedOK s q ∧ q.fallback = Fallback.fail
  -- Endorsement obeys the frozen integrity and optional confidentiality bounds.
-  require branch = CrossBranch.endorsed → le_integ q.released_integ q.t_integ
-  require branch = CrossBranch.endorsed →
+  require endorsed_integ_bound : branch = CrossBranch.endorsed →
+    le_integ q.released_integ q.t_integ
+  require endorsed_conf_bound : branch = CrossBranch.endorsed →
     ∀ (c : ConfLevel), q.t_conf = some c → le_conf q.released_conf c
-  require branch = CrossBranch.endorsed → q.t_conf = none →
+  require endorsed_conf_cover : branch = CrossBranch.endorsed → q.t_conf = none →
     ∀ (L : ConfLevel), s.taint_levels q.src L → le_conf L q.released_conf
  -- Permitted releases satisfy receiver holds; monitor bypasses demote receiver records.
-  require dispo ≠ Disposition.blocked
-  require dispo = Disposition.permitted → crossHolds s q branch
-  require dispo = Disposition.monitor_bypassed →
+  require not_blocked : dispo ≠ Disposition.blocked
+  require permitted_holds : dispo = Disposition.permitted → crossHolds s q branch
+  require bypass_hold_failed : dispo = Disposition.monitor_bypassed →
     ¬ crossHolds s q branch ∧ s.mode = Mode.monitor
   taint_levels := fun A L =>
     s.taint_levels A L
