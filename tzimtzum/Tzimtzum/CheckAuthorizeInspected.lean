@@ -1,14 +1,73 @@
 import Tzimtzum.Soundness.Common
 
-/-! # `authorize_inspected` preserves the invariant bundle
+/-! # `authorize_inspected`: acting on an inspector's verdict — safely
 
-One `Preserves` theorem per sub-bundle. `invS`, `invE`, and `invC` discharge fully
-automatically. `invP`'s five confinement conjuncts and both `invPP` conjuncts are manual:
-each routes the guard's re-checked `beginAdmissible` gate through a case split on whether a
-pending record is the newly admitted one, which the discharge cascades do not find. The case
-split and the guard payload are factored into the private inversion lemmas below, so the
-manual proofs read off named gate arms and pre-state invariants instead of positional
-conjunction patterns. -/
+## The scenario, in plain language
+
+An agent asked to run a tool, and the system was not sure it was safe: instead of running
+it, it put the request on hold and opened an **inspection challenge** — "a human or
+external inspector must look at this first." The inspector examined the request and handed
+back a signed, single-use verdict (an *attestation*): approve or reject.
+
+`authorize_inspected` is the moment the system acts on that verdict. Think of an officer
+at a security checkpoint receiving a stamped decision from secondary inspection. Before
+acting, the officer checks:
+
+- the stamp belongs to **this exact case** — same request, same arguments, same policy
+  (nothing was swapped after inspection);
+- the stamp has **never been used before** (no replaying an old approval);
+- for an approval: the situation is **still safe right now** — every safety check
+  (permissions, authorization, clearance, data-flow, integrity) is re-run against the
+  current state, not the state from when the request was flagged. An approval based on a
+  stale world is refused.
+
+Only then is the request let through and marked as a properly inspected, permitted
+in-flight invocation. A rejection — or an approval that no longer passes the re-check —
+lets nothing through. Either way, the case is closed and the stamp is spent.
+
+## What this file proves, and what that gives you
+
+The system maintains 32 always-true safety rules — things like "data never flows to a
+destination above its sensitivity level", "every running invocation was actually
+authorized", and "evidence can only be used once". This file proves:
+
+> **No matter when `authorize_inspected` happens, or with what verdict, it can never break
+> any of the 32 safety rules.** If all rules held before, all rules hold after — including
+> for every *other* invocation already in flight.
+
+It is one of twelve such checks — one per action the system can take. Together they give
+the headline theorem `kav_sound` (`Soundness.lean`): every state the system can ever reach,
+through any sequence of actions, satisfies all 32 rules.
+
+## The theorems (for the Lean reader)
+
+The 32 rules are grouped into five sub-bundles, so there is one preservation theorem per
+group plus the combination consumed by `Soundness.lean`:
+
+- `presS_authorize_inspected`  — `invS`: agent-tree structure and capabilities (9 rules);
+- `presP_authorize_inspected`  — `invP`: in-flight invocations and their gates (12 rules);
+- `presPP_authorize_inspected` — `invPP`: any two in-flight invocations coexist (2 rules);
+- `presE_authorize_inspected`  — `invE`: challenges and one-use evidence (6 rules);
+- `presC_authorize_inspected`  — `invC`: output-crossing grants (3 rules);
+- `pres_authorize_inspected`   — all of the above (`allInv`).
+
+Each is stated as `Preserves (authorize_inspected …) inv…`: whenever the action's guard
+accepts and the state satisfies `allInv`, every successor state satisfies the sub-bundle.
+
+## How the proofs work
+
+Most rules are discharged by the `kav_discharge` automation. The seven manual cases (the
+five `invP` confinement rules and both `invPP` pairwise rules) all follow one argument:
+this action changes nothing about labels, ceilings, or other pending invocations — so any
+rule about a **pre-existing** invocation is inherited from the pre-state — and the one
+**newly admitted** invocation is exactly what the freshly re-run admission gate
+(`beginAdmissible`) vouches for, arm by arm.
+
+The case split ("is this record the newly admitted one?") and the guard payload are
+factored into the private inversion helpers below, built on the `kav_action`-generated
+named projections — no proof in this file destructures a conjunction positionally.
+
+The closing `#print axioms` confirms the result rests only on Lean's standard axioms. -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true
