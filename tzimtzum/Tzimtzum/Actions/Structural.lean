@@ -143,8 +143,6 @@ kav_action cascade_revoke (child prnt : AgentId) :
 Applying the same `grant_crossing` action twice leaves the grant map unchanged after the first
 application. -/
 
--- The positional `obtain` patterns select `crossing_grants` by its currently unique field type.
--- If another state field receives that type, rewrite these patterns with named projections.
 theorem grant_crossing_idempotent
     (grantor agent : AgentId) (d : AssignmentDigest) (n : Nat)
     (s s' s'' : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
@@ -152,8 +150,8 @@ theorem grant_crossing_idempotent
     (h1 : (grant_crossing grantor agent d n).next s s')
     (h2 : (grant_crossing grantor agent d n).next s' s'') :
     s''.crossing_grants = s'.crossing_grants := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hg1, -, -, -, -, -⟩ := h1
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hg2, -, -, -, -, -⟩ := h2
+  have hg1 := grant_crossing.next_crossing_grants h1
+  have hg2 := grant_crossing.next_crossing_grants h2
   funext A D
   rw [hg2, hg1]
   by_cases h : A = agent ∧ D = d <;> simp [h]

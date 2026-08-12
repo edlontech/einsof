@@ -67,20 +67,23 @@ private theorem labels_of_restrict (s s' : KSt) (removed : KAgent)
 private theorem labels_register_tool (tool : KTool) (s s' : KSt)
     (hn : (register_tool tool).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := register_tool.next_taint_levels hn
+  have hi := register_tool.next_integ_levels hn
   exact labels_of_frame s s' ht hi
 
 private theorem labels_unregister_tool (tool : KTool) (s s' : KSt)
     (hn : (unregister_tool tool).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := unregister_tool.next_taint_levels hn
+  have hi := unregister_tool.next_integ_levels hn
   exact labels_of_frame s s' ht hi
 
 private theorem labels_delegate (grantor grantee : KAgent) (s s' : KSt)
     (hg : (delegate grantor grantee).guard s) (hn : (delegate grantor grantee).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, hinactive, -, -⟩ := hg
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have hinactive := delegate.guard_grantee_fresh hg
+  have ht := delegate.next_taint_levels hn
+  have hi := delegate.next_integ_levels hn
   constructor
   · intro A L hpre _ hL
     rw [hi]
@@ -98,32 +101,39 @@ private theorem labels_delegate (grantor grantee : KAgent) (s s' : KSt)
 private theorem labels_grant_capability (prnt child : KAgent) (cap : KCap)
     (s s' : KSt) (hn : (grant_capability prnt child cap).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := grant_capability.next_taint_levels hn
+  have hi := grant_capability.next_integ_levels hn
   exact labels_of_frame s s' ht hi
 
 private theorem labels_grant_crossing (grantor agent : KAgent) (d : KAssignment) (n : Nat)
     (s s' : KSt) (hn : (grant_crossing grantor agent d n).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := grant_crossing.next_taint_levels hn
+  have hi := grant_crossing.next_integ_levels hn
   exact labels_of_frame s s' ht hi
 
 private theorem labels_revoke (prnt target : KAgent) (s s' : KSt)
     (hn : (revoke prnt target).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨hactive, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have hactive := revoke.next_agent_active hn
+  have ht := revoke.next_taint_levels hn
+  have hi := revoke.next_integ_levels hn
   exact labels_of_restrict s s' target hactive ht hi
 
 private theorem labels_cascade_revoke (child prnt : KAgent) (s s' : KSt)
     (hn : (cascade_revoke child prnt).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨hactive, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have hactive := cascade_revoke.next_agent_active hn
+  have ht := cascade_revoke.next_taint_levels hn
+  have hi := cascade_revoke.next_integ_levels hn
   exact labels_of_restrict s s' child hactive ht hi
 
 private theorem labels_ingest (a : KAgent) (src : Option KAgent) (pconf : ConfLevel)
     (pinteg : IntegLevel) (dispo : Disposition) (s s' : KSt)
     (hn : (ingest a src pconf pinteg dispo).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := ingest.next_taint_levels hn
+  have hi := ingest.next_integ_levels hn
   exact labels_of_growth s s'
     (fun A L => A = a ∧ L = pconf) (fun A L => A = a ∧ L = pinteg) ht hi
 
@@ -132,14 +142,16 @@ private theorem labels_begin_invocation (a : KAgent) (inv : KInv) (chal : KChall
     (v : Verdict) (s s' : KSt)
     (hn : (begin_invocation a inv chal snap egr ah authorized v).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := begin_invocation.next_taint_levels hn
+  have hi := begin_invocation.next_integ_levels hn
   exact labels_of_frame s s' ht hi
 
 private theorem labels_authorize_inspected (inv : KInv) (sc : KChallengeScope)
     (att : InspectionAttestation KInv KChallenge KAttest KPolicy KContentHash) (admit : Bool)
     (s s' : KSt) (hn : (authorize_inspected inv sc att admit).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := authorize_inspected.next_taint_levels hn
+  have hi := authorize_inspected.next_integ_levels hn
   exact labels_of_frame s s' ht hi
 
 private theorem labels_settle_invocation (inv : KInv) (a : KAgent) (dispo : Disposition)
@@ -147,7 +159,8 @@ private theorem labels_settle_invocation (inv : KInv) (a : KAgent) (dispo : Disp
     (att : Option (ResolutionAttestation KInv KAttest)) (s s' : KSt)
     (hn : (settle_invocation inv a dispo outcome clvl ilvl att).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := settle_invocation.next_taint_levels hn
+  have hi := settle_invocation.next_integ_levels hn
   exact labels_of_growth s s'
     (fun A L => outcome ≠ Outcome.ambiguous ∧ A = a ∧ L = clvl)
     (fun A L => outcome ≠ Outcome.ambiguous ∧ A = a ∧ L = ilvl) ht hi
@@ -157,7 +170,8 @@ private theorem labels_cross_output
     (branch : CrossBranch) (dispo : Disposition) (s s' : KSt)
     (hn : (cross_output q branch dispo).next s s') :
     survivingIntegrityMonotone s s' ∧ survivingConfMonotone s s' := by
-  obtain ⟨-, -, -, ht, hi, -, -, -, -, -, -, -, -, -, -, -⟩ := hn
+  have ht := cross_output.next_taint_levels hn
+  have hi := cross_output.next_integ_levels hn
   exact labels_of_growth s s'
     (fun A L =>
       (branch = CrossBranch.endorsed ∧ A = q.rcv ∧ L = q.released_conf)
@@ -242,11 +256,11 @@ theorem inspection_non_restoration (inv : KInv) (sc : KChallengeScope)
     ∧ (∀ I, I ≠ inv → s'.pending I = s.pending I)
     ∧ (∀ I J, s'.pending I = some J →
         J.admission = Admission.inspected att.id → I = inv) := by
-  have hnext := hn
-  have hguard := hg
-  obtain ⟨-, -, -, ht, hi, hpending, -, -, -, -, -, -, -, -, -, -⟩ := hnext
-  obtain ⟨-, -, -, -, -, hfresh, -, -, -⟩ := hguard
-  obtain ⟨-, -, -, ⟨-, -, -, hevidence, -, -⟩, -⟩ := hinv
+  have ht := authorize_inspected.next_taint_levels hn
+  have hi := authorize_inspected.next_integ_levels hn
+  have hpending := authorize_inspected.next_pending hn
+  have hfresh := authorize_inspected.guard_attestation_fresh hg
+  have hevidence := hinv.inspected_evidence_consumed
   refine ⟨ht, hi, ?_, ?_⟩
   · intro I hne
     rw [hpending]
@@ -293,10 +307,15 @@ theorem crossing_frame_and_bound
       ∀ c, q.t_conf = some c → le_conf q.released_conf c)
     ∧ (branch = CrossBranch.endorsed → q.t_conf = none →
       ∀ L, s.taint_levels q.src L → le_conf L q.released_conf) := by
-  have hnext := hn
-  have hguard := hg
-  obtain ⟨-, -, -, ht, hi, hpending, -, -, hatt, hcross, hgrants, -, -, -, -, -⟩ := hnext
-  obtain ⟨-, -, -, -, -, -, -, hinteg, hconf, hnodeclass, -, -, -⟩ := hguard
+  have ht := cross_output.next_taint_levels hn
+  have hi := cross_output.next_integ_levels hn
+  have hpending := cross_output.next_pending hn
+  have hatt := cross_output.next_consumed_attestations hn
+  have hcross := cross_output.next_consumed_crossings hn
+  have hgrants := cross_output.next_crossing_grants hn
+  have hinteg := cross_output.guard_endorsed_integ_bound hg
+  have hconf := cross_output.guard_endorsed_conf_bound hg
+  have hnodeclass := cross_output.guard_endorsed_conf_cover hg
   refine ⟨ht, hi, hpending, hcross, hatt, hgrants, ?_, hinteg, hconf, hnodeclass⟩
   intro hne
   constructor
@@ -373,53 +392,53 @@ private theorem consumed_ids_action_monotone :
     rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · simp only [Kav.close1] at hn
     obtain ⟨_, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := register_tool.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close1] at hn
     obtain ⟨_, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := unregister_tool.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close2] at hn
     obtain ⟨_, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := delegate.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close3] at hn
     obtain ⟨_, _, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := grant_capability.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close4] at hn
     obtain ⟨_, _, _, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := grant_crossing.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close2] at hn
     obtain ⟨_, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := revoke.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close2] at hn
     obtain ⟨_, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := cascade_revoke.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close5] at hn
     obtain ⟨_, _, _, _, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := ingest.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close8] at hn
     obtain ⟨_, _, _, _, _, _, _, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := begin_invocation.next_consumed_ids hn'
     intro I hI
     rw [hids]
     exact Or.inl hI
   · simp only [Kav.close4] at hn
     obtain ⟨_, _, _, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := authorize_inspected.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close7] at hn
     obtain ⟨_, _, _, _, _, _, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := settle_invocation.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
   · simp only [Kav.close3] at hn
     obtain ⟨_, _, _, _, hn'⟩ := hn
-    obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn'
+    have hids := cross_output.next_consumed_ids hn'
     exact consumed_ids_frame s s' hids
 
 /-- **freshness subsumption, persistence half.** Invocation-id history is monotone
@@ -440,9 +459,8 @@ theorem invocation_freshness_subsumption (a : KAgent) (inv : KInv) (chal : KChal
     (hg : (begin_invocation a inv chal snap egr ah authorized v).guard s)
     (hn : (begin_invocation a inv chal snap egr ah authorized v).next s s') :
     ¬ s.consumed_ids inv ∧ s'.consumed_ids inv := by
-  have hguard := hg
-  obtain ⟨-, -, -, -, -, hfresh, -, -, -, -, -, -, -⟩ := hguard
-  obtain ⟨-, -, -, -, -, -, -, hids, -, -, -, -, -, -, -, -⟩ := hn
+  have hfresh := begin_invocation.guard_id_fresh hg
+  have hids := begin_invocation.next_consumed_ids hn
   refine ⟨hfresh, ?_⟩
   rw [hids]
   exact Or.inr rfl
@@ -461,10 +479,9 @@ theorem quarantine_resolution_safety (inv : KInv) (a : KAgent) (dispo : Disposit
     ∧ ∃ r, att = some r ∧ r.inv = inv ∧ r.outcome = outcome
       ∧ ¬ s.consumed_attestations r.id
       ∧ ∀ X, s'.consumed_attestations X ↔ s.consumed_attestations X ∨ X = r.id := by
-  have hguard := hg
-  obtain ⟨-, -, -, -, hresolution, -⟩ := hguard
+  have hresolution := settle_invocation.guard_quarantined_attested hg
   obtain ⟨houtcome, r, hatt, hinv, hout, hfresh⟩ := hresolution J hJ hquarantined
-  obtain ⟨-, -, -, -, -, -, -, -, hconsumed, -, -, -, -, -, -, -⟩ := hn
+  have hconsumed := settle_invocation.next_consumed_attestations hn
   refine ⟨houtcome, r, hatt, hinv, hout, hfresh, ?_⟩
   intro X
   rw [hconsumed, hatt]
@@ -486,7 +503,8 @@ theorem quarantine_participates (s : KSt) (inv : KInv) (J : KPending)
         ∨ (s.flow_inspects J.policy.output_conf E ∧ vouched J))
       ∧ (integ_allows J.policy.output_integ J.policy
         ∨ (integ_inspects J.policy.output_integ J.policy ∧ vouched J))) := by
-  obtain ⟨-, -, ⟨hflow, hinteg⟩, -, -⟩ := hinv
+  have hflow := hinv.pending_flow_compat
+  have hinteg := hinv.pending_integ_compat
   refine ⟨Or.inr ⟨inv, J, hJ, rfl, rfl⟩, Or.inr ⟨inv, J, hJ, rfl, rfl⟩, ?_⟩
   intro hcontained
   refine ⟨Or.inr ⟨inv, J, hJ, rfl, hcontained, rfl⟩, ?_, ?_⟩

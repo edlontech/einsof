@@ -21,10 +21,8 @@ theorem audit_integrity_confinement (a : KAgent) (inv : KInv) (chal : KChallenge
     (v : Verdict) (s s' : KSt) (hinv : allInv s)
     (hg : (begin_invocation a inv chal snap egr ah authorized v).guard s)
     (hn : (begin_invocation a inv chal snap egr ah authorized v).next s s') :
-    integrity_confinement s' := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, hresult, -, -⟩ :=
-    presP_begin_invocation a inv chal snap egr ah authorized v s s' hinv hg hn
-  exact hresult
+    integrity_confinement s' :=
+  (presP_begin_invocation a inv chal snap egr ah authorized v s s' hinv hg hn).integrity_confinement
 
 #print axioms audit_integrity_confinement
 
@@ -34,10 +32,8 @@ theorem audit_flow_confinement (a : KAgent) (inv : KInv) (chal : KChallenge)
     (v : Verdict) (s s' : KSt) (hinv : allInv s)
     (hg : (begin_invocation a inv chal snap egr ah authorized v).guard s)
     (hn : (begin_invocation a inv chal snap egr ah authorized v).next s s') :
-    flow_confinement s' := by
-  obtain ⟨-, -, -, -, -, -, -, hresult, -, -, -, -⟩ :=
-    presP_begin_invocation a inv chal snap egr ah authorized v s s' hinv hg hn
-  exact hresult
+    flow_confinement s' :=
+  (presP_begin_invocation a inv chal snap egr ah authorized v s s' hinv hg hn).flow_confinement
 
 #print axioms audit_flow_confinement
 
@@ -103,9 +99,14 @@ def EndorsedEvidenceConserved : Prop :=
 
 theorem audit_inspected_evidence : InspectionEvidenceConserved := by
   intro s s' inv sc att admit _hreach hadmit hg hn
-  have hguard := hg
-  obtain ⟨-, hinv, hchallenge, hargs, hpolicy, hfresh, -, hadmits, -⟩ := hguard
-  obtain ⟨-, -, -, -, -, hpending, -, -, hconsumed, -, -, -, -, -, -, -⟩ := hn
+  have hinv := authorize_inspected.guard_scope_invocation hg
+  have hchallenge := authorize_inspected.guard_scope_challenge hg
+  have hargs := authorize_inspected.guard_scope_args hg
+  have hpolicy := authorize_inspected.guard_scope_policy hg
+  have hfresh := authorize_inspected.guard_attestation_fresh hg
+  have hadmits := authorize_inspected.guard_admit_pos hg
+  have hpending := authorize_inspected.next_pending hn
+  have hconsumed := authorize_inspected.next_consumed_attestations hn
   refine ⟨(hadmits hadmit).1, hinv, hchallenge, hargs, hpolicy, hfresh, ?_, ?_⟩
   · intro X
     rw [hconsumed]
@@ -134,13 +135,14 @@ theorem audit_resolution_evidence : ResolutionEvidenceConserved := by
 
 theorem audit_endorsed_evidence : EndorsedEvidenceConserved := by
   intro s s' q dispo hreach hg hn
-  have hguard := hg
-  have hnext := hn
-  obtain ⟨-, -, -, -, hendorsed, -, -, -, -, -, -, -, -⟩ := hguard
-  obtain ⟨⟨e, hevidence, hpositive, hfresh, houtput, hsrc, hrcv, hdescriptor, hassignment⟩,
-    g, hgrant, hremaining⟩ := hendorsed rfl
-  obtain ⟨-, -, -, -, ⟨hbounded, -, -⟩⟩ := kav_sound s hreach
-  obtain ⟨-, -, -, -, -, -, -, -, hconsumed, hcrossing, hgrants, -, -, -, -, -⟩ := hnext
+  have hendorsed := cross_output.guard_branch_endorsed hg rfl
+  obtain ⟨e, hevidence, hpositive, hfresh, houtput, hsrc, hrcv, hdescriptor, hassignment⟩ :=
+    hendorsed.evidence
+  obtain ⟨g, hgrant, hremaining⟩ := hendorsed.grant
+  have hbounded := (kav_sound s hreach).grant_bounded
+  have hconsumed := cross_output.next_consumed_attestations hn
+  have hcrossing := cross_output.next_consumed_crossings hn
+  have hgrants := cross_output.next_crossing_grants hn
   refine ⟨e, g, hevidence, hpositive, hfresh, houtput, hsrc, hrcv, hdescriptor,
     hassignment, hgrant, hremaining, hbounded q.rcv q.assignment g hgrant, ?_, ?_, ?_⟩
   · intro X
@@ -178,7 +180,10 @@ theorem audit_fresh_compartment (grantor grantee : KAgent) (s s' : KSt)
     ∧ ∀ snap : KSnapshot,
         (∀ L, speculative_taint s' grantee L → clearance_admits L snap)
         ∧ (∀ L, speculative_integ s' grantee L → integ_allows L snap) := by
-  obtain ⟨-, -, -, ht, hi, hpending, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have ht := delegate.next_taint_levels hn
+  have hi := delegate.next_integ_levels hn
+  have hpending := delegate.next_pending hn
+  have hgrants := delegate.next_crossing_grants hn
   have htaint : ∀ L, ¬ s'.taint_levels grantee L := by
     intro L hL
     rw [ht] at hL

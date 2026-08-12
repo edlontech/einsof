@@ -1,6 +1,7 @@
 import Tzimtzum.Soundness.Common
 
-/-! the bundle holds in every initial state. -/
+/-! `initial` establishes the bundle: every initial state satisfies all 32 invariants,
+fully automated (lite cascade; gates stay atomic). -/
 
 set_option maxHeartbeats 8000000
 set_option auto.native true

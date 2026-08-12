@@ -48,44 +48,44 @@ private theorem grant_noninc_of_drop (s s' : KSt) (removed : KAgent)
 private theorem grant_noninc_register_tool (tool : KTool) (s s' : KSt)
     (hn : (register_tool tool).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := register_tool.next_crossing_grants hn
   exact grant_noninc_of_frame s s' hgrants
 
 private theorem grant_noninc_unregister_tool (tool : KTool) (s s' : KSt)
     (hn : (unregister_tool tool).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := unregister_tool.next_crossing_grants hn
   exact grant_noninc_of_frame s s' hgrants
 
 private theorem grant_noninc_delegate (grantor grantee : KAgent) (s s' : KSt)
     (hn : (delegate grantor grantee).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := delegate.next_crossing_grants hn
   exact grant_noninc_of_drop s s' grantee hgrants
 
 private theorem grant_noninc_grant_capability (prnt child : KAgent) (cap : KCap)
     (s s' : KSt) (hn : (grant_capability prnt child cap).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := grant_capability.next_crossing_grants hn
   exact grant_noninc_of_frame s s' hgrants
 
 private theorem grant_noninc_revoke (prnt target : KAgent) (s s' : KSt)
     (hn : (revoke prnt target).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := revoke.next_crossing_grants hn
   exact grant_noninc_of_drop s s' target hgrants
 
 private theorem grant_noninc_cascade_revoke (child prnt : KAgent) (s s' : KSt)
     (hn : (cascade_revoke child prnt).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := cascade_revoke.next_crossing_grants hn
   exact grant_noninc_of_drop s s' child hgrants
 
 private theorem grant_noninc_ingest (a : KAgent) (src : Option KAgent) (pconf : ConfLevel)
     (pinteg : IntegLevel) (dispo : Disposition) (s s' : KSt)
     (hn : (ingest a src pconf pinteg dispo).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := ingest.next_crossing_grants hn
   exact grant_noninc_of_frame s s' hgrants
 
 private theorem grant_noninc_begin_invocation (a : KAgent) (inv : KInv) (chal : KChallenge)
@@ -93,14 +93,14 @@ private theorem grant_noninc_begin_invocation (a : KAgent) (inv : KInv) (chal : 
     (v : Verdict) (s s' : KSt)
     (hn : (begin_invocation a inv chal snap egr ah authorized v).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := begin_invocation.next_crossing_grants hn
   exact grant_noninc_of_frame s s' hgrants
 
 private theorem grant_noninc_authorize_inspected (inv : KInv) (sc : KChallengeScope)
     (att : InspectionAttestation KInv KChallenge KAttest KPolicy KContentHash) (admit : Bool)
     (s s' : KSt) (hn : (authorize_inspected inv sc att admit).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := authorize_inspected.next_crossing_grants hn
   exact grant_noninc_of_frame s s' hgrants
 
 private theorem grant_noninc_settle_invocation (inv : KInv) (a : KAgent)
@@ -108,7 +108,7 @@ private theorem grant_noninc_settle_invocation (inv : KInv) (a : KAgent)
     (att : Option (ResolutionAttestation KInv KAttest)) (s s' : KSt)
     (hn : (settle_invocation inv a dispo outcome clvl ilvl att).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := settle_invocation.next_crossing_grants hn
   exact grant_noninc_of_frame s s' hgrants
 
 private theorem grant_noninc_cross_output
@@ -116,7 +116,7 @@ private theorem grant_noninc_cross_output
     (branch : CrossBranch) (dispo : Disposition) (s s' : KSt)
     (hn : (cross_output q branch dispo).next s s') :
     ∀ A D, grantRemaining s' A D ≤ grantRemaining s A D := by
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, hgrants, -, -, -, -, -⟩ := hn
+  have hgrants := cross_output.next_crossing_grants hn
   intro A D
   rw [grantRemaining, grantRemaining, hgrants]
   by_cases hb : branch = CrossBranch.endorsed
