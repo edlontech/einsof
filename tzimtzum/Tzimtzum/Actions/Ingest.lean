@@ -84,17 +84,17 @@ kav_action ingest (a : AgentId) (src : Option AgentId) (pconf : ConfLevel)
     (pinteg : IntegLevel) (d : Disposition) :
     St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId CrossingId
       AssignmentDigest PolicyDigest ContentHash where
-  require s.agent_active a
+  require active : s.agent_active a
  -- Agent-to-agent provenance must bound all labels held by the source agent. This prevents
  -- the declared pair from making source content appear less confidential or more trustworthy.
  -- `src = none` denotes external ingress, whose frozen provenance is supplied as input.
-  require ∀ src', src = some src' →
+  require src_bounded : ∀ src', src = some src' →
     (∀ L, s.taint_levels src' L → le_conf L pconf)
     ∧ (∀ L, s.integ_levels src' L → le_integ pinteg L)
-  require d ≠ Disposition.blocked
-  require d = Disposition.permitted → ingestHolds s a pconf pinteg
-  require d = Disposition.monitor_bypassed → ¬ ingestHolds s a pconf pinteg
-  require d = Disposition.monitor_bypassed → s.mode = Mode.monitor
+  require not_blocked : d ≠ Disposition.blocked
+  require permitted_holds : d = Disposition.permitted → ingestHolds s a pconf pinteg
+  require bypass_hold_failed : d = Disposition.monitor_bypassed → ¬ ingestHolds s a pconf pinteg
+  require bypass_monitor : d = Disposition.monitor_bypassed → s.mode = Mode.monitor
   taint_levels := fun A L => s.taint_levels A L ∨ (A = a ∧ L = pconf)
   integ_levels := fun A L => s.integ_levels A L ∨ (A = a ∧ L = pinteg)
   pending :=
