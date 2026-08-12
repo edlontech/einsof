@@ -74,6 +74,19 @@ macro "kav_discharge_lite " head:ident : tactic => `(tactic| (
     (tzimtzum_simp_core $head) <;>
       (first | trivial | grind | (simp_all <;> grind) | auto | duper [*]))))
 
+variable {AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+  CrossingId AssignmentDigest PolicyDigest ContentHash : Type}
+
+/-- `Preserves act P`: from any state satisfying the full bundle whose guard admits `act`,
+every `next`-successor satisfies `P`. Per-action check files state one `Preserves` theorem
+per sub-bundle and compose them into the `allInv` result consumed by `Soundness.lean`. -/
+def Preserves
+    (act : Kav.Action (St AgentId ToolId InvocationId CapKind EgressKind ChallengeId
+      AttestationId CrossingId AssignmentDigest PolicyDigest ContentHash))
+    (P : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash → Prop) : Prop :=
+  ∀ s s', allInv s → act.guard s → act.next s s' → P s'
+
 /-- The TzimtzumV4 transition system at the opaque audit sorts. -/
 def ksystem : Kav.TransitionSystem KSt := system
 

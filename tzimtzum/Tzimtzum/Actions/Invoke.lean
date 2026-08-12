@@ -129,6 +129,82 @@ def beginAdmissible
   checkCapability s a snap ∧ authorized ∧ checkClearance s a snap
   ∧ checkFlowAdmissible s a snap egr ∧ checkIntegAdmissible s a snap
 
+/-! ### Named gate accessors
+
+Dot access (`(admitted).flow.speculative`, …) replaces `h.2.2.2.1`-style anonymous
+projections in preservation proofs. The projection spelling of each gate arm lives here. -/
+
+section GateAccessors
+
+variable {s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+    CrossingId AssignmentDigest PolicyDigest ContentHash}
+  {a : AgentId} {snap : ActionPolicySnapshot ToolId CapKind EgressKind PolicyDigest}
+  {egr : EgressKind → Prop} {authorized : Prop}
+
+/-- Speculative-taint arm: the agent's worst-case taint clears the snapshot ceiling. -/
+theorem checkClearance.speculative (h : checkClearance s a snap) :
+    ∀ (L : ConfLevel), speculative_taint s a L → clearance_admits L snap := h.1
+
+/-- Pending arm: the new output clears every existing pending record's ceiling. -/
+theorem checkClearance.pending (h : checkClearance s a snap) :
+    ∀ (I : InvocationId)
+      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+      s.pending I = some J → J.agent = a → clearance_admits snap.output_conf J.policy := h.2.1
+
+/-- Self arm: the new output clears its own snapshot ceiling. -/
+theorem checkClearance.self (h : checkClearance s a snap) :
+    clearance_admits snap.output_conf snap := h.2.2
+
+/-- Speculative-taint arm: every worst-case taint level is in the allow or inspect band. -/
+theorem checkFlowAdmissible.speculative (h : checkFlowAdmissible s a snap egr) :
+    ∀ (L : ConfLevel) (E : EgressKind), speculative_taint s a L → egr E →
+      s.flow_allows L E ∨ s.flow_inspects L E := h.1
+
+/-- Pending arm: the new output is compatible with every existing pending record's egress. -/
+theorem checkFlowAdmissible.pending_pairs (h : checkFlowAdmissible s a snap egr) :
+    ∀ (I : InvocationId)
+      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest)
+      (E : EgressKind),
+      s.pending I = some J → J.agent = a → J.egress E →
+        s.flow_allows snap.output_conf E
+        ∨ (s.flow_inspects snap.output_conf E ∧ vouched J) := h.2.1
+
+/-- Newcomer arm: the new output is in the allow or inspect band on its own egress. -/
+theorem checkFlowAdmissible.newcomer (h : checkFlowAdmissible s a snap egr) :
+    ∀ (E : EgressKind), egr E →
+      s.flow_allows snap.output_conf E ∨ s.flow_inspects snap.output_conf E := h.2.2
+
+/-- Speculative-integrity arm: every worst-case level is in the allow or inspect band. -/
+theorem checkIntegAdmissible.speculative (h : checkIntegAdmissible s a snap) :
+    ∀ (L : IntegLevel), speculative_integ s a L →
+      integ_allows L snap ∨ integ_inspects L snap := h.1
+
+/-- Pending arm: the new output integrity is compatible with every existing record's floor. -/
+theorem checkIntegAdmissible.pending_pairs (h : checkIntegAdmissible s a snap) :
+    ∀ (I : InvocationId)
+      (J : PendingInvocation AgentId ToolId CapKind EgressKind AttestationId PolicyDigest),
+      s.pending I = some J → J.agent = a →
+        integ_allows snap.output_integ J.policy
+        ∨ (integ_inspects snap.output_integ J.policy ∧ vouched J) := h.2.1
+
+/-- Newcomer arm: the new output integrity clears or inspect-bands its own floor. -/
+theorem checkIntegAdmissible.newcomer (h : checkIntegAdmissible s a snap) :
+    integ_allows snap.output_integ snap ∨ integ_inspects snap.output_integ snap := h.2.2
+
+theorem beginAdmissible.capability (h : beginAdmissible s a snap egr authorized) :
+    checkCapability s a snap := h.1
+
+theorem beginAdmissible.clearance (h : beginAdmissible s a snap egr authorized) :
+    checkClearance s a snap := h.2.2.1
+
+theorem beginAdmissible.flow (h : beginAdmissible s a snap egr authorized) :
+    checkFlowAdmissible s a snap egr := h.2.2.2.1
+
+theorem beginAdmissible.integ (h : beginAdmissible s a snap egr authorized) :
+    checkIntegAdmissible s a snap := h.2.2.2.2
+
+end GateAccessors
+
 /-- The trichotomy is a total complementary partition: strict ALLOW implies admissible. -/
 theorem beginAllow_admissible
     (s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
@@ -226,6 +302,15 @@ def authorizeAdmits
   ∧ (∀ (E : EgressKind), sc.egress E → sc.policy.declared_egress E)
   ∧ ((∃ (E : EgressKind), sc.policy.declared_egress E) → (∃ (E : EgressKind), sc.egress E))
   ∧ beginAdmissible s sc.agent sc.policy sc.egress sc.authorized
+
+/-- The live begin-time admission gate carried by `authorizeAdmits`. -/
+theorem authorizeAdmits.toBeginAdmissible
+    {s : St AgentId ToolId InvocationId CapKind EgressKind ChallengeId AttestationId
+      CrossingId AssignmentDigest PolicyDigest ContentHash}
+    {inv : InvocationId}
+    {sc : ChallengeScope AgentId ToolId CapKind EgressKind ChallengeId PolicyDigest ContentHash}
+    (h : authorizeAdmits s inv sc) :
+    beginAdmissible s sc.agent sc.policy sc.egress sc.authorized := h.2.2.2.2.2.2.2
 
 /-! `sc` is checked against the stored challenge before updates read it. `admit` is constrained
 by the attestation verdict and the live admission predicate. -/
